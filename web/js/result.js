@@ -1,0 +1,350 @@
+/* ============================================================
+   BiliMix — 结果渲染模块
+   依赖: state.js, utils.js, audio-sync.js
+   ============================================================ */
+
+function getAudioExt() {
+    const url = tasks_url || '';
+    const match = url.match(/\.(mp3|wav|m4a|ogg|flac|aac)(\?|$)/i);
+    return match ? '.' + match[1].toLowerCase() : '.mp3';
+}
+
+/**
+ * 仅在 src 真正改变时才设置 audio.src，
+ * 避免正在播放时重新加载导致进度重置和播放停止。
+ */
+function setAudioSrcIfChanged(audioId, newSrc) {
+    const audio = document.getElementById(audioId);
+    if (!audio) return;
+    // 浏览器会将相对路径规范化为绝对路径存储在 audio.src 中
+    // 用 URL 对象统一比较
+    try {
+        const currentUrl = audio.src ? new URL(audio.src).pathname : '';
+        const newUrl = new URL(newSrc, window.location.origin).pathname;
+        if (currentUrl === newUrl) return; // src 相同，跳过
+    } catch (e) {
+        // URL 解析失败，直接比较
+        if (audio.src === newSrc) return;
+    }
+    audio.src = newSrc;
+}
+
+// ============================================================
+// Load & Render Result
+// ============================================================
+
+async function loadResult() {
+    try {
+        const resp = await fetch(`/api/task/${currentTaskId}/result`);
+        const data = await resp.json();
+
+        // 保存任务标题到全局变量（用于 Mini Player 等场景）
+        if (data.title) {
+            currentTaskTitle = data.title;
+        }
+
+        renderResult(data);
+
+        const resultSection = document.getElementById('result-section');
+        if (resultSection && resultSection.classList.contains('hidden')) {
+            showSection('result');
+        }
+    } catch (err) {
+        console.error('Load result error:', err);
+    }
+}
+
+function renderResult(data) {
+    const result = data.result;
+    const mode = data.process_mode || result?.process_mode || 'word_replace';
+
+    const streamPlayer = document.getElementById('stream-player');
+    const mixedItem = document.getElementById('mixed-audio-item');
+    if (streamPlayer) streamPlayer.style.display = 'none';
+    if (mixedItem) mixedItem.style.display = '';
+    stopStreamPolling();
+
+    timeMappingData = data.time_mapping || [];
+
+    if (mode === 'smart_translate') {
+        const sentencePairs = data.sentence_pairs || [];
+        const difficultWords = data.difficult_words || [];
+
+        document.getElementById('badge-words').textContent =
+            (difficultWords.length || 0) + ' 个生词';
+        document.getElementById('badge-duration').textContent =
+            (result?.mixed_duration || '--') + ' 秒';
+
+        if (result) {
+            const basename = result.basename;
+            const ext = getAudioExt();
+            setAudioSrcIfChanged('original-audio', `/api/audio/${basename}${ext}`);
+            setAudioSrcIfChanged('mixed-audio', `/api/audio/${basename}/${basename}_sentence.mp3`);
+        }
+
+        const mixedLabel = document.querySelector('.audio-item:last-child .audio-label');
+        if (mixedLabel) mixedLabel.innerHTML = '<span class="label-dot mixed"></span>中英交替音频';
+
+        renderTranscriptSentenceMode(data.segments, sentencePairs, difficultWords);
+        renderVocabulary(difficultWords);
+        renderSentencePairs(sentencePairs, 'replacements-list');
+
+        const vocabTabBtn = document.querySelector('[data-tab="vocabulary"]');
+        if (vocabTabBtn) vocabTabBtn.innerHTML = '📖 生词释义';
+        const replTabBtn = document.querySelector('[data-tab="replacements"]');
+        if (replTabBtn) replTabBtn.innerHTML = '🔄 中英对照';
+
+    } else if (mode === 'sentence_translate') {
+        const sentencePairs = data.sentence_pairs || [];
+
+        document.getElementById('badge-words').textContent =
+            (result?.translated_segments || sentencePairs.length || 0) + ' 句翻译';
+        document.getElementById('badge-duration').textContent =
+            (result?.mixed_duration || '--') + ' 秒';
+
+        if (result) {
+            const basename = result.basename;
+            const ext = getAudioExt();
+            setAudioSrcIfChanged('original-audio', `/api/audio/${basename}${ext}`);
+            setAudioSrcIfChanged('mixed-audio', `/api/audio/${basename}/${basename}_sentence.mp3`);
+        }
+
+        const mixedLabel2 = document.querySelector('.audio-item:last-child .audio-label');
+        if (mixedLabel2) mixedLabel2.innerHTML = '<span class="label-dot mixed"></span>中英交替音频';
+
+        renderTranscriptSentenceMode(data.segments, sentencePairs, null);
+        renderSentencePairs(sentencePairs);
+        renderReplacements([]);
+
+        const vocabTabBtn2 = document.querySelector('[data-tab="vocabulary"]');
+        if (vocabTabBtn2) vocabTabBtn2.innerHTML = '🔄 中英对照';
+        const replTabBtn2 = document.querySelector('[data-tab="replacements"]');
+        if (replTabBtn2) replTabBtn2.innerHTML = '🔄 替换详情';
+
+    } else {
+        document.getElementById('badge-words').textContent =
+            (data.difficult_words?.length || 0) + ' 个生词';
+        document.getElementById('badge-duration').textContent =
+            (result?.mixed_duration || '--') + ' 秒';
+
+        if (result) {
+            const basename = result.basename;
+            const ext = getAudioExt();
+            setAudioSrcIfChanged('original-audio', `/api/audio/${basename}${ext}`);
+            setAudioSrcIfChanged('mixed-audio', `/api/audio/${basename}/${basename}_mixed.mp3`);
+        }
+
+        const mixedLabel = document.querySelector('.audio-item:last-child .audio-label');
+        if (mixedLabel) mixedLabel.innerHTML = '<span class="label-dot mixed"></span>中英混合音频';
+
+        renderTranscript(data.segments, data.difficult_words);
+        renderVocabulary(data.difficult_words);
+        renderReplacements(data.replacements);
+
+        const vocabTabBtn = document.querySelector('[data-tab="vocabulary"]');
+        if (vocabTabBtn) vocabTabBtn.innerHTML = '📚 生词本';
+        const replTabBtn3 = document.querySelector('[data-tab="replacements"]');
+        if (replTabBtn3) replTabBtn3.innerHTML = '🔄 替换详情';
+    }
+}
+
+// ============================================================
+// Transcript Rendering — 单词替换模式
+// ============================================================
+
+function renderTranscript(segments, difficultWords) {
+    const container = document.getElementById('transcript-container');
+    if (!segments || segments.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-tertiary)">暂无转录内容</p>';
+        segmentsData = [];
+        return;
+    }
+
+    segmentsData = segments;
+
+    const dwSet = {};
+    if (difficultWords) {
+        difficultWords.forEach(w => { dwSet[w.english.toLowerCase()] = w.chinese; });
+    }
+
+    const infoEl = document.getElementById('transcript-info');
+    if (infoEl) infoEl.textContent = `共 ${segments.length} 个句子`;
+
+    let html = '';
+    segments.forEach((seg, idx) => {
+        const time = formatTime(seg.start);
+        let text = seg.text || '';
+
+        Object.keys(dwSet).sort((a, b) => b.length - a.length).forEach(eng => {
+            const regex = new RegExp(`\\b(${escapeRegex(eng)})\\b`, 'gi');
+            text = text.replace(regex, `<span class="highlight-word" data-chinese="${dwSet[eng]}">$1</span>`);
+        });
+
+        html += `
+            <div class="transcript-segment" data-index="${idx}" data-start="${seg.start}" data-end="${seg.end}" onclick="seekToSegment(${seg.start})">
+                <span class="segment-time">${time}</span>
+                <span class="segment-text">${text}</span>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+    setupAudioSync();
+}
+
+// ============================================================
+// Transcript Rendering — 句子翻译模式
+// ============================================================
+
+function renderTranscriptSentenceMode(segments, sentencePairs, difficultWords) {
+    const container = document.getElementById('transcript-container');
+    if (!segments || segments.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-tertiary)">暂无转录内容</p>';
+        segmentsData = [];
+        return;
+    }
+
+    segmentsData = segments;
+
+    const translationMap = {};
+    if (sentencePairs) {
+        sentencePairs.forEach(p => { translationMap[p.index] = p.chinese; });
+    }
+
+    const dwSet = {};
+    if (difficultWords && difficultWords.length > 0) {
+        difficultWords.forEach(w => { dwSet[w.english.toLowerCase()] = w.chinese; });
+    }
+    const hasDW = Object.keys(dwSet).length > 0;
+
+    const infoEl = document.getElementById('transcript-info');
+    if (infoEl) {
+        infoEl.textContent = `共 ${segments.length} 个句子，${sentencePairs?.length || 0} 句翻译`;
+    }
+
+    let html = '';
+    segments.forEach((seg, idx) => {
+        const time = formatTime(seg.start);
+        let text = seg.text || '';
+        const chinese = translationMap[idx];
+
+        if (hasDW) {
+            const escaped = escapeHtml(text);
+            let highlighted = escaped;
+            Object.keys(dwSet).sort((a, b) => b.length - a.length).forEach(eng => {
+                const regex = new RegExp(`\\b(${escapeRegex(eng)})\\b`, 'gi');
+                highlighted = highlighted.replace(regex, `<span class="highlight-word" data-chinese="${dwSet[eng]}">$1</span>`);
+            });
+            text = highlighted;
+        } else {
+            text = escapeHtml(text);
+        }
+
+        html += `
+            <div class="transcript-segment ${chinese ? 'has-translation' : ''}" data-index="${idx}" data-start="${seg.start}" data-end="${seg.end}" onclick="seekToSegment(${seg.start})">
+                <span class="segment-time">${time}</span>
+                <div class="segment-content">
+                    <span class="segment-text">${text}</span>
+                    ${chinese ? `<span class="segment-chinese">${escapeHtml(chinese)}</span>` : ''}
+                </div>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+    setupAudioSync();
+}
+
+// ============================================================
+// Vocabulary Rendering
+// ============================================================
+
+function renderVocabulary(words) {
+    const grid = document.getElementById('vocab-grid');
+    if (!words || words.length === 0) {
+        grid.innerHTML = '<p style="color:var(--text-tertiary)">暂无生词</p>';
+        return;
+    }
+
+    let html = '';
+    words.forEach(w => {
+        const typeClass = w.type || 'word';
+        const typeLabelMap = { 'word': '单词', 'phrase': '短语', 'idiom': '习语', 'collocation': '搭配' };
+        const typeLabel = typeLabelMap[w.type] || '单词';
+        html += `
+            <div class="vocab-card">
+                <div class="vocab-english">${w.english}</div>
+                <div class="vocab-chinese">${w.chinese}</div>
+                <span class="vocab-type ${typeClass}">${typeLabel}</span>
+            </div>
+        `;
+    });
+    grid.innerHTML = html;
+}
+
+// ============================================================
+// Replacements Rendering
+// ============================================================
+
+function renderReplacements(replacements) {
+    const list = document.getElementById('replacements-list');
+    if (!replacements || replacements.length === 0) {
+        list.innerHTML = '<p style="color:var(--text-tertiary)">暂无替换记录</p>';
+        return;
+    }
+
+    let html = `
+        <div class="replacement-header">
+            <span>时间</span><span>英文</span><span>中文</span><span>类型</span>
+        </div>
+    `;
+
+    replacements.forEach(r => {
+        const time = formatTime(r.start) + ' - ' + formatTime(r.end);
+        const typeClass = r.type || 'word';
+        const typeLabelMap = { 'word': '单词', 'phrase': '短语', 'idiom': '习语', 'collocation': '搭配' };
+        const typeLabel = typeLabelMap[r.type] || '单词';
+        html += `
+            <div class="replacement-row">
+                <span class="time">${time}</span>
+                <span class="eng">${r.english}</span>
+                <span class="chi">${r.chinese}</span>
+                <span class="type-tag ${typeClass}">${typeLabel}</span>
+            </div>
+        `;
+    });
+    list.innerHTML = html;
+}
+
+// ============================================================
+// Sentence Pairs Rendering
+// ============================================================
+
+function renderSentencePairs(sentencePairs, targetContainerId) {
+    const containerId = targetContainerId || 'vocab-grid';
+    const container = document.getElementById(containerId);
+    if (!sentencePairs || sentencePairs.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-tertiary)">暂无翻译对照</p>';
+        return;
+    }
+
+    let html = '';
+    if (containerId === 'replacements-list') html = '<div class="vocab-grid">';
+
+    sentencePairs.forEach((p, i) => {
+        const time = formatTime(p.start);
+        html += `
+            <div class="sentence-pair-card">
+                <div class="sentence-pair-header">
+                    <span class="sentence-pair-num">#${i + 1}</span>
+                    <span class="sentence-pair-time">${time}</span>
+                </div>
+                <div class="sentence-pair-eng">${escapeHtml(p.english)}</div>
+                <div class="sentence-pair-chi">${escapeHtml(p.chinese)}</div>
+            </div>
+        `;
+    });
+
+    if (containerId === 'replacements-list') html += '</div>';
+    container.innerHTML = html;
+}

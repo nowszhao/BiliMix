@@ -1,0 +1,1847 @@
+"""
+BiliMix Web App - Flask 后端
+提供 REST API：提交音频URL、查询进度、获取结果、音频服务
+支持：任务终止、历史任务列表、历史任务删除（含文件清理）
+
+重构后的路由层：核心逻辑已分别提取到：
+  - task_manager.py: 任务状态管理、持久化、恢复
+  - podcast_service.py: 播客搜索、RSS 解析
+  - config_manager.py: 配置读取/保存
+  - word_frequency.py: BNC/COCA 词频数据
+"""
+import hashlib
+import json
+import os
+import re
+import shutil
+import sys
+import threading
+import time
+import traceback
+import urllib.request
+
+# 确保项目根目录在 sys.path 中，支持 python services/web_app.py 直接启动
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+import functools
+from flask import Flask, jsonify, request, send_file, send_from_directory, session, redirect
+
+from core import config
+from core.task_manager import (
+    tasks, tasks_lock, cancel_flags, task_subprocesses,
+    load_tasks_index, save_tasks_index,
+    save_task_result_to_disk, restore_task_from_disk,
+    update_task, get_task, is_cancelled,
+)
+from core.database import (
+    setup_database, delete_task_from_index,
+    add_favorite, remove_favorite, get_favorites, is_favorite,
+    add_subscription, remove_subscription, get_subscriptions,
+    add_search_keyword, get_search_suggestions, clear_search_history,
+    get_recent_podcasts,
+    add_or_update_vocabulary, get_vocabulary, toggle_vocabulary_mastered,
+    delete_vocabulary, get_vocabulary_stats,
+)
+from core.word_frequency import get_word_to_level, get_level_to_num_map
+from services.podcast_service import search_podcasts_castos, parse_rss_feed
+from core.config_manager import get_all_config, update_config
+
+from pipeline.step1_transcribe import transcribe, extract_full_text, extract_word_timestamps
+from pipeline.step2_identify_difficult_words import (
+    identify_difficult_words_by_segments, locate_words_in_segments,
+)
+from pipeline.step3_tts_synthesize import synthesize_text, get_audio_duration
+from pipeline.step3_tts_qwen import (
+    extract_ref_audio_for_segments, synthesize_with_qwen_tts,
+    build_tts_audio_map_for_replacements, group_adjacent_replacements,
+    _build_tts_text, synthesize_sentences_with_qwen_tts,
+)
+from pipeline.step4_audio_editor import load_audio, apply_replacements, export_audio
+from pipeline.step2b_translate_sentences import (
+    select_sentences_to_translate,
+    select_sentences_by_difficulty,
+    translate_sentences,
+)
+from pipeline.step4b_sentence_mixer import mix_sentence_audio
+
+# Flask 静态文件目录使用绝对路径（web_app.py 已移至 services/ 子目录）
+_web_dir = os.path.join(config.BASE_DIR, "web")
+app = Flask(__name__, static_folder=_web_dir, static_url_path="")
+app.secret_key = getattr(config, "SECRET_KEY", "bilimix-secret-key-change-me")
+
+
+# ============================================================
+# 登录认证
+# ============================================================
+
+def login_required(f):
+    """装饰器：检查用户是否已登录"""
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        if not getattr(config, "AUTH_ENABLED", True):
+            return f(*args, **kwargs)
+        if not session.get("logged_in"):
+            # API 请求返回 401 JSON，页面请求重定向
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "未登录", "code": "AUTH_REQUIRED"}), 401
+            return redirect("/login")
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.before_request
+def check_auth():
+    """全局请求拦截：未登录时只允许访问登录相关路由和静态资源"""
+    if not getattr(config, "AUTH_ENABLED", True):
+        return None
+
+    # 允许访问的路径（不需要登录）
+    allowed_paths = ["/login", "/api/login", "/api/auth/check"]
+    if request.path in allowed_paths:
+        return None
+
+    # 允许登录页面的静态资源
+    if request.path == "/login.html":
+        return None
+
+    # 已登录则放行
+    if session.get("logged_in"):
+        return None
+
+    # 未登录：API 返回 401，页面请求重定向到登录页
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "未登录", "code": "AUTH_REQUIRED"}), 401
+
+    # 允许加载 CSS/JS/图标等静态资源（登录页面需要用）
+    static_exts = (".css", ".js", ".svg", ".png", ".ico", ".woff", ".woff2", ".ttf")
+    if any(request.path.endswith(ext) for ext in static_exts):
+        return None
+
+    return redirect("/login")
+
+
+@app.route("/login")
+def login_page():
+    """登录页面"""
+    if session.get("logged_in") and getattr(config, "AUTH_ENABLED", True):
+        return redirect("/")
+    return send_from_directory(_web_dir, "login.html")
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    """登录接口"""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "请提供登录信息"}), 400
+
+    username = data.get("username", "").strip()
+    password = data.get("password", "").strip()
+
+    expected_user = getattr(config, "AUTH_USERNAME", "admin")
+    expected_pass = getattr(config, "AUTH_PASSWORD", "bilimix2024")
+
+    if username == expected_user and password == expected_pass:
+        session["logged_in"] = True
+        session["username"] = username
+        return jsonify({"ok": True, "message": "登录成功"})
+    else:
+        return jsonify({"error": "用户名或密码错误"}), 401
+
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    """退出登录"""
+    session.clear()
+    return jsonify({"ok": True, "message": "已退出登录"})
+
+
+@app.route("/api/auth/check")
+def api_auth_check():
+    """检查登录状态"""
+    auth_enabled = getattr(config, "AUTH_ENABLED", True)
+    if not auth_enabled:
+        return jsonify({"authenticated": True, "auth_enabled": False})
+    return jsonify({
+        "authenticated": bool(session.get("logged_in")),
+        "auth_enabled": True,
+        "username": session.get("username", ""),
+    })
+
+
+# ============================================================
+# 核心处理流程（在后台线程中执行）
+# ============================================================
+
+def download_audio(url: str, save_path: str, task_id: str) -> bool:
+    """下载音频文件（支持终止）"""
+    try:
+        update_task(task_id, message="正在下载音频文件...")
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            total = resp.headers.get("Content-Length")
+            total = int(total) if total else None
+            downloaded = 0
+            chunk_size = 1024 * 64
+
+            with open(save_path, "wb") as f:
+                while True:
+                    if is_cancelled(task_id):
+                        f.close()
+                        if os.path.exists(save_path):
+                            os.remove(save_path)
+                        raise InterruptedError("任务已被用户终止")
+
+                    chunk = resp.read(chunk_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        pct = min(int(downloaded / total * 100), 100)
+                        update_task(task_id, message=f"正在下载音频... {pct}%")
+
+        size_mb = os.path.getsize(save_path) / (1024 * 1024)
+        update_task(task_id, message=f"音频下载完成 ({size_mb:.1f} MB)")
+        return True
+    except InterruptedError:
+        update_task(task_id, status="cancelled", message="任务已终止")
+        return False
+    except Exception as e:
+        update_task(task_id, status="error", message=f"下载失败: {str(e)}")
+        return False
+
+
+def generate_task_id(url: str) -> str:
+    """根据URL生成唯一任务ID"""
+    return hashlib.md5(url.encode("utf-8")).hexdigest()
+
+
+# ============================================================
+# 处理模式：word_replace（生词替换）
+# ============================================================
+
+def process_audio(task_id: str, audio_path: str):
+    """处理流程前半段：下载 → 转录 → 识词 → 暂停等待确认"""
+    try:
+        basename = os.path.splitext(os.path.basename(audio_path))[0]
+        result_dir = os.path.join(config.RESULT_DIR, basename)
+        os.makedirs(result_dir, exist_ok=True)
+
+        update_task(task_id, _basename=basename, _audio_path=audio_path)
+
+        # ---- Step 1: 转录 ----
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+
+        update_task(task_id, status="processing", step="transcribe",
+                    progress=5, message="Step 1/5: 正在转录音频...")
+
+        transcription = transcribe(audio_path)
+        full_text = extract_full_text(transcription)
+        word_timestamps = extract_word_timestamps(transcription)
+        segments = transcription.get("segments", [])
+
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+
+        update_task(task_id, progress=20,
+                    message=f"转录完成: {len(segments)} 个句子, {len(word_timestamps)} 个词",
+                    transcription_text=full_text,
+                    segments=[{"text": s.get("text", "").strip(),
+                               "start": s.get("start", 0),
+                               "end": s.get("end", 0)} for s in segments])
+
+        # ---- Step 2: 识别难词（批量模式） ----
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+
+        update_task(task_id, step="identify", progress=25,
+                    message="Step 2/5: 正在批量识别生词...")
+
+        def _progress_cb(batch_idx, total_batches):
+            pct = 25 + int((batch_idx / max(total_batches, 1)) * 35)
+            update_task(task_id, progress=pct,
+                        message=f"Step 2/5: 分析批次 ({batch_idx+1}/{total_batches})")
+
+        def _cancel_check():
+            return is_cancelled(task_id)
+
+        difficult_words = identify_difficult_words_by_segments(
+            segments, cancel_check=_cancel_check, progress_cb=_progress_cb)
+
+        llm_result_path = os.path.join(result_dir, "difficult_words.json")
+        with open(llm_result_path, "w", encoding="utf-8") as f:
+            json.dump(difficult_words, f, ensure_ascii=False, indent=2)
+
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+
+        update_task(task_id, progress=60,
+                    message=f"识别完成: 找到 {len(difficult_words)} 个生词/短语",
+                    difficult_words=difficult_words)
+
+        # ---- 确认生词环节 ----
+        task = get_task(task_id)
+        skip_confirm = task.get("skip_confirmation",
+                                getattr(config, "SKIP_CONFIRMATION", True))
+
+        if skip_confirm:
+            print(f"[Step2] 任务 {task_id[:8]}... 跳过确认，自动继续处理")
+            update_task(task_id, _raw_segments=segments,
+                        status="processing", step="synthesize", progress=61,
+                        message=f"自动确认 {len(difficult_words)} 个生词，继续处理...")
+            continue_after_confirmation(task_id)
+        else:
+            update_task(task_id, status="awaiting_confirmation",
+                        step="confirm", progress=60,
+                        message=f"已识别 {len(difficult_words)} 个生词/短语，请确认后继续",
+                        _raw_segments=segments)
+            save_task_result_to_disk(result_dir, {
+                "task_id": task_id,
+                "status": "awaiting_confirmation",
+                "transcription_text": full_text,
+                "segments": [{"text": s.get("text", "").strip(),
+                              "start": s.get("start", 0),
+                              "end": s.get("end", 0)} for s in segments],
+                "difficult_words": difficult_words,
+            })
+            print(f"[Step2] 任务 {task_id[:8]}... 暂停等待用户确认生词")
+
+    except InterruptedError:
+        update_task(task_id, status="cancelled", message="任务已被终止")
+    except Exception as e:
+        traceback.print_exc()
+        update_task(task_id, status="error", message=f"处理出错: {str(e)}")
+    finally:
+        task_subprocesses.pop(task_id, None)
+
+
+def continue_after_confirmation(task_id: str):
+    """处理流程后半段：定位 + TTS → 音频拼接 → 生词本 → 完成"""
+    try:
+        task = get_task(task_id)
+        if not task:
+            return
+
+        audio_path = task.get("_audio_path", "")
+        basename = task.get("_basename", "")
+        difficult_words = task.get("difficult_words", [])
+
+        segments = task.get("_raw_segments", [])
+        if not segments:
+            transcription_cache = os.path.join(config.OUTPUT_DIR, f"{basename}.json")
+            if os.path.exists(transcription_cache):
+                with open(transcription_cache, "r", encoding="utf-8") as f:
+                    transcription = json.load(f)
+                segments = transcription.get("segments", [])
+
+        full_text = task.get("transcription_text", "")
+        result_dir = os.path.join(config.RESULT_DIR, basename)
+        os.makedirs(result_dir, exist_ok=True)
+
+        if not difficult_words:
+            update_task(task_id, status="completed", progress=100,
+                        step="done", message="分析完成，未发现生词。",
+                        difficult_words=[])
+            return
+
+        llm_result_path = os.path.join(result_dir, "difficult_words.json")
+        with open(llm_result_path, "w", encoding="utf-8") as f:
+            json.dump(difficult_words, f, ensure_ascii=False, indent=2)
+
+        if task_id not in cancel_flags:
+            cancel_flags[task_id] = threading.Event()
+
+        # ---- Step 3: 定位 + TTS ----
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+
+        update_task(task_id, status="processing", step="synthesize", progress=62,
+                    message="Step 3/5: 定位时间戳并合成中文语音...")
+
+        replacements = locate_words_in_segments(difficult_words, segments)
+
+        tts_engine = getattr(config, "TTS_ENGINE", "edge-tts")
+        tts_audio_map = {}
+        tts_index_map = None
+
+        if tts_engine == "qwen3-tts":
+            update_task(task_id, progress=64,
+                        message="Step 3/5: 提取说话人参考音频...")
+            ref_dir = os.path.join(result_dir, "ref_audio")
+            ref_audio_map = extract_ref_audio_for_segments(
+                audio_path, segments, replacements, ref_dir)
+
+            if is_cancelled(task_id):
+                raise InterruptedError("任务已被用户终止")
+
+            adjacent_groups = group_adjacent_replacements(replacements)
+
+            update_task(task_id, progress=66,
+                        message="Step 3/5: 正在用 Qwen3-TTS 合成语音（声音克隆）...")
+            qwen_cache_dir = os.path.join(result_dir, "tts_cache")
+
+            def _tts_progress(current, total):
+                pct = 66 + int((current / max(total, 1)) * 14)
+                update_task(task_id, progress=pct,
+                            message=f"Step 3/5: Qwen3-TTS 合成中 ({current}/{total})")
+
+            def _tts_cancel():
+                return is_cancelled(task_id)
+
+            tts_map = synthesize_with_qwen_tts(
+                replacements, ref_audio_map, segments, qwen_cache_dir,
+                adjacent_groups=adjacent_groups,
+                cancel_check=_tts_cancel, progress_cb=_tts_progress,
+                task_id=task_id)
+
+            tts_index_map = build_tts_audio_map_for_replacements(
+                replacements, tts_map, adjacent_groups)
+        else:
+            adjacent_groups = group_adjacent_replacements(replacements)
+            tts_tasks = []
+            for group in adjacent_groups:
+                merged_text = _build_tts_text(group, replacements)
+                if len(group) == 1:
+                    group_key = f"single_{group[0]}"
+                else:
+                    group_key = f"merged_{group[0]}_{group[-1]}"
+                tts_tasks.append((group_key, merged_text, group))
+
+            unique_texts = {}
+            for gk, text, group in tts_tasks:
+                if text not in unique_texts:
+                    unique_texts[text] = gk
+
+            text_to_path = {}
+            for i, text in enumerate(unique_texts.keys()):
+                if is_cancelled(task_id):
+                    raise InterruptedError("任务已被用户终止")
+                pct = 62 + int((i / max(len(unique_texts), 1)) * 18)
+                update_task(task_id, progress=pct,
+                            message=f"Step 3/5: 合成语音 ({i+1}/{len(unique_texts)})")
+                path = synthesize_text(text)
+                text_to_path[text] = path
+
+            tts_index_map = {}
+            for gk, text, group in tts_tasks:
+                if text in text_to_path:
+                    tts_index_map[gk] = {"path": text_to_path[text], "indices": group}
+
+            for r in replacements:
+                if r["chinese"] in text_to_path:
+                    tts_audio_map[r["chinese"]] = text_to_path[r["chinese"]]
+                else:
+                    path = synthesize_text(r["chinese"])
+                    tts_audio_map[r["chinese"]] = path
+
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+
+        tts_count = len(tts_index_map) if tts_index_map else len(tts_audio_map)
+        update_task(task_id, progress=80,
+                    message=f"语音合成完成: {tts_count} 条中文语音 ({tts_engine})")
+
+        # ---- Step 4: 音频拼接 ----
+        update_task(task_id, step="merge", progress=82,
+                    message="Step 4/5: 正在拼接混合音频...")
+
+        original_audio = load_audio(audio_path)
+        mixed_audio, time_mapping = apply_replacements(
+            original_audio, replacements, tts_audio_map, tts_index_map)
+
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+
+        output_audio_path = os.path.join(
+            result_dir, f"{basename}_mixed.{config.OUTPUT_FORMAT}")
+        export_audio(mixed_audio, output_audio_path)
+
+        original_duration = len(original_audio) / 1000.0
+        mixed_duration = len(mixed_audio) / 1000.0
+
+        update_task(task_id, progress=92,
+                    message=f"音频生成完成: {original_duration:.1f}s → {mixed_duration:.1f}s")
+
+        # ---- Step 5: 生词本 ----
+        update_task(task_id, step="vocabulary", progress=95,
+                    message="Step 5/5: 生成生词本...")
+
+        from main import save_vocabulary_book
+        vocab_path = os.path.join(result_dir, "vocabulary_book.json")
+        save_vocabulary_book(difficult_words, replacements, vocab_path)
+
+        # ---- 完成 ----
+        serialized_replacements = [{
+            "english": r["english"], "chinese": r["chinese"],
+            "type": r["type"],
+            "start": round(r["start"], 2), "end": round(r["end"], 2),
+        } for r in replacements]
+
+        serialized_segments = [{"text": s.get("text", "").strip(),
+                                "start": s.get("start", 0),
+                                "end": s.get("end", 0)} for s in segments]
+
+        result_data = {
+            "basename": basename,
+            "original_audio": audio_path,
+            "mixed_audio": output_audio_path,
+            "original_duration": round(original_duration, 1),
+            "mixed_duration": round(mixed_duration, 1),
+            "total_words": len(difficult_words),
+            "total_replacements": len(replacements),
+            "vocabulary_book": vocab_path,
+        }
+
+        update_task(task_id, status="completed", step="done", progress=100,
+                    message="全部完成！", result=result_data,
+                    replacements=serialized_replacements,
+                    time_mapping=time_mapping)
+
+        save_task_result_to_disk(result_dir, {
+            "task_id": task_id, "status": "completed",
+            "transcription_text": full_text,
+            "segments": serialized_segments,
+            "difficult_words": difficult_words,
+            "replacements": serialized_replacements,
+            "result": result_data,
+            "time_mapping": time_mapping,
+        })
+
+        # ---- 保存生词到全局生词库 ----
+        try:
+            task_title = task.get("title", "") or basename
+            add_or_update_vocabulary(difficult_words, task_id, task_title)
+            print(f"[Vocab] 已保存 {len(difficult_words)} 个生词到全局生词库 (任务 {task_id[:8]}...)")
+        except Exception as ve:
+            print(f"[Vocab] 保存生词库失败: {ve}")
+
+    except InterruptedError:
+        update_task(task_id, status="cancelled", message="任务已被终止")
+    except Exception as e:
+        traceback.print_exc()
+        update_task(task_id, status="error", message=f"处理出错: {str(e)}")
+    finally:
+        cancel_flags.pop(task_id, None)
+        task_subprocesses.pop(task_id, None)
+
+
+# ============================================================
+# 处理模式：smart_translate（智能翻译）
+# ============================================================
+
+def process_audio_smart_mode(task_id: str, audio_path: str):
+    """智能翻译模式前半段：转录 → 识别生词 → 按生词选句 → 翻译 → [确认]"""
+    try:
+        basename = os.path.splitext(os.path.basename(audio_path))[0]
+        result_dir = os.path.join(config.RESULT_DIR, basename)
+        os.makedirs(result_dir, exist_ok=True)
+        update_task(task_id, _basename=basename, _audio_path=audio_path)
+
+        # ---- Step 1: 转录 ----
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+        update_task(task_id, status="processing", step="transcribe",
+                    progress=5, message="Step 1/5: 正在转录音频...")
+
+        transcription = transcribe(audio_path)
+        full_text = extract_full_text(transcription)
+        segments = transcription.get("segments", [])
+
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+
+        serialized_segments = [{"text": s.get("text", "").strip(),
+                                "start": s.get("start", 0),
+                                "end": s.get("end", 0)} for s in segments]
+        update_task(task_id, progress=20,
+                    message=f"转录完成: {len(segments)} 个句子",
+                    transcription_text=full_text, segments=serialized_segments)
+
+        # ---- Step 2: 识别生词 ----
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+        update_task(task_id, step="identify", progress=22,
+                    message="Step 2/5: 正在识别生词...")
+
+        def _identify_progress(batch_idx, total_batches):
+            pct = 22 + int((batch_idx / max(total_batches, 1)) * 18)
+            update_task(task_id, progress=pct,
+                        message=f"Step 2/5: 识别批次 ({batch_idx+1}/{total_batches})")
+
+        def _cancel_check():
+            return is_cancelled(task_id)
+
+        difficult_words = identify_difficult_words_by_segments(
+            segments, cancel_check=_cancel_check, progress_cb=_identify_progress)
+
+        llm_result_path = os.path.join(result_dir, "difficult_words.json")
+        with open(llm_result_path, "w", encoding="utf-8") as f:
+            json.dump(difficult_words, f, ensure_ascii=False, indent=2)
+
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+        update_task(task_id, progress=40,
+                    message=f"识别完成: {len(difficult_words)} 个生词/短语",
+                    difficult_words=difficult_words)
+
+        # ---- Step 3: 按生词选句 + 翻译 ----
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+        update_task(task_id, step="translate", progress=42,
+                    message="Step 3/5: 按生词选句并翻译...")
+
+        max_ratio = getattr(config, "SMART_MAX_TRANSLATE_RATIO", 0.7)
+        translated_indices = select_sentences_by_difficulty(
+            serialized_segments, difficult_words, max_ratio)
+
+        if not translated_indices:
+            update_task(task_id, status="completed", progress=100,
+                        step="done", message="未找到含生词的句子，无需翻译。")
+            return
+
+        update_task(task_id, progress=45,
+                    message=f"将翻译 {len(translated_indices)}/{len(segments)} 个含生词句子")
+
+        def _translate_progress(batch_idx, total_batches):
+            pct = 45 + int((batch_idx / max(total_batches, 1)) * 10)
+            update_task(task_id, progress=pct,
+                        message=f"Step 3/5: 翻译批次 ({batch_idx+1}/{total_batches})")
+
+        translations = translate_sentences(
+            serialized_segments, translated_indices,
+            cancel_check=_cancel_check, progress_cb=_translate_progress)
+
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+        update_task(task_id, progress=55,
+                    message=f"翻译完成: {len(translations)}/{len(translated_indices)} 个句子")
+
+        # ---- 确认翻译环节 ----
+        task = get_task(task_id)
+        skip_confirm = task.get("skip_confirmation",
+                                getattr(config, "SKIP_CONFIRMATION", True))
+
+        if skip_confirm:
+            print(f"[Smart] 任务 {task_id[:8]}... 跳过确认，自动继续处理")
+            update_task(task_id, translations=translations,
+                        translated_indices=translated_indices,
+                        _raw_segments=segments,
+                        status="processing", step="synthesize", progress=58,
+                        message=f"自动确认 {len(translations)} 个翻译，继续处理...")
+            continue_after_sentence_confirmation(task_id)
+        else:
+            update_task(task_id, status="awaiting_sentence_confirmation",
+                        step="confirm_sentence", progress=55,
+                        message=f"已翻译 {len(translations)} 个含生词句子，请确认后继续",
+                        translations=translations,
+                        translated_indices=translated_indices,
+                        _raw_segments=segments)
+            save_task_result_to_disk(result_dir, {
+                "task_id": task_id,
+                "status": "awaiting_sentence_confirmation",
+                "process_mode": "smart_translate",
+                "transcription_text": full_text,
+                "segments": serialized_segments,
+                "translations": translations,
+                "translated_indices": translated_indices,
+                "difficult_words": difficult_words,
+            })
+            print(f"[Smart] 任务 {task_id[:8]}... 暂停等待用户确认翻译")
+
+    except InterruptedError:
+        update_task(task_id, status="cancelled", message="任务已被终止")
+    except Exception as e:
+        traceback.print_exc()
+        update_task(task_id, status="error", message=f"处理出错: {str(e)}")
+    finally:
+        task_subprocesses.pop(task_id, None)
+
+
+# ============================================================
+# 处理模式：sentence_translate（句子翻译）
+# ============================================================
+
+def process_audio_sentence_mode(task_id: str, audio_path: str):
+    """句子翻译模式前半段：转录 → 翻译 → 暂停等待确认"""
+    try:
+        basename = os.path.splitext(os.path.basename(audio_path))[0]
+        result_dir = os.path.join(config.RESULT_DIR, basename)
+        os.makedirs(result_dir, exist_ok=True)
+        update_task(task_id, _basename=basename, _audio_path=audio_path)
+
+        # ---- Step 1: 转录 ----
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+        update_task(task_id, status="processing", step="transcribe",
+                    progress=5, message="Step 1/4: 正在转录音频...")
+
+        transcription = transcribe(audio_path)
+        full_text = extract_full_text(transcription)
+        segments = transcription.get("segments", [])
+
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+
+        serialized_segments = [{"text": s.get("text", "").strip(),
+                                "start": s.get("start", 0),
+                                "end": s.get("end", 0)} for s in segments]
+        update_task(task_id, progress=20,
+                    message=f"转录完成: {len(segments)} 个句子",
+                    transcription_text=full_text, segments=serialized_segments)
+
+        # ---- Step 2: 选择并翻译句子 ----
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+        update_task(task_id, step="translate", progress=25,
+                    message="Step 2/4: 正在翻译句子...")
+
+        ratio = getattr(config, "SENTENCE_CN_RATIO", 1.0)
+        translated_indices = select_sentences_to_translate(serialized_segments, ratio)
+
+        if not translated_indices:
+            update_task(task_id, status="completed", progress=100,
+                        step="done", message="没有需要翻译的句子。")
+            return
+
+        update_task(task_id, progress=30,
+                    message=f"将翻译 {len(translated_indices)}/{len(segments)} 个句子 "
+                            f"(比例: {ratio*100:.0f}%)")
+
+        def _translate_progress(batch_idx, total_batches):
+            pct = 30 + int((batch_idx / max(total_batches, 1)) * 25)
+            update_task(task_id, progress=pct,
+                        message=f"Step 2/4: 翻译批次 ({batch_idx+1}/{total_batches})")
+
+        def _cancel_check():
+            return is_cancelled(task_id)
+
+        translations = translate_sentences(
+            serialized_segments, translated_indices,
+            cancel_check=_cancel_check, progress_cb=_translate_progress)
+
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+        update_task(task_id, progress=55,
+                    message=f"翻译完成: {len(translations)}/{len(translated_indices)} 个句子")
+
+        # ---- 确认翻译环节 ----
+        task = get_task(task_id)
+        skip_confirm = task.get("skip_confirmation",
+                                getattr(config, "SKIP_CONFIRMATION", True))
+
+        if skip_confirm:
+            print(f"[Sentence] 任务 {task_id[:8]}... 跳过确认，自动继续处理")
+            update_task(task_id, translations=translations,
+                        translated_indices=translated_indices,
+                        _raw_segments=segments,
+                        status="processing", step="synthesize", progress=58,
+                        message=f"自动确认 {len(translations)} 个翻译，继续处理...")
+            continue_after_sentence_confirmation(task_id)
+        else:
+            update_task(task_id, status="awaiting_sentence_confirmation",
+                        step="confirm_sentence", progress=55,
+                        message=f"已翻译 {len(translations)} 个句子，请确认后继续",
+                        translations=translations,
+                        translated_indices=translated_indices,
+                        _raw_segments=segments)
+            save_task_result_to_disk(result_dir, {
+                "task_id": task_id,
+                "status": "awaiting_sentence_confirmation",
+                "process_mode": "sentence_translate",
+                "transcription_text": full_text,
+                "segments": serialized_segments,
+                "translations": translations,
+                "translated_indices": translated_indices,
+            })
+            print(f"[Sentence] 任务 {task_id[:8]}... 暂停等待用户确认翻译")
+
+    except InterruptedError:
+        update_task(task_id, status="cancelled", message="任务已被终止")
+    except Exception as e:
+        traceback.print_exc()
+        update_task(task_id, status="error", message=f"处理出错: {str(e)}")
+    finally:
+        task_subprocesses.pop(task_id, None)
+
+
+# ============================================================
+# 句子翻译/智能翻译的共享后半段
+# ============================================================
+
+def continue_after_sentence_confirmation(task_id: str):
+    """句子翻译模式后半段：TTS 合成 → 音频组装 → 完成"""
+    try:
+        task = get_task(task_id)
+        if not task:
+            return
+
+        audio_path = task.get("_audio_path", "")
+        basename = task.get("_basename", "")
+        translations = task.get("translations", {})
+        translated_indices = task.get("translated_indices", [])
+        segments = task.get("segments", [])
+
+        if not segments:
+            raw_segs = task.get("_raw_segments", [])
+            if raw_segs:
+                segments = [{"text": s.get("text", "").strip(),
+                             "start": s.get("start", 0),
+                             "end": s.get("end", 0)} for s in raw_segs]
+
+        full_text = task.get("transcription_text", "")
+        result_dir = os.path.join(config.RESULT_DIR, basename)
+        os.makedirs(result_dir, exist_ok=True)
+
+        translations = {int(k): v for k, v in translations.items()}
+        translated_indices = sorted([idx for idx in translated_indices
+                                     if idx in translations])
+
+        if not translations:
+            update_task(task_id, status="completed", progress=100,
+                        step="done", message="没有翻译内容，已完成。")
+            return
+
+        if task_id not in cancel_flags:
+            cancel_flags[task_id] = threading.Event()
+
+        # ---- Step 3: TTS 合成 ----
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+
+        tts_engine = getattr(config, "TTS_ENGINE", "edge-tts")
+        voice_clone = getattr(config, "SENTENCE_TTS_VOICE_CLONE", True)
+
+        update_task(task_id, status="processing", step="synthesize", progress=60,
+                    message="Step 3/4: 合成中文语音...")
+
+        tts_audio_map = {}
+
+        if tts_engine == "qwen3-tts" and voice_clone:
+            qwen_cache_dir = os.path.join(result_dir, "tts_sent_cache")
+
+            def _tts_progress(current, total):
+                pct = 60 + int((current / max(total, 1)) * 20)
+                update_task(task_id, progress=pct,
+                            message=f"Step 3/4: Qwen3-TTS 句子合成 ({current}/{total})")
+
+            def _tts_cancel():
+                return is_cancelled(task_id)
+
+            tts_audio_map = synthesize_sentences_with_qwen_tts(
+                segments, translated_indices, translations,
+                audio_path, qwen_cache_dir,
+                voice_clone=True,
+                cancel_check=_tts_cancel, progress_cb=_tts_progress,
+                task_id=task_id)
+        else:
+            from pipeline.step3_tts_synthesize import synthesize_text as edge_synthesize
+            total = len(translated_indices)
+            for i, seg_idx in enumerate(translated_indices):
+                if is_cancelled(task_id):
+                    raise InterruptedError("任务已被用户终止")
+                chinese = translations.get(seg_idx, "")
+                if chinese:
+                    pct = 60 + int((i / max(total, 1)) * 20)
+                    update_task(task_id, progress=pct,
+                                message=f"Step 3/4: Edge-TTS 合成 ({i+1}/{total})")
+                    path = edge_synthesize(chinese)
+                    tts_audio_map[seg_idx] = path
+
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+
+        update_task(task_id, progress=80,
+                    message=f"语音合成完成: {len(tts_audio_map)} 条中文语音")
+
+        # ---- Step 4: 中英交替音频组装 ----
+        update_task(task_id, step="merge", progress=82,
+                    message="Step 4/4: 组装中英交替音频...")
+
+        output_audio_path = os.path.join(
+            result_dir, f"{basename}_sentence.{config.OUTPUT_FORMAT}")
+
+        mix_result = mix_sentence_audio(
+            audio_path=audio_path, segments=segments,
+            translated_indices=translated_indices,
+            translations=translations,
+            tts_audio_map=tts_audio_map,
+            output_path=output_audio_path)
+
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+
+        # ---- 完成 ----
+        result_data = {
+            "basename": basename,
+            "original_audio": audio_path,
+            "mixed_audio": output_audio_path,
+            "original_duration": mix_result["original_duration"],
+            "mixed_duration": mix_result["mixed_duration"],
+            "total_segments": mix_result["total_segments"],
+            "translated_segments": mix_result["translated_segments"],
+            "process_mode": task.get("process_mode", "sentence_translate"),
+        }
+
+        sentence_pairs = []
+        for seg_idx in translated_indices:
+            if seg_idx in translations and seg_idx < len(segments):
+                sentence_pairs.append({
+                    "index": seg_idx,
+                    "english": segments[seg_idx].get("text", "").strip(),
+                    "chinese": translations[seg_idx],
+                    "start": segments[seg_idx].get("start", 0),
+                    "end": segments[seg_idx].get("end", 0),
+                })
+
+        actual_mode = task.get("process_mode", "sentence_translate")
+
+        update_task(task_id, status="completed", step="done", progress=100,
+                    message="全部完成！", result=result_data,
+                    sentence_pairs=sentence_pairs,
+                    time_mapping=mix_result["time_mapping"])
+
+        save_task_result_to_disk(result_dir, {
+            "task_id": task_id, "status": "completed",
+            "process_mode": actual_mode,
+            "transcription_text": full_text,
+            "segments": segments,
+            "difficult_words": task.get("difficult_words", []),
+            "translations": translations,
+            "translated_indices": translated_indices,
+            "sentence_pairs": sentence_pairs,
+            "result": result_data,
+            "time_mapping": mix_result["time_mapping"],
+        })
+
+        # ---- 保存生词到全局生词库（智能翻译模式也有生词识别） ----
+        try:
+            dw = task.get("difficult_words", [])
+            if dw:
+                task_title = task.get("title", "") or basename
+                add_or_update_vocabulary(dw, task_id, task_title)
+                print(f"[Vocab] 已保存 {len(dw)} 个生词到全局生词库 (任务 {task_id[:8]}...)")
+        except Exception as ve:
+            print(f"[Vocab] 保存生词库失败: {ve}")
+
+    except InterruptedError:
+        update_task(task_id, status="cancelled", message="任务已被终止")
+    except Exception as e:
+        traceback.print_exc()
+        update_task(task_id, status="error", message=f"处理出错: {str(e)}")
+    finally:
+        cancel_flags.pop(task_id, None)
+        task_subprocesses.pop(task_id, None)
+
+
+# ============================================================
+# 辅助函数
+# ============================================================
+
+def translate_word_via_llm(english: str, context_sentence: str = "") -> str:
+    """调用 Ollama 翻译单个词/短语为中文（基于句子语境）"""
+    from pipeline.step2_identify_difficult_words import call_ollama
+
+    if context_sentence:
+        prompt = f"""请根据以下英文句子的语境，翻译其中的"{english}"为中文。
+
+要求：
+1. 翻译必须基于该词/短语在句子中的实际用法和词性
+2. 只给一个最贴合语境的中文翻译
+3. 不要解释，不要额外内容，直接输出中文翻译
+4. 不要用分号、斜杠列举多个含义
+
+英文句子：{context_sentence}
+要翻译的词/短语：{english}"""
+    else:
+        prompt = f"""请将以下英文单词或短语翻译为中文，只给一个最常用的释义，不要解释，不要额外内容，直接输出中文翻译：
+
+{english}"""
+
+    response = call_ollama(prompt)
+    for line in response.strip().split("\n"):
+        line = line.strip()
+        if line:
+            line = re.split(r'[；;/、]', line)[0].strip()
+            line = re.sub(r'[（(][^）)]*[）)]', '', line).strip()
+            return line if line else english
+    return english
+
+
+# ============================================================
+# API 路由 — 播客收藏
+# ============================================================
+
+@app.route("/api/favorites")
+def api_get_favorites():
+    """获取全部播客收藏"""
+    return jsonify({"favorites": get_favorites()})
+
+
+@app.route("/api/favorites", methods=["POST"])
+def api_add_favorite():
+    """添加播客收藏"""
+    data = request.get_json()
+    if not data or "rss_url" not in data:
+        return jsonify({"error": "请提供 rss_url"}), 400
+    fav = add_favorite(
+        title=data.get("title", ""),
+        author=data.get("author", ""),
+        image=data.get("image", ""),
+        rss_url=data["rss_url"],
+    )
+    return jsonify({"ok": True, "favorite": fav})
+
+
+@app.route("/api/favorites", methods=["DELETE"])
+def api_remove_favorite():
+    """移除播客收藏"""
+    data = request.get_json()
+    if not data or "rss_url" not in data:
+        return jsonify({"error": "请提供 rss_url"}), 400
+    remove_favorite(data["rss_url"])
+    return jsonify({"ok": True})
+
+
+@app.route("/api/favorites/check")
+def api_check_favorite():
+    """检查是否已收藏"""
+    rss_url = request.args.get("rss_url", "").strip()
+    if not rss_url:
+        return jsonify({"error": "请提供 rss_url"}), 400
+    return jsonify({"is_favorite": is_favorite(rss_url)})
+
+
+# ============================================================
+# API 路由 — RSS 订阅管理
+# ============================================================
+
+@app.route("/api/subscriptions")
+def api_get_subscriptions():
+    """获取全部 RSS 订阅"""
+    return jsonify({"subscriptions": get_subscriptions()})
+
+
+@app.route("/api/subscriptions", methods=["POST"])
+def api_add_subscription():
+    """添加 RSS 订阅"""
+    data = request.get_json()
+    if not data or "rss_url" not in data:
+        return jsonify({"error": "请提供 rss_url"}), 400
+    sub = add_subscription(
+        title=data.get("title", ""),
+        author=data.get("author", ""),
+        image=data.get("image", ""),
+        rss_url=data["rss_url"],
+    )
+    return jsonify({"ok": True, "subscription": sub})
+
+
+@app.route("/api/subscriptions", methods=["DELETE"])
+def api_remove_subscription():
+    """移除 RSS 订阅"""
+    data = request.get_json()
+    if not data or "rss_url" not in data:
+        return jsonify({"error": "请提供 rss_url"}), 400
+    remove_subscription(data["rss_url"])
+    return jsonify({"ok": True})
+
+
+# ============================================================
+# API 路由 — 搜索历史
+# ============================================================
+
+@app.route("/api/search-history/suggestions")
+def api_search_suggestions():
+    """获取搜索建议"""
+    prefix = request.args.get("q", "").strip()
+    suggestions = get_search_suggestions(prefix)
+    return jsonify({"suggestions": suggestions})
+
+
+@app.route("/api/search-history", methods=["POST"])
+def api_add_search_history():
+    """记录搜索关键词"""
+    data = request.get_json()
+    if data and "keyword" in data:
+        add_search_keyword(data["keyword"])
+    return jsonify({"ok": True})
+
+
+@app.route("/api/search-history", methods=["DELETE"])
+def api_clear_search_history():
+    """清空搜索历史"""
+    clear_search_history()
+    return jsonify({"ok": True})
+
+
+# ============================================================
+# API 路由 — 最近使用的播客
+# ============================================================
+
+@app.route("/api/recent-podcasts")
+def api_recent_podcasts():
+    """获取最近使用的播客源"""
+    podcasts = get_recent_podcasts()
+    return jsonify({"podcasts": podcasts})
+
+
+# ============================================================
+# API 路由 — 全局生词库
+# ============================================================
+
+@app.route("/api/vocabulary")
+def api_vocabulary_list():
+    """获取生词库列表（支持排序、筛选、搜索、分页）"""
+    sort_by = request.args.get("sort_by", "last_seen_at")
+    sort_order = request.args.get("sort_order", "desc")
+    filter_mastered = request.args.get("filter_mastered", "all")
+    filter_type = request.args.get("filter_type", "")
+    filter_freq = request.args.get("filter_freq", "")
+    search = request.args.get("search", "")
+    page = int(request.args.get("page", 1))
+    page_size = int(request.args.get("page_size", 50))
+
+    result = get_vocabulary(
+        sort_by=sort_by, sort_order=sort_order,
+        filter_mastered=filter_mastered, filter_type=filter_type,
+        filter_freq=filter_freq, search=search,
+        page=page, page_size=page_size,
+    )
+    return jsonify(result)
+
+
+@app.route("/api/vocabulary/stats")
+def api_vocabulary_stats():
+    """获取生词库统计信息"""
+    stats = get_vocabulary_stats()
+    return jsonify(stats)
+
+
+@app.route("/api/vocabulary/<int:vocab_id>/toggle_mastered", methods=["POST"])
+def api_vocabulary_toggle_mastered(vocab_id):
+    """切换生词掌握状态"""
+    result = toggle_vocabulary_mastered(vocab_id)
+    if not result:
+        return jsonify({"error": "生词不存在"}), 404
+    return jsonify({"ok": True, "word": result})
+
+
+@app.route("/api/vocabulary/<int:vocab_id>", methods=["DELETE"])
+def api_vocabulary_delete(vocab_id):
+    """删除单个生词"""
+    delete_vocabulary(vocab_id)
+    return jsonify({"ok": True})
+
+
+# ============================================================
+# API 路由 — 播客搜索
+# ============================================================
+
+@app.route("/api/podcast/search")
+def podcast_search():
+    """搜索播客"""
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify({"error": "请提供搜索关键词 q"}), 400
+    # 记录搜索历史
+    add_search_keyword(q)
+    result = search_podcasts_castos(q)
+    if "error" in result:
+        return jsonify({"error": result["error"]}), 500
+    return jsonify(result)
+
+
+@app.route("/api/podcast/rss")
+def podcast_rss():
+    """通过 RSS Feed URL 解析播客单集列表"""
+    feed_url = request.args.get("url", "").strip()
+    if not feed_url:
+        return jsonify({"error": "请提供 RSS Feed URL"}), 400
+    if not feed_url.startswith(("http://", "https://")):
+        return jsonify({"error": "请提供有效的 HTTP/HTTPS URL"}), 400
+    result = parse_rss_feed(feed_url)
+    if "error" in result:
+        return jsonify({"error": result["error"]}), 500
+    return jsonify(result)
+
+
+# ============================================================
+# API 路由 — 任务操作
+# ============================================================
+
+@app.route("/")
+def index():
+    """主页"""
+    return send_from_directory(_web_dir, "index.html")
+
+
+@app.route("/api/submit", methods=["POST"])
+def submit_task():
+    """提交音频处理任务"""
+    data = request.get_json()
+    if not data or "url" not in data:
+        return jsonify({"error": "请提供音频URL"}), 400
+
+    audio_url = data["url"].strip()
+    if not audio_url.startswith(("http://", "https://")):
+        return jsonify({"error": "请提供有效的HTTP/HTTPS URL"}), 400
+
+    difficulty = data.get("difficulty", config.DIFFICULTY_LEVEL)
+    process_mode = data.get("process_mode",
+                            getattr(config, "PROCESS_MODE", "word_replace"))
+    skip_confirmation = data.get("skip_confirmation",
+                                 getattr(config, "SKIP_CONFIRMATION", True))
+    title = data.get("title", "").strip()
+
+    task_id = generate_task_id(audio_url + str(time.time()))
+
+    cancel_flags[task_id] = threading.Event()
+
+    with tasks_lock:
+        tasks[task_id] = {
+            "task_id": task_id,
+            "url": audio_url,
+            "title": title,
+            "difficulty": difficulty,
+            "process_mode": process_mode,
+            "skip_confirmation": skip_confirmation,
+            "status": "downloading",
+            "step": "download",
+            "progress": 0,
+            "message": "任务已创建，准备下载...",
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "transcription_text": "",
+            "segments": [],
+            "difficult_words": [],
+            "replacements": [],
+            "translations": {},
+            "translated_indices": [],
+            "result": None,
+            "_basename": "",
+            "_audio_path": "",
+        }
+
+    def worker():
+        basename = hashlib.md5(audio_url.encode()).hexdigest()
+        ext = os.path.splitext(audio_url.split("?")[0])[-1] or ".mp3"
+        if ext not in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"):
+            ext = ".mp3"
+        audio_path = os.path.join(config.DOWNLOAD_DIR, f"{basename}{ext}")
+        update_task(task_id, _basename=basename, _audio_path=audio_path)
+
+        if os.path.exists(audio_path):
+            update_task(task_id, progress=5, message="音频文件已存在，跳过下载")
+        else:
+            if not download_audio(audio_url, audio_path, task_id):
+                return
+
+        task = get_task(task_id)
+        mode = task.get("process_mode", "word_replace")
+        if mode == "smart_translate":
+            process_audio_smart_mode(task_id, audio_path)
+        elif mode == "sentence_translate":
+            process_audio_sentence_mode(task_id, audio_path)
+        else:
+            process_audio(task_id, audio_path)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+    return jsonify({"task_id": task_id, "message": "任务已提交"})
+
+
+@app.route("/api/task/<task_id>/cancel", methods=["POST"])
+def cancel_task(task_id):
+    """终止正在运行的任务"""
+    task = get_task(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
+
+    status = task.get("status", "")
+    if status in ("completed", "error", "cancelled"):
+        return jsonify({"error": f"任务已是 {status} 状态，无需终止"}), 400
+
+    event = cancel_flags.get(task_id)
+    if event:
+        event.set()
+
+    proc = task_subprocesses.get(task_id)
+    if proc and proc.poll() is None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    update_task(task_id, status="cancelled", message="任务已被终止")
+    return jsonify({"message": "任务终止请求已发送"})
+
+
+@app.route("/api/task/<task_id>/confirm", methods=["POST"])
+def confirm_words(task_id):
+    """用户确认生词后，继续执行后续流程"""
+    task = get_task(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
+    if task.get("status") != "awaiting_confirmation":
+        return jsonify({"error": f"任务状态为 {task.get('status')}，不在等待确认状态"}), 400
+
+    data = request.get_json()
+    if not data or "difficult_words" not in data:
+        return jsonify({"error": "请提供 difficult_words"}), 400
+
+    confirmed_words = data["difficult_words"]
+    update_task(task_id, difficult_words=confirmed_words,
+                status="processing", step="synthesize", progress=61,
+                message=f"用户确认 {len(confirmed_words)} 个生词，继续处理...")
+
+    thread = threading.Thread(target=continue_after_confirmation,
+                              args=(task_id,), daemon=True)
+    thread.start()
+    return jsonify({"message": f"已确认 {len(confirmed_words)} 个生词，继续处理"})
+
+
+@app.route("/api/task/<task_id>/confirm_sentences", methods=["POST"])
+def confirm_sentences(task_id):
+    """用户确认翻译后，继续执行句子翻译模式的后续流程"""
+    task = get_task(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
+    if task.get("status") != "awaiting_sentence_confirmation":
+        return jsonify({"error": f"任务状态为 {task.get('status')}，不在等待句子确认状态"}), 400
+
+    data = request.get_json()
+    if not data or "translations" not in data:
+        return jsonify({"error": "请提供 translations"}), 400
+
+    confirmed_translations = {int(k): v for k, v in data["translations"].items()}
+    confirmed_indices = data.get("translated_indices", [])
+    if confirmed_indices:
+        confirmed_indices = [int(i) for i in confirmed_indices]
+    else:
+        confirmed_indices = sorted(confirmed_translations.keys())
+
+    update_task(task_id, translations=confirmed_translations,
+                translated_indices=confirmed_indices,
+                status="processing", step="synthesize", progress=58,
+                message=f"用户确认 {len(confirmed_translations)} 个翻译，继续处理...")
+
+    thread = threading.Thread(target=continue_after_sentence_confirmation,
+                              args=(task_id,), daemon=True)
+    thread.start()
+    return jsonify({"message": f"已确认 {len(confirmed_translations)} 个翻译，继续处理"})
+
+
+@app.route("/api/translate", methods=["POST"])
+def translate_word():
+    """翻译单个词/短语为中文"""
+    data = request.get_json()
+    if not data or "english" not in data:
+        return jsonify({"error": "请提供 english"}), 400
+    english = data["english"].strip()
+    if not english:
+        return jsonify({"error": "英文内容不能为空"}), 400
+    context_sentence = data.get("context_sentence", "").strip()
+    chinese = translate_word_via_llm(english, context_sentence)
+    return jsonify({"english": english, "chinese": chinese})
+
+
+@app.route("/api/word-levels", methods=["POST"])
+def get_word_levels():
+    """返回给定单词列表中每个单词的 BNC/COCA 词频等级"""
+    data = request.get_json()
+    if not data or "words" not in data:
+        return jsonify({"error": "请提供 words"}), 400
+
+    word_to_level = get_word_to_level()
+    words = data["words"]
+    result = {}
+    for w in words:
+        w_lower = w.lower().strip()
+        clean = re.sub(r"[^a-zA-Z'-]", "", w_lower)
+        if clean and clean in word_to_level:
+            result[w_lower] = word_to_level[clean]
+
+    return jsonify({"levels": result, "level_nums": get_level_to_num_map()})
+
+
+# ============================================================
+# API 路由 — 配置
+# ============================================================
+
+@app.route("/api/config")
+def api_get_config():
+    """返回前端需要的全部配置"""
+    return jsonify(get_all_config())
+
+
+@app.route("/api/config", methods=["POST"])
+def api_save_config():
+    """保存配置（更新内存 + 写回文件）"""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "无效的配置数据"}), 400
+
+    updated, error = update_config(data)
+    if error:
+        return jsonify({"error": error, "updated": updated}), 207
+    return jsonify({"ok": True, "updated": updated})
+
+
+# ============================================================
+# API 路由 — 任务查询与管理
+# ============================================================
+
+@app.route("/api/tasks")
+def list_tasks():
+    """获取所有历史任务列表"""
+    index = load_tasks_index()
+    result = {}
+    for tid, summary in index.items():
+        result[tid] = summary
+
+    with tasks_lock:
+        for tid, task in tasks.items():
+            result[tid] = {
+                "task_id": task.get("task_id"),
+                "url": task.get("url", ""),
+                "title": task.get("title", ""),
+                "difficulty": task.get("difficulty", ""),
+                "status": task.get("status"),
+                "progress": task.get("progress", 0),
+                "message": task.get("message", ""),
+                "created_at": task.get("created_at", ""),
+                "basename": (task.get("result", {}).get("basename", "")
+                             if task.get("result") else task.get("_basename", "")),
+                "total_words": (task.get("result", {}).get("total_words", 0)
+                                if task.get("result") else 0),
+                "total_replacements": (task.get("result", {}).get("total_replacements", 0)
+                                       if task.get("result") else 0),
+                "original_duration": (task.get("result", {}).get("original_duration", 0)
+                                      if task.get("result") else 0),
+                "mixed_duration": (task.get("result", {}).get("mixed_duration", 0)
+                                   if task.get("result") else 0),
+            }
+
+    sorted_tasks = sorted(result.values(),
+                          key=lambda t: t.get("created_at", ""), reverse=True)
+    return jsonify({"tasks": sorted_tasks})
+
+
+@app.route("/api/task/<task_id>", methods=["DELETE"])
+def delete_task(task_id):
+    """删除历史任务及其关联文件"""
+    task = get_task(task_id)
+    index = load_tasks_index()
+
+    if not task and task_id not in index:
+        return jsonify({"error": "任务不存在"}), 404
+
+    # 如果任务还在运行，先终止
+    if task and task.get("status") in ("downloading", "processing"):
+        event = cancel_flags.get(task_id)
+        if event:
+            event.set()
+        proc = task_subprocesses.get(task_id)
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+    basename = ""
+    audio_path = ""
+    if task:
+        basename = task.get("_basename", "")
+        audio_path = task.get("_audio_path", "")
+        if not basename and task.get("result"):
+            basename = task["result"].get("basename", "")
+    if not basename and task_id in index:
+        basename = index[task_id].get("basename", "")
+
+    cleaned = []
+    if basename:
+        result_dir = os.path.join(config.RESULT_DIR, basename)
+        if os.path.isdir(result_dir):
+            shutil.rmtree(result_dir, ignore_errors=True)
+            cleaned.append(f"data/results/{basename}/")
+
+        output_json = os.path.join(config.OUTPUT_DIR, f"{basename}.json")
+        if os.path.exists(output_json):
+            os.remove(output_json)
+            cleaned.append(f"data/transcripts/{basename}.json")
+
+        if audio_path and os.path.exists(audio_path):
+            os.remove(audio_path)
+            cleaned.append(os.path.basename(audio_path))
+        else:
+            for ext in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"):
+                p = os.path.join(config.DOWNLOAD_DIR, f"{basename}{ext}")
+                if os.path.exists(p):
+                    os.remove(p)
+                    cleaned.append(f"data/downloads/{basename}{ext}")
+
+    with tasks_lock:
+        tasks.pop(task_id, None)
+    cancel_flags.pop(task_id, None)
+    task_subprocesses.pop(task_id, None)
+
+    if task_id in index:
+        delete_task_from_index(task_id)
+
+    return jsonify({"message": "任务已删除", "cleaned_files": cleaned})
+
+
+@app.route("/api/task/<task_id>")
+def get_task_status(task_id):
+    """查询任务状态"""
+    task = get_task(task_id)
+    if not task:
+        task = restore_task_from_disk(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
+
+    return jsonify({
+        "task_id": task.get("task_id"),
+        "status": task.get("status"),
+        "step": task.get("step"),
+        "progress": task.get("progress", 0),
+        "message": task.get("message", ""),
+        "process_mode": task.get("process_mode", "word_replace"),
+    })
+
+
+@app.route("/api/task/<task_id>/result")
+def get_task_result(task_id):
+    """获取完整任务结果"""
+    task = get_task(task_id)
+    if not task:
+        task = restore_task_from_disk(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
+
+    return jsonify({
+        "task_id": task.get("task_id"),
+        "status": task.get("status"),
+        "progress": task.get("progress", 0),
+        "message": task.get("message", ""),
+        "process_mode": task.get("process_mode", "word_replace"),
+        "title": task.get("title", ""),
+        "transcription_text": task.get("transcription_text", ""),
+        "segments": task.get("segments", []),
+        "difficult_words": task.get("difficult_words", []),
+        "replacements": task.get("replacements", []),
+        "translations": task.get("translations", {}),
+        "translated_indices": task.get("translated_indices", []),
+        "sentence_pairs": task.get("sentence_pairs", []),
+        "result": task.get("result"),
+        "time_mapping": task.get("time_mapping", []),
+    })
+
+
+@app.route("/api/audio/<path:filename>")
+def serve_audio(filename):
+    """服务音频文件"""
+    mime_map = {
+        ".mp3": "audio/mpeg", ".wav": "audio/wav",
+        ".m4a": "audio/mp4", ".ogg": "audio/ogg",
+        ".flac": "audio/flac", ".aac": "audio/aac",
+    }
+    ext = os.path.splitext(filename)[1].lower()
+    mime = mime_map.get(ext, "audio/mpeg")
+
+    result_path = os.path.join(config.RESULT_DIR, filename)
+    if os.path.exists(result_path):
+        return send_file(result_path, mimetype=mime)
+
+    download_path = os.path.join(config.DOWNLOAD_DIR, filename)
+    if os.path.exists(download_path):
+        return send_file(download_path, mimetype=mime)
+
+    root_path = os.path.join(config.BASE_DIR, filename)
+    if os.path.exists(root_path):
+        return send_file(root_path, mimetype=mime)
+
+    return jsonify({"error": "文件不存在"}), 404
+
+
+# ============================================================
+# API 索引 — 暴露全部接口供 Agent 调用
+# ============================================================
+
+@app.route("/api")
+def api_index():
+    """返回所有可用 API 端点的元信息，方便 Agent 发现和调用"""
+    endpoints = [
+        {
+            "path": "/api/submit",
+            "method": "POST",
+            "summary": "提交音频处理任务",
+            "description": "下载远程音频并进行转录、生词识别、TTS合成、混合音频等处理",
+            "request_body": {
+                "content_type": "application/json",
+                "fields": {
+                    "url": {"type": "string", "required": True, "description": "音频文件的 HTTP/HTTPS URL"},
+                    "difficulty": {"type": "string", "required": False, "description": "难度等级，如 CET-4, CET-6, IELTS, GRE 等", "default": "CET-4"},
+                    "process_mode": {"type": "string", "required": False, "description": "处理模式: word_replace(生词替换) / smart_translate(智能翻译) / sentence_translate(逐句翻译)", "default": "word_replace"},
+                    "skip_confirmation": {"type": "boolean", "required": False, "description": "是否跳过人工确认步骤", "default": True},
+                },
+            },
+            "response": {"task_id": "string", "message": "string"},
+        },
+        {
+            "path": "/api/tasks",
+            "method": "GET",
+            "summary": "获取所有历史任务列表",
+            "description": "返回所有任务（含内存中运行的和磁盘上已完成的），按创建时间倒序排列",
+            "response": {
+                "tasks": [{"task_id": "string", "url": "string", "status": "string",
+                           "difficulty": "string", "progress": "number",
+                           "message": "string", "created_at": "string",
+                           "basename": "string", "total_words": "number",
+                           "total_replacements": "number",
+                           "original_duration": "number", "mixed_duration": "number"}]
+            },
+        },
+        {
+            "path": "/api/task/<task_id>",
+            "method": "GET",
+            "summary": "查询任务状态",
+            "description": "返回指定任务的当前状态、进度、步骤等信息",
+            "params": {"task_id": {"in": "path", "type": "string", "required": True, "description": "任务ID"}},
+            "response": {"task_id": "string", "status": "string", "step": "string",
+                         "progress": "number", "message": "string", "process_mode": "string"},
+        },
+        {
+            "path": "/api/task/<task_id>/result",
+            "method": "GET",
+            "summary": "获取完整任务结果",
+            "description": "返回任务的转录文本、分段、生词、替换、翻译、混合音频路径等完整结果",
+            "params": {"task_id": {"in": "path", "type": "string", "required": True, "description": "任务ID"}},
+            "response": {"task_id": "string", "status": "string", "process_mode": "string",
+                         "transcription_text": "string", "segments": "array",
+                         "difficult_words": "array", "replacements": "array",
+                         "translations": "object", "translated_indices": "array",
+                         "sentence_pairs": "array", "result": "object", "time_mapping": "array"},
+        },
+        {
+            "path": "/api/task/<task_id>/cancel",
+            "method": "POST",
+            "summary": "终止正在运行的任务",
+            "description": "向指定任务发送终止信号，任务状态变为 cancelled",
+            "params": {"task_id": {"in": "path", "type": "string", "required": True, "description": "任务ID"}},
+            "response": {"message": "string"},
+        },
+        {
+            "path": "/api/task/<task_id>/confirm",
+            "method": "POST",
+            "summary": "确认生词列表并继续处理",
+            "description": "在 word_replace 模式下，用户确认/编辑生词后提交，任务继续执行 TTS 合成和混合",
+            "params": {"task_id": {"in": "path", "type": "string", "required": True, "description": "任务ID"}},
+            "request_body": {
+                "content_type": "application/json",
+                "fields": {
+                    "difficult_words": {"type": "array", "required": True,
+                                        "description": "确认后的生词列表，每项包含 word, translation, start, end 等字段"},
+                },
+            },
+            "response": {"message": "string"},
+        },
+        {
+            "path": "/api/task/<task_id>/confirm_sentences",
+            "method": "POST",
+            "summary": "确认句子翻译并继续处理",
+            "description": "在 sentence_translate / smart_translate 模式下，用户确认/编辑翻译后提交",
+            "params": {"task_id": {"in": "path", "type": "string", "required": True, "description": "任务ID"}},
+            "request_body": {
+                "content_type": "application/json",
+                "fields": {
+                    "translations": {"type": "object", "required": True,
+                                     "description": "翻译映射 {句子索引: 翻译文本}"},
+                    "translated_indices": {"type": "array", "required": False,
+                                           "description": "需要翻译的句子索引列表"},
+                },
+            },
+            "response": {"message": "string"},
+        },
+        {
+            "path": "/api/task/<task_id>",
+            "method": "DELETE",
+            "summary": "删除历史任务及其关联文件",
+            "description": "删除指定任务的所有数据，包括下载文件、结果目录、索引记录等",
+            "params": {"task_id": {"in": "path", "type": "string", "required": True, "description": "任务ID"}},
+            "response": {"message": "string", "cleaned_files": "array"},
+        },
+        {
+            "path": "/api/translate",
+            "method": "POST",
+            "summary": "翻译单个英文词/短语为中文",
+            "description": "调用 LLM 将英文单词或短语翻译为中文，可提供上下文句子以提升翻译准确度",
+            "request_body": {
+                "content_type": "application/json",
+                "fields": {
+                    "english": {"type": "string", "required": True, "description": "待翻译的英文单词或短语"},
+                    "context_sentence": {"type": "string", "required": False, "description": "单词所在的上下文句子"},
+                },
+            },
+            "response": {"english": "string", "chinese": "string"},
+        },
+        {
+            "path": "/api/word-levels",
+            "method": "POST",
+            "summary": "查询单词的 BNC/COCA 词频等级",
+            "description": "批量查询单词在 BNC/COCA 词频表中的等级（如 CET-4, CET-6, GRE 等）",
+            "request_body": {
+                "content_type": "application/json",
+                "fields": {
+                    "words": {"type": "array", "required": True, "description": "待查询的单词列表"},
+                },
+            },
+            "response": {"levels": "object", "level_nums": "object"},
+        },
+        {
+            "path": "/api/config",
+            "method": "GET",
+            "summary": "获取当前配置",
+            "description": "返回前端需要的全部配置项（难度、TTS引擎、API key 等）",
+            "response": "object (所有配置键值对)",
+        },
+        {
+            "path": "/api/config",
+            "method": "POST",
+            "summary": "保存/更新配置",
+            "description": "更新配置项，同时写入内存和配置文件",
+            "request_body": {
+                "content_type": "application/json",
+                "fields": "任意配置键值对，如 {\"DIFFICULTY_LEVEL\": \"CET-6\", \"TTS_ENGINE\": \"edge\"}",
+            },
+            "response": {"ok": True, "updated": "array"},
+        },
+        {
+            "path": "/api/audio/<filename>",
+            "method": "GET",
+            "summary": "获取音频文件",
+            "description": "按文件名提供音频文件流，依次在 results/、downloads/、项目根目录查找",
+            "params": {"filename": {"in": "path", "type": "string", "required": True,
+                                    "description": "音频文件名，如 {basename}.mp3 或 {basename}/{basename}_mixed.mp3"}},
+            "response": "audio binary stream",
+        },
+        {
+            "path": "/api/podcast/search",
+            "method": "GET",
+            "summary": "搜索播客",
+            "description": "通过关键词搜索播客节目",
+            "params": {"q": {"in": "query", "type": "string", "required": True, "description": "搜索关键词"}},
+            "response": "object (搜索结果)",
+        },
+        {
+            "path": "/api/podcast/rss",
+            "method": "GET",
+            "summary": "解析播客 RSS Feed",
+            "description": "通过 RSS Feed URL 获取播客单集列表",
+            "params": {"url": {"in": "query", "type": "string", "required": True, "description": "RSS Feed 的 HTTP/HTTPS URL"}},
+            "response": "object (单集列表)",
+        },
+        {
+            "path": "/api/favorites",
+            "method": "GET",
+            "summary": "获取全部播客收藏",
+            "response": {"favorites": "array"},
+        },
+        {
+            "path": "/api/favorites",
+            "method": "POST",
+            "summary": "添加播客收藏",
+            "request_body": {"fields": {"title": "string", "author": "string", "image": "string", "rss_url": "string (required)"}},
+            "response": {"ok": True, "favorite": "object"},
+        },
+        {
+            "path": "/api/favorites",
+            "method": "DELETE",
+            "summary": "移除播客收藏",
+            "request_body": {"fields": {"rss_url": "string (required)"}},
+            "response": {"ok": True},
+        },
+        {
+            "path": "/api/favorites/check",
+            "method": "GET",
+            "summary": "检查是否已收藏",
+            "params": {"rss_url": {"in": "query", "type": "string", "required": True}},
+            "response": {"is_favorite": "boolean"},
+        },
+        {
+            "path": "/api/subscriptions",
+            "method": "GET",
+            "summary": "获取全部 RSS 订阅",
+            "response": {"subscriptions": "array"},
+        },
+        {
+            "path": "/api/subscriptions",
+            "method": "POST",
+            "summary": "添加 RSS 订阅",
+            "request_body": {"fields": {"title": "string", "author": "string", "image": "string", "rss_url": "string (required)"}},
+            "response": {"ok": True, "subscription": "object"},
+        },
+        {
+            "path": "/api/subscriptions",
+            "method": "DELETE",
+            "summary": "移除 RSS 订阅",
+            "request_body": {"fields": {"rss_url": "string (required)"}},
+            "response": {"ok": True},
+        },
+        {
+            "path": "/api/search-history/suggestions",
+            "method": "GET",
+            "summary": "获取搜索建议",
+            "params": {"q": {"in": "query", "type": "string", "description": "搜索前缀"}},
+            "response": {"suggestions": "array"},
+        },
+        {
+            "path": "/api/search-history",
+            "method": "DELETE",
+            "summary": "清空搜索历史",
+            "response": {"ok": True},
+        },
+        {
+            "path": "/api/recent-podcasts",
+            "method": "GET",
+            "summary": "获取最近使用的播客源",
+            "response": {"podcasts": "array"},
+        },
+    ]
+
+    return jsonify({
+        "name": "BiliMix Audio Processing API",
+        "description": "BiliMix — 双语混合音频智能处理服务：支持转录、生词识别、TTS合成、中文翻译混合等功能",
+        "version": "1.0",
+        "base_url": request.host_url.rstrip("/"),
+        "total_endpoints": len(endpoints),
+        "endpoints": endpoints,
+    })
+
+
+# ============================================================
+# 启动
+# ============================================================
+
+if __name__ == "__main__":
+    os.makedirs(_web_dir, exist_ok=True)
+    os.makedirs(config.DOWNLOAD_DIR, exist_ok=True)
+    # 初始化 SQLite 数据库（建表 + 迁移旧 JSON 数据）
+    setup_database()
+    _index = load_tasks_index()
+    print(f"📋 已加载 {len(_index)} 条历史任务记录")
+    print("=" * 50)
+    print("🎧 BiliMix Web App")
+    print(f"📡 http://localhost:5000")
+    print("=" * 50)
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)

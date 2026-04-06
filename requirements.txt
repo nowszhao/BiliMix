@@ -1,0 +1,4 @@
+flask>=2.3
+pydub>=0.25
+edge-tts>=6.1
+requests>=2.28

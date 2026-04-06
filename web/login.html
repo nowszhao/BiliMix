@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 · BiliMix</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: var(--bg);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        .login-container {
+            width: 100%;
+            max-width: 420px;
+            padding: 20px;
+        }
+
+        .login-card {
+            background: var(--bg-card);
+            border-radius: 20px;
+            padding: 48px 40px 40px;
+            box-shadow: 0 8px 40px rgba(0, 0, 0, 0.08),
+                        0 1px 3px rgba(0, 0, 0, 0.04);
+            border: 1px solid var(--border-light);
+        }
+
+        .login-brand {
+            text-align: center;
+            margin-bottom: 36px;
+        }
+
+        .login-brand-icon {
+            font-size: 48px;
+            line-height: 1;
+            display: block;
+            margin-bottom: 12px;
+        }
+
+        .login-brand-title {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.5px;
+        }
+
+        .login-brand-subtitle {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-top: 6px;
+        }
+
+        .login-form {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .login-field {
+            position: relative;
+        }
+
+        .login-field label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+            letter-spacing: 0.3px;
+        }
+
+        .login-field input {
+            width: 100%;
+            height: 48px;
+            padding: 0 16px;
+            border: 1.5px solid var(--border);
+            border-radius: 12px;
+            font-size: 15px;
+            font-family: inherit;
+            color: var(--text-primary);
+            background: var(--bg);
+            transition: border-color 0.2s, box-shadow 0.2s;
+            outline: none;
+        }
+
+        .login-field input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.12);
+        }
+
+        .login-field input::placeholder {
+            color: var(--text-tertiary);
+        }
+
+        .login-btn {
+            width: 100%;
+            height: 48px;
+            border: none;
+            border-radius: 12px;
+            background: var(--accent);
+            color: #fff;
+            font-size: 16px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+            margin-top: 8px;
+        }
+
+        .login-btn:hover {
+            background: #005BBB;
+        }
+
+        .login-btn:active {
+            transform: scale(0.98);
+        }
+
+        .login-btn:disabled {
+            background: var(--text-tertiary);
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .login-error {
+            display: none;
+            background: #FFF0F0;
+            color: #D93025;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 500;
+            text-align: center;
+            border: 1px solid #FFDAD6;
+        }
+
+        .login-error.visible {
+            display: block;
+        }
+
+        .login-footer {
+            text-align: center;
+            margin-top: 24px;
+            font-size: 12px;
+            color: var(--text-tertiary);
+        }
+
+        /* 动画 */
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20% { transform: translateX(-8px); }
+            40% { transform: translateX(8px); }
+            60% { transform: translateX(-6px); }
+            80% { transform: translateX(6px); }
+        }
+
+        .shake {
+            animation: shake 0.4s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .login-card {
+            animation: fadeIn 0.5s ease-out;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-brand">
+                <span class="login-brand-icon">🎧</span>
+                <div class="login-brand-title">BiliMix</div>
+                <div class="login-brand-subtitle">英语听力生词助手</div>
+            </div>
+
+            <form class="login-form" id="login-form" onsubmit="return handleLogin(event)">
+                <div class="login-error" id="login-error"></div>
+
+                <div class="login-field">
+                    <label for="username">用户名</label>
+                    <input type="text" id="username" name="username"
+                           placeholder="请输入用户名" autocomplete="username"
+                           required autofocus>
+                </div>
+
+                <div class="login-field">
+                    <label for="password">密码</label>
+                    <input type="password" id="password" name="password"
+                           placeholder="请输入密码" autocomplete="current-password"
+                           required>
+                </div>
+
+                <button type="submit" class="login-btn" id="login-btn">登 录</button>
+            </form>
+
+            <div class="login-footer">
+                Powered by BiliMix · Qwen · Edge-TTS
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function handleLogin(e) {
+            e.preventDefault();
+            const btn = document.getElementById('login-btn');
+            const errEl = document.getElementById('login-error');
+            const card = document.querySelector('.login-card');
+
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+
+            if (!username || !password) {
+                showError('请输入用户名和密码');
+                return false;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '登录中...';
+            errEl.classList.remove('visible');
+
+            try {
+                const resp = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password }),
+                });
+
+                const data = await resp.json();
+
+                if (resp.ok && data.ok) {
+                    btn.textContent = '登录成功 ✓';
+                    btn.style.background = '#34C759';
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 300);
+                } else {
+                    showError(data.error || '登录失败');
+                    card.classList.remove('shake');
+                    void card.offsetWidth;  // trigger reflow
+                    card.classList.add('shake');
+                    btn.disabled = false;
+                    btn.textContent = '登 录';
+                }
+            } catch (err) {
+                showError('网络错误，请稍后重试');
+                btn.disabled = false;
+                btn.textContent = '登 录';
+            }
+
+            return false;
+        }
+
+        function showError(msg) {
+            const errEl = document.getElementById('login-error');
+            errEl.textContent = msg;
+            errEl.classList.add('visible');
+        }
+
+        // 按 Enter 提交
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                document.getElementById('login-form').dispatchEvent(new Event('submit'));
+            }
+        });
+
+        // 页面加载时检查是否已登录
+        (async function() {
+            try {
+                const resp = await fetch('/api/auth/check');
+                const data = await resp.json();
+                if (data.authenticated) {
+                    window.location.href = '/';
+                }
+            } catch(e) {}
+        })();
+    </script>
+</body>
+</html>
