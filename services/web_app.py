@@ -1341,6 +1341,131 @@ def confirm_sentences(task_id):
     return jsonify({"message": f"已确认 {len(confirmed_translations)} 个翻译，继续处理"})
 
 
+@app.route("/api/task/<task_id>/retry-synthesis", methods=["POST"])
+def retry_sentence_synthesis(task_id):
+    """TTS 合成失败后手动重试"""
+    task = get_task(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
+
+    status = task.get("status", "")
+    if status not in ("error",):
+        return jsonify({"error": f"任务状态为 {status}，仅 error 状态可重试合成"}), 400
+
+    segments = task.get("segments", [])
+    translated_indices = task.get("translated_indices", [])
+    translations = task.get("translations", {})
+    translations = {int(k): v for k, v in translations.items()}
+    audio_path = task.get("_audio_path", "")
+    basename = task.get("_basename", "")
+
+    if not segments or not translated_indices or not translations:
+        return jsonify({"error": "任务数据不完整，无法重试"}), 400
+
+    # 找出已有 TTS 和缺失 TTS 的 segment
+    existing_tts = task.get("tts_audio_map", {}) or {}
+    missing_indices = [idx for idx in translated_indices
+                       if idx not in existing_tts]
+
+    if not missing_indices:
+        # 全部已有 TTS，可直接混合
+        tts_audio_map = existing_tts
+    else:
+        # 只合成缺失的部分
+        result_dir = os.path.join(config.RESULT_DIR, basename)
+        qwen_cache_dir = os.path.join(result_dir, "tts_sent_cache")
+        os.makedirs(qwen_cache_dir, exist_ok=True)
+
+        missing_translations = {k: translations[k] for k in missing_indices
+                                if k in translations}
+
+        update_task(task_id, status="processing", step="retry_synthesis",
+                    progress=60, message=f"重新合成 {len(missing_indices)} 条 TTS...")
+
+        def _retry_progress(current, total):
+            pct = 60 + int((current / max(total, 1)) * 20)
+            update_task(task_id, progress=pct,
+                        message=f"TTS 重试合成 ({current}/{total})")
+
+        def _retry_cancel():
+            return is_cancelled(task_id)
+
+        try:
+            new_tts = synthesize_sentences_with_qwen_tts(
+                segments, missing_indices, missing_translations,
+                audio_path, qwen_cache_dir,
+                voice_clone=True,
+                cancel_check=_retry_cancel, progress_cb=_retry_progress,
+                task_id=task_id)
+        except InterruptedError:
+            update_task(task_id, status="cancelled", message="重试已被取消")
+            return jsonify({"message": "重试已取消"})
+
+        # 合并新旧 TTS
+        tts_audio_map = dict(existing_tts)
+        tts_audio_map.update(new_tts)
+        update_task(task_id, tts_audio_map=tts_audio_map)
+
+    # 执行音频混合
+    update_task(task_id, step="retry_merge", progress=82,
+                message="重新混合音频...")
+
+    output_audio_path = os.path.join(
+        config.RESULT_DIR, basename,
+        f"{basename}_sentence.{config.OUTPUT_FORMAT}")
+
+    mix_result = mix_sentence_audio(
+        audio_path=audio_path, segments=segments,
+        translated_indices=translated_indices,
+        translations=translations,
+        tts_audio_map=tts_audio_map,
+        output_path=output_audio_path)
+
+    # 构建完整结果
+    full_text = task.get("transcription_text", "")
+    result_data = {
+        "basename": basename,
+        "original_audio": audio_path,
+        "mixed_audio": output_audio_path,
+        "original_duration": mix_result["original_duration"],
+        "mixed_duration": mix_result["mixed_duration"],
+        "total_segments": mix_result["total_segments"],
+        "translated_segments": mix_result["translated_segments"],
+        "process_mode": task.get("process_mode", "sentence_translate"),
+    }
+
+    sentence_pairs = []
+    for seg_idx in translated_indices:
+        if seg_idx in translations and seg_idx < len(segments):
+            sentence_pairs.append({
+                "index": seg_idx,
+                "english": segments[seg_idx].get("text", "").strip(),
+                "chinese": translations[seg_idx],
+                "start": segments[seg_idx].get("start", 0),
+                "end": segments[seg_idx].get("end", 0),
+            })
+
+    update_task(task_id, status="completed", step="done", progress=100,
+                message="全部完成！", result=result_data,
+                sentence_pairs=sentence_pairs,
+                time_mapping=mix_result["time_mapping"],
+                tts_audio_map=tts_audio_map)
+
+    save_task_result_to_disk(result_dir, {
+        "task_id": task_id, "status": "completed",
+        "process_mode": task.get("process_mode", "sentence_translate"),
+        "transcription_text": full_text,
+        "segments": segments,
+        "translations": translations,
+        "translated_indices": translated_indices,
+        "sentence_pairs": sentence_pairs,
+        "result": result_data,
+        "time_mapping": mix_result["time_mapping"],
+    })
+
+    return jsonify({"message": "重试完成", "result": result_data})
+
+
 @app.route("/api/translate", methods=["POST"])
 def translate_word():
     """翻译单个词/短语为中文"""

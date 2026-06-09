@@ -127,7 +127,7 @@ function get_current_progress() {
     return parseInt(pct.textContent) || 0;
 }
 
-function showCancelledUI() {
+function showCancelledUI(errorMsg) {
     const statusText = document.getElementById('progress-status-text');
     const spinner = document.getElementById('progress-spinner');
     const pct = document.getElementById('progress-pct');
@@ -136,11 +136,58 @@ function showCancelledUI() {
     statusText.textContent = '已终止';
     spinner.className = 'spinner error';
     pct.style.color = 'var(--warning)';
-    cancelArea.innerHTML = `
-        <button class="btn-secondary" onclick="resetAll()" style="margin-top: 8px;">
-            ← 返回首页
-        </button>
-    `;
+
+    // 判断是否 TTS 合成错误，显示重试按钮
+    const isTtsError = errorMsg && (
+        errorMsg.includes('Qwen3-TTS') || errorMsg.includes('合成')
+    );
+
+    if (isTtsError) {
+        cancelArea.innerHTML = `
+            <button class="btn-primary" onclick="retrySynthesis()" style="margin-top: 8px; width: 100%;">
+                🔄 重新合成 TTS
+            </button>
+            <button class="btn-secondary" onclick="resetAll()" style="margin-top: 8px; width: 100%;">
+                ← 返回首页
+            </button>
+        `;
+    } else {
+        cancelArea.innerHTML = `
+            <button class="btn-secondary" onclick="resetAll()" style="margin-top: 8px;">
+                ← 返回首页
+            </button>
+        `;
+    }
+}
+
+async function retrySynthesis() {
+    if (!currentTaskId) return;
+
+    const btn = document.querySelector('#cancel-area .btn-primary');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ 重试中...'; }
+
+    // 切回进度界面
+    document.getElementById('progress-message').style.color = '';
+    document.getElementById('progress-spinner').className = 'spinner';
+    document.getElementById('progress-status-text').textContent = '处理中...';
+    document.getElementById('cancel-area').innerHTML = '';
+
+    try {
+        const resp = await fetch(`/api/task/${currentTaskId}/retry-synthesis`, {
+            method: 'POST',
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            showError(data.error || '重试失败');
+            showCancelledUI(data.error);
+            return;
+        }
+        // 重新开始轮询
+        startPolling();
+    } catch (err) {
+        showError('重试请求失败: ' + err.message);
+        showCancelledUI(err.message);
+    }
 }
 
 // ============================================================
@@ -179,7 +226,7 @@ async function pollStatus() {
         } else if (data.status === 'error') {
             stopPolling();
             showError(data.message);
-            showCancelledUI();
+            showCancelledUI(data.message);
         } else if (data.status === 'cancelled') {
             stopPolling();
             showCancelledUI();

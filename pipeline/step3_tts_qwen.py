@@ -710,207 +710,193 @@ def synthesize_sentences_with_qwen_tts(
     if cancel_check and cancel_check():
         raise InterruptedError("任务已被用户终止")
 
-    # 调用 worker
-    worker_task = {
-        "model_path": config.QWEN3_TTS_MODEL_PATH,
-        "device": getattr(config, "QWEN3_TTS_DEVICE", "cpu"),
-        "language": getattr(config, "QWEN3_TTS_LANGUAGE", "Chinese"),
-        "jobs": [
-            {
-                "text": j["text"],
-                "ref_audio": j["ref_audio"],
-                "ref_text": j["ref_text"],
-                "output_path": j["output_path"],
-            }
-            for j in pending_jobs
-        ],
-    }
+    # ---- 自动重试循环 ----
+    tts_map = dict(cached_results)
+    max_retries = getattr(config, "QWEN3_TTS_RETRY_MAX", 2)
+    for retry_attempt in range(max_retries + 1):
+        if retry_attempt > 0:
+            print(f"[Step3-Qwen-Sentence] 第 {retry_attempt}/{max_retries} 次重试，"
+                  f"剩余 {len(pending_jobs)} 条未合成")
 
-    task_file = os.path.join(cache_dir, "qwen_sent_task.json")
-    with open(task_file, "w", encoding="utf-8") as f:
-        json.dump(worker_task, f, ensure_ascii=False, indent=2)
+        if not pending_jobs:
+            print("[Step3-Qwen-Sentence] 全部合成完成，无需更多重试")
+            break
 
-    worker_script = os.path.join(config.BASE_DIR, "workers", "qwen_tts_worker.py")
-    python_bin = getattr(config, "QWEN3_TTS_PYTHON",
-                         "/root/miniconda3/envs/qwen3-tts/bin/python")
+        # 构建 worker 任务
+        worker_task = {
+            "model_path": config.QWEN3_TTS_MODEL_PATH,
+            "device": getattr(config, "QWEN3_TTS_DEVICE", "cpu"),
+            "language": getattr(config, "QWEN3_TTS_LANGUAGE", "Chinese"),
+            "jobs": [
+                {"text": j["text"], "ref_audio": j["ref_audio"],
+                 "ref_text": j["ref_text"], "output_path": j["output_path"]}
+                for j in pending_jobs
+            ],
+        }
 
-    cmd = [python_bin, worker_script, task_file]
-    print(f"[Step3-Qwen-Sentence] 启动 worker: {' '.join(cmd)}")
+        task_file = os.path.join(cache_dir, f"qwen_sent_task_retry{retry_attempt}.json")
+        with open(task_file, "w", encoding="utf-8") as f:
+            json.dump(worker_task, f, ensure_ascii=False, indent=2)
 
-    if progress_cb:
-        progress_cb(0, len(pending_jobs))
+        worker_script = os.path.join(config.BASE_DIR, "workers", "qwen_tts_worker.py")
+        python_bin = getattr(config, "QWEN3_TTS_PYTHON",
+                             "/root/miniconda3/envs/qwen3-tts/bin/python")
 
-    import select as _select
-    import time as _time
-    per_job_timeout = getattr(config, "QWEN3_TTS_PER_JOB_TIMEOUT", 120)
-    total_timeout = max(600, len(pending_jobs) * per_job_timeout + 300)
-    stall_timeout = max(per_job_timeout * 2, 300)
-    print(f"[Step3-Qwen-Sentence] 超时设置: 总计{total_timeout}s, 单条卡住{stall_timeout}s")
-    start_time = _time.time()
-    last_output_time = start_time
-    done_count = 0
+        cmd = [python_bin, worker_script, task_file]
+        print(f"[Step3-Qwen-Sentence] 启动 worker: {' '.join(cmd)}")
 
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=False,  # 使用 bytes 模式以支持非阻塞读取
-    )
+        if progress_cb:
+            progress_cb(0, len(pending_jobs))
 
-    # 注册 worker 进程到 task_subprocesses 以便用户终止时能杀掉
-    if task_id:
-        try:
-            from core.task_manager import task_subprocesses
-            task_subprocesses[task_id] = proc
-        except Exception:
-            pass
+        import select as _select
+        import time as _time
+        per_job_timeout = getattr(config, "QWEN3_TTS_PER_JOB_TIMEOUT", 120)
+        total_timeout = max(600, len(pending_jobs) * per_job_timeout + 300)
+        stall_timeout = max(per_job_timeout * 2, 300)
+        start_time = _time.time()
+        last_output_time = start_time
+        done_count = 0
 
-    stderr_lines = []
-    stderr_buffer = b""
-    worker_stall_but_done = False  # 标记：worker 卡住但所有文件已生成
-    try:
-        while True:
-            # 使用 select 等待 stderr 有数据可读，最多等待 5 秒
-            ready, _, _ = _select.select([proc.stderr], [], [], 5.0)
-
-            if ready:
-                chunk = proc.stderr.read1(4096) if hasattr(proc.stderr, 'read1') else proc.stderr.read(4096)
-                if not chunk:
-                    break
-                last_output_time = _time.time()
-                stderr_buffer += chunk
-                while b"\n" in stderr_buffer:
-                    line_bytes, stderr_buffer = stderr_buffer.split(b"\n", 1)
-                    line = line_bytes.decode("utf-8", errors="replace").rstrip()
-                    stderr_lines.append(line)
-                    print(f"  {line}")
-
-                    if "[QwenTTS] [" in line and "/" in line:
-                        try:
-                            part = line.split("[QwenTTS] [")[1].split("]")[0]
-                            current_str, total_str = part.split("/")
-                            done_count = int(current_str)
-                            if progress_cb:
-                                progress_cb(done_count, len(pending_jobs))
-                        except (ValueError, IndexError):
-                            pass
-
-            if cancel_check and cancel_check():
-                print("[Step3-Qwen-Sentence] 用户取消，终止 worker")
-                proc.kill()
-                proc.wait()
-                raise InterruptedError("任务已被用户终止")
-
-            elapsed = _time.time() - start_time
-            if elapsed > total_timeout:
-                print(f"[Step3-Qwen-Sentence] 总超时 ({elapsed:.0f}s)")
-                proc.kill()
-                proc.wait()
-                raise RuntimeError(
-                    f"Qwen3-TTS 句子合成总超时 ({elapsed:.0f}s)，"
-                    f"已完成 {done_count}/{len(pending_jobs)} 条")
-
-            stall_elapsed = _time.time() - last_output_time
-            if stall_elapsed > stall_timeout:
-                # 检查是否所有任务已在磁盘上完成（worker 只是退出时卡住）
-                disk_done = sum(1 for j in pending_jobs if os.path.exists(j["output_path"]))
-                if disk_done >= len(pending_jobs):
-                    print(f"[Step3-Qwen-Sentence] Worker 卡住 ({stall_elapsed:.0f}s 无输出)，"
-                          f"但磁盘上已有 {disk_done}/{len(pending_jobs)} 个文件，"
-                          f"强制终止 worker 并继续")
-                    proc.kill()
-                    proc.wait()
-                    worker_stall_but_done = True
-                    break
-                else:
-                    print(f"[Step3-Qwen-Sentence] Worker 卡住 ({stall_elapsed:.0f}s 无输出)，"
-                          f"已完成 {done_count}/{len(pending_jobs)} 条"
-                          f"（磁盘 {disk_done}/{len(pending_jobs)}），终止 worker")
-                    proc.kill()
-                    proc.wait()
-                    raise RuntimeError(
-                        f"Qwen3-TTS 句子合成卡住 ({stall_elapsed:.0f}s 无输出)，"
-                        f"已完成 {done_count}/{len(pending_jobs)} 条")
-
-            if proc.poll() is not None and not ready:
-                break
-
-        # 处理 stderr_buffer 中剩余的不完整行
-        if stderr_buffer:
-            line = stderr_buffer.decode("utf-8", errors="replace").rstrip()
-            if line:
-                stderr_lines.append(line)
-                print(f"  {line}")
-
-        # 等待进程结束并获取 stdout（如果 worker 还在运行）
-        if not worker_stall_but_done:
-            stdout_data, _ = proc.communicate(timeout=60)
-            stdout_data = stdout_data.decode("utf-8", errors="replace") if stdout_data else ""
-        else:
-            stdout_data = ""
-
-    except InterruptedError:
-        raise
-    except Exception as e:
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait()
-        raise
-    finally:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=False)
+        # 注册 worker 进程方便用户取消
         if task_id:
             try:
                 from core.task_manager import task_subprocesses
-                task_subprocesses.pop(task_id, None)
+                task_subprocesses[task_id] = proc
             except Exception:
                 pass
 
-    # 尝试从 stdout JSON 解析结果
-    result_json = None
-    if not worker_stall_but_done:
-        if proc.returncode != 0:
-            stderr_tail = "\n".join(stderr_lines[-10:]) if stderr_lines else "无日志"
-            raise RuntimeError(f"Qwen3-TTS 句子合成失败 (code={proc.returncode}):\n{stderr_tail}")
-
+        stderr_lines = []
+        stderr_buffer = b""
+        worker_stall_but_done = False
+        this_attempt_error = None
         try:
-            stdout_lines = stdout_data.strip().split("\n") if stdout_data else []
-            result_json = json.loads(stdout_lines[-1])
-        except (json.JSONDecodeError, IndexError) as e:
-            print(f"[Step3-Qwen-Sentence] 解析 worker 输出失败: {e}")
-            result_json = None
+            while True:
+                ready, _, _ = _select.select([proc.stderr], [], [], 5.0)
+                if ready:
+                    chunk = (proc.stderr.read1(4096) if hasattr(proc.stderr, 'read1')
+                             else proc.stderr.read(4096))
+                    if not chunk:
+                        break
+                    last_output_time = _time.time()
+                    stderr_buffer += chunk
+                    while b"\n" in stderr_buffer:
+                        line_bytes, stderr_buffer = stderr_buffer.split(b"\n", 1)
+                        line = line_bytes.decode("utf-8", errors="replace").rstrip()
+                        stderr_lines.append(line)
+                        print(f"  {line}")
+                        if "[QwenTTS] [" in line and "/" in line:
+                            try:
+                                part = line.split("[QwenTTS] [")[1].split("]")[0]
+                                current_str, total_str = part.split("/")
+                                done_count = int(current_str)
+                                if progress_cb:
+                                    progress_cb(done_count, len(pending_jobs))
+                            except (ValueError, IndexError):
+                                pass
 
-    # 构建结果映射
-    tts_map = dict(cached_results)
+                if cancel_check and cancel_check():
+                    print("[Step3-Qwen-Sentence] 用户取消，终止 worker")
+                    proc.kill()
+                    proc.wait()
+                    raise InterruptedError("任务已被用户终止")
 
-    if result_json:
-        success_count = result_json.get("success", 0)
-        failed_count = result_json.get("failed", 0)
-        print(f"[Step3-Qwen-Sentence] Worker 完成: {success_count} 成功, {failed_count} 失败")
+                elapsed = _time.time() - start_time
+                if elapsed > total_timeout:
+                    print(f"[Step3-Qwen-Sentence] 总超时 ({elapsed:.0f}s)")
+                    proc.kill()
+                    proc.wait()
+                    this_attempt_error = RuntimeError(
+                        f"总超时 ({elapsed:.0f}s)，已完成 {done_count}/{len(pending_jobs)} 条")
+                    break
 
-        worker_results = result_json.get("results", [])
-        for wr, job in zip(worker_results, pending_jobs):
-            out_path = wr.get("output_path", "")
-            if out_path and os.path.exists(out_path):
-                tts_map[job["segment_index"]] = out_path
-            elif wr.get("error"):
-                print(f"  [失败] seg[{job['segment_index']}] {job['text'][:20]}: {wr['error']}")
-    else:
-        # 从磁盘回收已生成的文件（worker 卡住或输出解析失败时的降级方案）
-        print("[Step3-Qwen-Sentence] 从磁盘回收已生成的合成文件...")
-        disk_ok = 0
-        disk_miss = 0
+                stall_elapsed = _time.time() - last_output_time
+                if stall_elapsed > stall_timeout:
+                    disk_done = sum(1 for j in pending_jobs if os.path.exists(j["output_path"]))
+                    if disk_done >= len(pending_jobs):
+                        print(f"[Step3-Qwen-Sentence] Worker 卡住但文件已全部生成，继续")
+                        proc.kill()
+                        proc.wait()
+                        worker_stall_but_done = True
+                        break
+                    else:
+                        print(f"[Step3-Qwen-Sentence] Worker 卡住 "
+                              f"({stall_elapsed:.0f}s 无输出)，磁盘 {disk_done}/{len(pending_jobs)}")
+                        proc.kill()
+                        proc.wait()
+                        this_attempt_error = RuntimeError(
+                            f"Worker 卡住 ({stall_elapsed:.0f}s 无输出)，"
+                            f"已完成 {done_count}/{len(pending_jobs)} 条")
+                        break
+
+                if proc.poll() is not None and not ready:
+                    break
+
+            # 读取剩余 stderr
+            if stderr_buffer:
+                line = stderr_buffer.decode("utf-8", errors="replace").rstrip()
+                if line:
+                    stderr_lines.append(line)
+                    print(f"  {line}")
+
+            if not worker_stall_but_done:
+                stdout_data, _ = proc.communicate(timeout=60)
+                stdout_data = stdout_data.decode("utf-8", errors="replace") if stdout_data else ""
+            else:
+                stdout_data = ""
+
+        except InterruptedError:
+            raise
+        except Exception as e:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            this_attempt_error = e
+        finally:
+            if task_id:
+                try:
+                    from core.task_manager import task_subprocesses
+                    task_subprocesses.pop(task_id, None)
+                except Exception:
+                    pass
+
+        # ---- 收集本次尝试的结果 ----
+        if not worker_stall_but_done:
+            if proc.returncode != 0 and not this_attempt_error:
+                this_attempt_error = RuntimeError(f"Worker 失败 (code={proc.returncode})")
+            if not this_attempt_error:
+                try:
+                    stdout_lines = stdout_data.strip().split("\n") if stdout_data else []
+                    result_json = json.loads(stdout_lines[-1])
+                except (json.JSONDecodeError, IndexError):
+                    result_json = None
+
+        # 收集磁盘文件
+        disk_ok, disk_miss = 0, 0
         for job in pending_jobs:
             if os.path.exists(job["output_path"]):
                 disk_ok += 1
                 tts_map[job["segment_index"]] = job["output_path"]
             else:
                 disk_miss += 1
-                print(f"  [缺失] seg[{job['segment_index']}] {job['text'][:30]}...")
-        print(f"[Step3-Qwen-Sentence] 磁盘回收: {disk_ok} 成功, {disk_miss} 缺失")
-        if disk_miss > 0:
-            print(f"[Step3-Qwen-Sentence] 警告: {disk_miss} 条合成文件缺失，对应句段将无 TTS 音频")
+
+        if disk_ok > 0:
+            print(f"[Step3-Qwen-Sentence] 本次收集: {disk_ok} 成功, {disk_miss} 缺失")
+
+        # 更新剩余待合成任务
+        pending_jobs = [j for j in pending_jobs if j["segment_index"] not in tts_map]
+
+        # 如果全部成功或已无重试次数，退出循环
+        if not pending_jobs or retry_attempt >= max_retries:
+            if pending_jobs:
+                print(f"[Step3-Qwen-Sentence] 重试次数耗尽，仍有 {len(pending_jobs)} 条未合成")
+                for j in pending_jobs:
+                    print(f"  [最终失败] seg[{j['segment_index']}] {j['text'][:30]}...")
+            break
 
     if progress_cb:
-        progress_cb(len(pending_jobs), len(pending_jobs))
+        progress_cb(len(tts_map), len(tts_map))
 
     return tts_map
 

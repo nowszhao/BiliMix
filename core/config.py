@@ -89,6 +89,8 @@ QWEN3_TTS_REF_DURATION = 8
 SEGMENT_REF_MIN_DURATION = 3.0
 # TTS 合成语言
 QWEN3_TTS_LANGUAGE = "Chinese"
+# TTS 合成失败时自动重试次数
+QWEN3_TTS_RETRY_MAX = 3
 
 # ========================
 # 相邻词合并配置
