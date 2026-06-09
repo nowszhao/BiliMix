@@ -137,30 +137,18 @@ function showCancelledUI(errorMsg) {
     spinner.className = 'spinner error';
     pct.style.color = 'var(--warning)';
 
-    // 判断是否 TTS 合成错误，显示重试按钮
-    const isTtsError = errorMsg && (
-        errorMsg.includes('Qwen3-TTS') || errorMsg.includes('合成')
-    );
-
-    if (isTtsError) {
-        cancelArea.innerHTML = `
-            <button class="btn-primary" onclick="retrySynthesis()" style="margin-top: 8px; width: 100%;">
-                🔄 重新合成 TTS
-            </button>
-            <button class="btn-secondary" onclick="resetAll()" style="margin-top: 8px; width: 100%;">
-                ← 返回首页
-            </button>
-        `;
-    } else {
-        cancelArea.innerHTML = `
-            <button class="btn-secondary" onclick="resetAll()" style="margin-top: 8px;">
-                ← 返回首页
-            </button>
-        `;
-    }
+    // 任何错误都显示断点续传按钮
+    cancelArea.innerHTML = `
+        <button class="btn-primary" onclick="retryTask()" style="margin-top: 8px; width: 100%;">
+            🔄 从出错位置重试
+        </button>
+        <button class="btn-secondary" onclick="resetAll()" style="margin-top: 8px; width: 100%;">
+            ← 返回首页
+        </button>
+    `;
 }
 
-async function retrySynthesis() {
+async function retryTask() {
     if (!currentTaskId) return;
 
     const btn = document.querySelector('#cancel-area .btn-primary');
@@ -173,7 +161,7 @@ async function retrySynthesis() {
     document.getElementById('cancel-area').innerHTML = '';
 
     try {
-        const resp = await fetch(`/api/task/${currentTaskId}/retry-synthesis`, {
+        const resp = await fetch(`/api/task/${currentTaskId}/retry`, {
             method: 'POST',
         });
         const data = await resp.json();
@@ -182,7 +170,6 @@ async function retrySynthesis() {
             showCancelledUI(data.error);
             return;
         }
-        // 重新开始轮询
         startPolling();
     } catch (err) {
         showError('重试请求失败: ' + err.message);

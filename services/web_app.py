@@ -122,6 +122,29 @@ def check_auth():
     return redirect("/login")
 
 
+def _run_with_retry(fn, *args, name="", max_retries=None, **kwargs):
+    """通用自动重试：调用 fn(*args, **kwargs)，失败自动重试"""
+    import time as _time
+    if max_retries is None:
+        max_retries = getattr(config, "AUTO_RETRY_MAX", 2)
+    last_err = None
+    for attempt in range(max_retries + 1):
+        try:
+            return fn(*args, **kwargs)
+        except InterruptedError:
+            raise
+        except Exception as e:
+            last_err = e
+            if attempt < max_retries:
+                wait = 2 ** attempt
+                print(f"[Retry] {name} 失败 (尝试 {attempt + 1}/{max_retries + 1}): {e}，"
+                      f"{wait}s 后重试...")
+                _time.sleep(wait)
+            else:
+                print(f"[Retry] {name} 重试耗尽 ({max_retries + 1} 次失败): {e}")
+    raise last_err
+
+
 @app.route("/login")
 def login_page():
     """登录页面"""
@@ -271,8 +294,10 @@ def process_audio(task_id: str, audio_path: str):
         def _cancel_check():
             return is_cancelled(task_id)
 
-        difficult_words = identify_difficult_words_by_segments(
-            segments, cancel_check=_cancel_check, progress_cb=_progress_cb)
+        difficult_words = _run_with_retry(
+            identify_difficult_words_by_segments,
+            segments, cancel_check=_cancel_check, progress_cb=_progress_cb,
+            name="识别生词")
 
         llm_result_path = os.path.join(result_dir, "difficult_words.json")
         with open(llm_result_path, "w", encoding="utf-8") as f:
@@ -316,7 +341,9 @@ def process_audio(task_id: str, audio_path: str):
         update_task(task_id, status="cancelled", message="任务已被终止")
     except Exception as e:
         traceback.print_exc()
-        update_task(task_id, status="error", message=f"处理出错: {str(e)}")
+        task = get_task(task_id) or {}
+        update_task(task_id, status="error", message=f"处理出错: {str(e)}",
+                    _failed_step=task.get("step", "transcribe"))
     finally:
         task_subprocesses.pop(task_id, None)
 
@@ -525,7 +552,9 @@ def continue_after_confirmation(task_id: str):
         update_task(task_id, status="cancelled", message="任务已被终止")
     except Exception as e:
         traceback.print_exc()
-        update_task(task_id, status="error", message=f"处理出错: {str(e)}")
+        task = get_task(task_id) or {}
+        update_task(task_id, status="error", message=f"处理出错: {str(e)}",
+                    _failed_step=task.get("step", "transcribe"))
     finally:
         cancel_flags.pop(task_id, None)
         task_subprocesses.pop(task_id, None)
@@ -577,8 +606,10 @@ def process_audio_smart_mode(task_id: str, audio_path: str):
         def _cancel_check():
             return is_cancelled(task_id)
 
-        difficult_words = identify_difficult_words_by_segments(
-            segments, cancel_check=_cancel_check, progress_cb=_identify_progress)
+        difficult_words = _run_with_retry(
+            identify_difficult_words_by_segments,
+            segments, cancel_check=_cancel_check, progress_cb=_identify_progress,
+            name="识别生词")
 
         llm_result_path = os.path.join(result_dir, "difficult_words.json")
         with open(llm_result_path, "w", encoding="utf-8") as f:
@@ -613,9 +644,11 @@ def process_audio_smart_mode(task_id: str, audio_path: str):
             update_task(task_id, progress=pct,
                         message=f"Step 3/5: 翻译批次 ({batch_idx+1}/{total_batches})")
 
-        translations = translate_sentences(
+        translations = _run_with_retry(
+            translate_sentences,
             serialized_segments, translated_indices,
-            cancel_check=_cancel_check, progress_cb=_translate_progress)
+            cancel_check=_cancel_check, progress_cb=_translate_progress,
+            name="句子翻译")
 
         if is_cancelled(task_id):
             raise InterruptedError("任务已被用户终止")
@@ -658,7 +691,9 @@ def process_audio_smart_mode(task_id: str, audio_path: str):
         update_task(task_id, status="cancelled", message="任务已被终止")
     except Exception as e:
         traceback.print_exc()
-        update_task(task_id, status="error", message=f"处理出错: {str(e)}")
+        task = get_task(task_id) or {}
+        update_task(task_id, status="error", message=f"处理出错: {str(e)}",
+                    _failed_step=task.get("step", "translate"))
     finally:
         task_subprocesses.pop(task_id, None)
 
@@ -721,9 +756,11 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
         def _cancel_check():
             return is_cancelled(task_id)
 
-        translations = translate_sentences(
+        translations = _run_with_retry(
+            translate_sentences,
             serialized_segments, translated_indices,
-            cancel_check=_cancel_check, progress_cb=_translate_progress)
+            cancel_check=_cancel_check, progress_cb=_translate_progress,
+            name="句子翻译")
 
         if is_cancelled(task_id):
             raise InterruptedError("任务已被用户终止")
@@ -765,7 +802,9 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
         update_task(task_id, status="cancelled", message="任务已被终止")
     except Exception as e:
         traceback.print_exc()
-        update_task(task_id, status="error", message=f"处理出错: {str(e)}")
+        task = get_task(task_id) or {}
+        update_task(task_id, status="error", message=f"处理出错: {str(e)}",
+                    _failed_step=task.get("step", "translate"))
     finally:
         task_subprocesses.pop(task_id, None)
 
@@ -933,7 +972,9 @@ def continue_after_sentence_confirmation(task_id: str):
         update_task(task_id, status="cancelled", message="任务已被终止")
     except Exception as e:
         traceback.print_exc()
-        update_task(task_id, status="error", message=f"处理出错: {str(e)}")
+        task = get_task(task_id) or {}
+        update_task(task_id, status="error", message=f"处理出错: {str(e)}",
+                    _failed_step=task.get("step", "synthesize"))
     finally:
         cancel_flags.pop(task_id, None)
         task_subprocesses.pop(task_id, None)
@@ -1339,6 +1380,42 @@ def confirm_sentences(task_id):
                               args=(task_id,), daemon=True)
     thread.start()
     return jsonify({"message": f"已确认 {len(confirmed_translations)} 个翻译，继续处理"})
+
+
+@app.route("/api/task/<task_id>/retry", methods=["POST"])
+def retry_task(task_id):
+    """通用断点续传：从出错步骤重新处理"""
+    task = get_task(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
+
+    if task.get("status") != "error":
+        return jsonify({"error": f"任务状态为 {task.get('status')}，仅 error 状态可重试"}), 400
+
+    failed_step = task.get("_failed_step", "transcribe")
+    process_mode = task.get("process_mode", "word_replace")
+    audio_path = task.get("_audio_path", "")
+
+    if not audio_path:
+        return jsonify({"error": "任务缺少音频路径，无法重试"}), 400
+
+    # 将任务状态重置为 processing，触发前端进度轮询
+    update_task(task_id, status="processing", step="retry",
+                _failed_step="", progress=0,
+                message=f"断点续传 — 从 {failed_step} 步骤恢复...")
+
+    if process_mode == "word_replace":
+        # 重新走完整流程（转录有缓存，LLM/TTS 按磁盘缓存跳过）
+        thread = threading.Thread(target=process_audio,
+                                  args=(task_id, audio_path), daemon=True)
+    elif process_mode == "smart_translate":
+        thread = threading.Thread(target=process_audio_smart_mode,
+                                  args=(task_id, audio_path), daemon=True)
+    else:
+        thread = threading.Thread(target=process_audio_sentence_mode,
+                                  args=(task_id, audio_path), daemon=True)
+    thread.start()
+    return jsonify({"message": f"已开始断点续传，从 {failed_step} 步骤恢复"})
 
 
 @app.route("/api/task/<task_id>/retry-synthesis", methods=["POST"])

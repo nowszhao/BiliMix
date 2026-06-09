@@ -823,6 +823,31 @@ function renderSettingsForm(cfg) {
                         value="${cfg.qwen3_tts_ref_duration}" min="3" max="30" step="1">
                 </div>
             </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">TTS 重试次数</span>
+                    <span class="settings-item-desc">语音合成失败自动重试次数</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-qwen3_tts_retry_max"
+                        value="${cfg.qwen3_tts_retry_max}" min="0" max="10" step="1">
+                </div>
+            </div>
+        </div>
+
+        <!-- ⚙️ 重试 -->
+        <div class="settings-group">
+            <div class="settings-group-title">⚙️ 重试设置</div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">全局重试次数</span>
+                    <span class="settings-item-desc">LLM 翻译/识词失败自动重试次数</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-auto_retry_max"
+                        value="${cfg.auto_retry_max}" min="0" max="10" step="1">
+                </div>
+            </div>
         </div>
 
         <!-- WhisperX -->
@@ -1009,6 +1034,8 @@ async function saveSettings() {
         output_bitrate: getValue('cfg-output_bitrate'),
         qwen3_tts_device: getValue('cfg-qwen3_tts_device'),
         qwen3_tts_ref_duration: getValue('cfg-qwen3_tts_ref_duration'),
+        qwen3_tts_retry_max: getValue('cfg-qwen3_tts_retry_max'),
+        auto_retry_max: getValue('cfg-auto_retry_max'),
         auth_enabled: getValue('cfg-auth_enabled'),
         auth_username: getValue('cfg-auth_username'),
         auth_password: getValue('cfg-auth_password'),

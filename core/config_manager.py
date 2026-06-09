@@ -32,6 +32,8 @@ UPDATABLE_CONFIGS = {
     "output_bitrate": ("OUTPUT_BITRATE", str),
     "qwen3_tts_device": ("QWEN3_TTS_DEVICE", str),
     "qwen3_tts_ref_duration": ("QWEN3_TTS_REF_DURATION", int),
+    "qwen3_tts_retry_max": ("QWEN3_TTS_RETRY_MAX", int),
+    "auto_retry_max": ("AUTO_RETRY_MAX", int),
     # 登录认证
     "auth_enabled": ("AUTH_ENABLED", bool),
     "auth_username": ("AUTH_USERNAME", str),
@@ -72,6 +74,9 @@ def get_all_config() -> dict:
         # Qwen3-TTS
         "qwen3_tts_device": getattr(config, "QWEN3_TTS_DEVICE", "cpu"),
         "qwen3_tts_ref_duration": getattr(config, "QWEN3_TTS_REF_DURATION", 8),
+        "qwen3_tts_retry_max": getattr(config, "QWEN3_TTS_RETRY_MAX", 3),
+        # 重试
+        "auto_retry_max": getattr(config, "AUTO_RETRY_MAX", 3),
         # 登录认证
         "auth_enabled": getattr(config, "AUTH_ENABLED", True),
         "auth_username": getattr(config, "AUTH_USERNAME", "admin"),

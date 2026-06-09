@@ -91,6 +91,8 @@ SEGMENT_REF_MIN_DURATION = 3.0
 QWEN3_TTS_LANGUAGE = "Chinese"
 # TTS 合成失败时自动重试次数
 QWEN3_TTS_RETRY_MAX = 3
+# 全局自动重试次数（LLM 翻译 / 识别生词失败自动重试）
+AUTO_RETRY_MAX = 3
 
 # ========================
 # 相邻词合并配置
