@@ -3,13 +3,10 @@ Step 2b: 句子翻译模块 (sentence_translate / smart_translate 模式)
 调用 Ollama 将 WhisperX 转录的英文句子整句翻译为中文。
 
 策略：
-- 按批次合并句子发送给 LLM，减少 API 调用次数
-- 翻译要求"信达雅"，保留原文语境和语气
-- sentence_translate 模式：根据 SENTENCE_CN_RATIO 均匀间隔选择需要翻译的句子
-- smart_translate 模式：根据生词识别结果，选择包含生词的句子进行翻译
+- 适配 TranslateGemma，使用编号分批 + 纯文本输出（无需 JSON）
+- 每批用 [N] 前缀标记句子，模型返回对应的中文翻译
+- 按位置匹配 + [N] 前缀双重解析，提高容错
 """
-import json
-import math
 import re
 import time
 
@@ -97,8 +94,6 @@ def select_sentences_to_translate(segments: list, ratio: float = None) -> list:
         return list(range(total))
 
     # 均匀间隔选择
-    # 例如 ratio=0.5, total=10: 选 0,2,4,6,8 (每隔一个)
-    # ratio=0.33, total=12: 选 0,3,6,9 (每隔两个)
     count = max(1, round(total * ratio))
     if count >= total:
         return list(range(total))
@@ -115,69 +110,103 @@ def select_sentences_to_translate(segments: list, ratio: float = None) -> list:
 
 def build_translation_prompt(sentences: list) -> str:
     """
-    构建批量句子翻译的 LLM prompt。
+    构建批量翻译 prompt，适配 TranslateGemma。
+    使用 [seq_id] 前缀标记句子，要求模型按相同格式输出。
 
     Args:
-        sentences: 待翻译的句子列表 [(idx, text), ...]
+        sentences: 待翻译的句子列表 [(seq_id, text), ...]
 
     Returns:
         str: prompt 文本
     """
-    numbered = "\n".join(f"[{idx}] {text}" for idx, text in sentences)
-
-    return f"""你是一位专业的中英翻译专家。请将以下英文句子翻译成中文。
-
-## 翻译要求
-1. **信达雅**：翻译要忠实原文、通顺流畅、符合中文表达习惯
-2. **保持语气**：如果原文是疑问句、感叹句、命令句，翻译也要保持同样的语气
-3. **自然口语化**：这些句子来自英文播客，翻译应该像自然的中文口语，适合朗读
-4. **不要加注释**：不要在翻译中添加括号注释或解释
-5. **人名地名**：保留英文原名，不翻译专有名词
-
-## 输出格式
-请严格按 JSON 格式输出，每个句子编号对应其翻译：
-{{"translations": [{{"id": 1, "chinese": "翻译内容"}}, {{"id": 2, "chinese": "翻译内容"}}]}}
-
-## 待翻译句子
-{numbered}"""
+    numbered = "\n".join(f"[{seq_id}] {text}" for seq_id, text in sentences)
+    return (f"You are a professional English (en) to Chinese (zh-Hans) translator.\n"
+            f"Your goal is to accurately convey the meaning and nuances of the original "
+            f"English text while adhering to Chinese grammar, vocabulary, and cultural "
+            f"sensitivities.\n"
+            f"Produce only the Chinese translation, without any additional explanations "
+            f"or commentary.\n"
+            f"Please translate the following English text into Chinese:\n\n\n"
+            f"{numbered}")
 
 
-def parse_translation_response(response_text: str) -> dict:
+def _clean_pinyin(text: str) -> str:
     """
-    解析 LLM 返回的翻译 JSON。
+    去除翻译文本末尾的拼音注释。
+
+    模型有时会输出如：
+      "我没有藏起你的骆驼，恰恰。 (Wǒ méiyǒu cáng qǐ nǐ de luòtuo, Qiàqià.)"
+    需要去掉括号内的拼音部分，只保留中文。
+
+    Args:
+        text: 可能含拼音注释的翻译文本
+
+    Returns:
+        str: 清洗后的纯中文翻译
+    """
+    if not text:
+        return text
+
+    # 去除末尾括号中的拼音/英文注释
+    # 模式1: "中文 (Wǒ méiyǒu...)" → 去掉末尾括号及括号内内容
+    text = re.sub(r'\s*\([A-Za-zà-üā-ōǜěńňǵḿ][^)]*\)\s*$', '', text)
+    # 模式2: "中文 [Wǒ méiyǒu...]"
+    text = re.sub(r'\s*\[[A-Za-zà-üā-ōǜěńňǵḿ][^\]]*\]\s*$', '', text)
+    return text.strip()
+
+
+def parse_translation_response(response_text: str, expected_ids: list) -> dict:
+    """
+    解析 TranslateGemma 的批量翻译纯文本响应。
+
+    优先按 [N] 前缀匹配；若前缀匹配失败，按行位置顺序匹配。
 
     Args:
         response_text: LLM 回复文本
+        expected_ids: 期望的 seq_id 列表（按顺序）
 
     Returns:
-        dict: {sentence_id: chinese_translation}
+        dict: {seq_id: chinese_translation}
     """
-    if not response_text.strip():
+    if not response_text or not response_text.strip():
         return {}
 
-    json_match = re.search(r'\{[\s\S]*"translations"[\s\S]*\}', response_text)
-    if not json_match:
-        return {}
+    lines = response_text.strip().split("\n")
+    result = {}
 
-    try:
-        data = json.loads(json_match.group())
-        translations = data.get("translations", [])
-        result = {}
-        for item in translations:
-            sid = item.get("id")
-            chinese = item.get("chinese", "").strip()
-            if sid is not None and chinese:
-                result[int(sid)] = chinese
+    # 第一轮：按 [N] 前缀匹配
+    id_prefix = re.compile(r'^\[(\d+)\]\s*(.*)')
+    found_by_prefix = {}
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        m = id_prefix.match(line)
+        if m:
+            sid = int(m.group(1))
+            translation = _clean_pinyin(m.group(2).strip())
+            if translation:
+                found_by_prefix[sid] = translation
+
+    # 第二轮：前缀匹配不到的部分，按位置顺序补充
+    if found_by_prefix:
+        result.update(found_by_prefix)
         return result
-    except (json.JSONDecodeError, ValueError):
-        return {}
+
+    # 无前缀匹配时，将非空行按顺序映射到 expected_ids
+    non_empty = [_clean_pinyin(l.strip()) for l in lines if l.strip()]
+    for i, sid in enumerate(expected_ids):
+        if i < len(non_empty) and non_empty[i]:
+            result[sid] = non_empty[i]
+
+    return result
 
 
 def translate_sentences(segments: list, indices: list = None,
                         batch_size: int = None,
                         cancel_check=None, progress_cb=None) -> dict:
     """
-    批量翻译指定的句子。
+    批量翻译指定的句子，适配 TranslateGemma。
 
     Args:
         segments: WhisperX segments 列表
@@ -207,13 +236,20 @@ def translate_sentences(segments: list, indices: list = None,
         print("[Step2b] 没有需要翻译的句子")
         return {}
 
+    # 用 1-based 顺序编号作为 prompt 中的标记，seq_to_idx 映射回实际 segment 索引
+    seq_to_idx = {}
+    numbered_pairs = []
+    for seq_id, (idx, text) in enumerate(sentence_pairs, start=1):
+        seq_to_idx[seq_id] = idx
+        numbered_pairs.append((seq_id, text))
+
     # 分批
     batches = []
-    for i in range(0, len(sentence_pairs), batch_size):
-        batches.append(sentence_pairs[i:i + batch_size])
+    for i in range(0, len(numbered_pairs), batch_size):
+        batches.append(numbered_pairs[i:i + batch_size])
 
     total_batches = len(batches)
-    print(f"[Step2b] 开始批量翻译，共 {len(sentence_pairs)} 个句子，"
+    print(f"[Step2b] 开始逐批翻译，共 {len(numbered_pairs)} 个句子，"
           f"每批 {batch_size} 句，分为 {total_batches} 批")
 
     all_translations = {}
@@ -226,31 +262,33 @@ def translate_sentences(segments: list, indices: list = None,
             progress_cb(batch_idx, total_batches)
 
         preview = batch[0][1][:50]
+        expected_ids = [s[0] for s in batch]
         print(f"[Step2b] [批次 {batch_idx + 1}/{total_batches}] "
               f"翻译 {len(batch)} 句: {preview}...")
 
         t0 = time.time()
         prompt = build_translation_prompt(batch)
         response = call_ollama(prompt)
-        translations = parse_translation_response(response)
+        batch_translations = parse_translation_response(response, expected_ids)
 
         elapsed = time.time() - t0
-        print(f"         耗时 {elapsed:.1f}s，翻译到 {len(translations)} 句")
+        print(f"         耗时 {elapsed:.1f}s，翻译到 {len(batch_translations)} 句")
 
-        # 合并结果
-        for idx, text in batch:
-            if idx in translations:
-                all_translations[idx] = translations[idx]
+        # 合并结果：将 seq_id 映射回实际 segment 索引
+        for seq_id, text in batch:
+            actual_idx = seq_to_idx[seq_id]
+            if seq_id in batch_translations and batch_translations[seq_id]:
+                all_translations[actual_idx] = batch_translations[seq_id]
             else:
-                # 如果单个句子翻译失败，尝试单句重试
-                print(f"  [重试] 句子 {idx} 未找到翻译，单句重试...")
-                retry_prompt = build_translation_prompt([(idx, text)])
+                # 单句重试
+                print(f"  [重试] 句子 {actual_idx} 单句重试...")
+                retry_prompt = f"Translate the following text from English to Chinese:\n\n{text}"
                 retry_resp = call_ollama(retry_prompt)
-                retry_result = parse_translation_response(retry_resp)
-                if idx in retry_result:
-                    all_translations[idx] = retry_result[idx]
+                retry_text = retry_resp.strip() if retry_resp else ""
+                if retry_text:
+                    all_translations[actual_idx] = retry_text
                 else:
-                    print(f"  [失败] 句子 {idx} 翻译失败，跳过")
+                    print(f"  [失败] 句子 {actual_idx} 翻译失败，跳过")
 
     print(f"[Step2b] 翻译完成: {len(all_translations)}/{len(sentence_pairs)} 句")
     return all_translations

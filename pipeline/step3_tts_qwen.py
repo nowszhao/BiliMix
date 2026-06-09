@@ -112,8 +112,11 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
         is_clean = i not in replacement_seg_set
         seg_durations.append((i, start_s, end_s, dur, is_clean))
 
-    # fallback: 最长纯净 segment
+    # fallback: 优先选最长纯净 segment，全翻译时选最长 segment
     clean_segs = [s for s in seg_durations if s[4] and s[3] > 1.0]
+    if not clean_segs:
+        # 100% 翻译模式：所有 segment 都在替换集中，用最长 segment 做 fallback
+        clean_segs = [s for s in seg_durations if s[3] > 1.0]
     clean_segs.sort(key=lambda x: x[3], reverse=True)
 
     fallback_path = None
@@ -619,6 +622,7 @@ def synthesize_sentences_with_qwen_tts(
     """
     为句子翻译模式合成中文 TTS 音频。
     每个被翻译的句子独立合成，使用对应英文句子的原声作为声音克隆参考。
+    多说话人场景下，每个说话人的声音自动匹配。
 
     Args:
         segments: WhisperX segments 列表
@@ -641,11 +645,10 @@ def synthesize_sentences_with_qwen_tts(
 
     print(f"[Step3-Qwen-Sentence] 准备为 {len(translated_indices)} 个句子合成中文 TTS")
 
-    # 提取参考音频（每个句子用自己的原声）—— 复用 extract_ref_audio_for_segments
+    # 提取参考音频（每个句子用自己的原声，区分多说话人）
     ref_audio_map = {}
     if voice_clone:
         ref_dir = os.path.join(cache_dir, "ref_audio")
-        # 构建临时 replacements 结构供 extract_ref_audio_for_segments 使用
         pseudo_replacements = [
             {"segment_index": idx}
             for idx in translated_indices
@@ -656,14 +659,18 @@ def synthesize_sentences_with_qwen_tts(
                 audio_path, segments, pseudo_replacements, ref_dir)
             print(f"[Step3-Qwen-Sentence] 提取了 {len(ref_audio_map)} 个句子参考音频")
 
-    # 构建 TTS 合成任务
+    # 构建 TTS 合成任务（每个句子用自己的参考音频）
     jobs = []
     for seg_idx in translated_indices:
         chinese_text = translations.get(seg_idx, "")
         if not chinese_text:
+            print(f"  [跳过] seg[{seg_idx}] 翻译文本为空，跳过 TTS 合成")
             continue
 
         ref_audio = ref_audio_map.get(seg_idx, "") if voice_clone else ""
+        if voice_clone and not ref_audio:
+            print(f"  [跳过] seg[{seg_idx}] 无参考音频，跳过 TTS 合成")
+            continue
         ref_text = segments[seg_idx].get("text", "").strip() if seg_idx < len(segments) else ""
 
         cache_key = hashlib.md5(

@@ -60,6 +60,7 @@ def mix_sentence_audio(
 
     # 已翻译索引集合（快速查找）
     translated_set = set(translated_indices)
+    all_translated = len(translated_set) >= len(segments)
 
     # 构建混合音频
     result = AudioSegment.empty()
@@ -118,7 +119,10 @@ def mix_sentence_audio(
                 })
                 mixed_pos_ms += eng_len_ms
         else:
-            # ---- 无翻译的句子：保留英文原声 ----
+            # ---- 无翻译或无 TTS 的句子：保留英文原声 ----
+            if seg_idx in translated_set:
+                # 选了翻译但 TTS 合成失败（tts_audio_map 中无此条目）
+                print(f"  [{seg_idx}] [警告] 已选翻译但缺少 TTS 音频 (tts_audio_map 无此条目)，保留英文")
             eng_clip = original_audio[seg_start_ms:seg_end_ms]
             eng_len_ms = len(eng_clip)
             result += eng_clip
@@ -135,30 +139,45 @@ def mix_sentence_audio(
             eng_text = seg.get("text", "").strip()[:40]
             print(f"  [{seg_idx}] 🇬🇧 保留: \"{eng_text}\"")
 
-        # 句子之间添加小间隔（仅在非最后一句时）
+        # 句子之间添加间隔
         if seg_idx < len(segments) - 1:
-            # 计算原始音频中两句之间的间隔
             next_seg = segments[seg_idx + 1]
             next_start_ms = int(next_seg.get("start", 0) * 1000)
             orig_gap_ms = max(0, next_start_ms - seg_end_ms)
 
             if orig_gap_ms > 0:
-                # 保留原始的句间间隔
-                gap_clip = original_audio[seg_end_ms:next_start_ms]
-                gap_len_ms = len(gap_clip)
-                result += gap_clip
-                time_mapping.append({
-                    "mixed_start": round(mixed_pos_ms / 1000.0, 3),
-                    "mixed_end": round((mixed_pos_ms + gap_len_ms) / 1000.0, 3),
-                    "orig_start": round(seg_end_ms / 1000.0, 3),
-                    "orig_end": round(next_start_ms / 1000.0, 3),
-                    "type": "gap",
-                    "segment_index": -1,
-                })
-                mixed_pos_ms += gap_len_ms
+                if all_translated:
+                    # 100% 全翻译模式：跳过原始间隙（含呼吸/环境音/click），
+                    # 插入一段小静音使 TTS 衔接更干净自然
+                    clean_gap = AudioSegment.silent(
+                        duration=orig_gap_ms, frame_rate=target_sr)
+                    result += clean_gap
+                    time_mapping.append({
+                        "mixed_start": round(mixed_pos_ms / 1000.0, 3),
+                        "mixed_end": round((mixed_pos_ms + orig_gap_ms) / 1000.0, 3),
+                        "orig_start": round(seg_end_ms / 1000.0, 3),
+                        "orig_end": round(next_start_ms / 1000.0, 3),
+                        "type": "gap",
+                        "segment_index": -1,
+                    })
+                    mixed_pos_ms += orig_gap_ms
+                else:
+                    # 中英交替模式：保留原始的句间间隔（环境音自然过渡）
+                    gap_clip = original_audio[seg_end_ms:next_start_ms]
+                    gap_len_ms = len(gap_clip)
+                    result += gap_clip
+                    time_mapping.append({
+                        "mixed_start": round(mixed_pos_ms / 1000.0, 3),
+                        "mixed_end": round((mixed_pos_ms + gap_len_ms) / 1000.0, 3),
+                        "orig_start": round(seg_end_ms / 1000.0, 3),
+                        "orig_end": round(next_start_ms / 1000.0, 3),
+                        "type": "gap",
+                        "segment_index": -1,
+                    })
+                    mixed_pos_ms += gap_len_ms
 
-    # 添加最后一段原始音频尾部
-    if segments:
+    # 添加最后一段原始音频尾部（仅中英交替模式需要）
+    if segments and not all_translated:
         last_end_ms = int(segments[-1].get("end", 0) * 1000)
         if last_end_ms < original_duration_ms:
             tail_clip = original_audio[last_end_ms:]

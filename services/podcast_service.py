@@ -3,6 +3,7 @@
 封装 iTunes Search API 搜索接口和 RSS Feed 解析功能。
 """
 import json
+import re
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -43,6 +44,45 @@ def search_podcasts_itunes(query: str, limit: int = 25) -> dict:
         return {"podcasts": podcasts, "count": len(podcasts)}
     except Exception as e:
         return {"error": f"搜索失败: {str(e)}"}
+
+
+def _format_duration(raw: str) -> str:
+    """
+    将 RSS 中的时长值统一格式化为 HH:MM:SS。
+
+    支持输入格式：
+    - "HH:MM:SS" → 原样返回
+    - "MM:SS"   → 补零为 "M:SS" 或 "0:MM:SS"
+    - 纯数字秒  → 转为 "HH:MM:SS"
+    - 空字符串  → 返回空字符串
+    """
+    if not raw:
+        return ""
+
+    # 已是 HH:MM:SS 或 MM:SS 格式
+    if re.match(r'^\d+:\d{2}(:\d{2})?$', raw):
+        parts = raw.split(":")
+        if len(parts) == 2:  # MM:SS
+            m, s = int(parts[0]), int(parts[1])
+            h, m = divmod(m, 60)
+            if h > 0:
+                return f"{h}:{m:02d}:{s:02d}"
+            return f"{m}:{s:02d}"
+        return raw  # 已是 HH:MM:SS
+
+    # 纯数字（秒）
+    try:
+        total = int(raw)
+    except (ValueError, TypeError):
+        return raw  # 无法解析，原样返回
+
+    h, remainder = divmod(total, 3600)
+    m, s = divmod(remainder, 60)
+    if h > 0:
+        return f"{h}:{m:02d}:{s:02d}"
+    if m > 0:
+        return f"{m}:{s:02d}"
+    return f"0:{s:02d}"
 
 
 def parse_rss_feed(feed_url: str, max_episodes: int = 30) -> dict:
@@ -100,8 +140,9 @@ def parse_rss_feed(feed_url: str, max_episodes: int = 30) -> dict:
                 audio_url = enclosure.get("url", "")
                 audio_type = enclosure.get("type", "")
 
-            # 时长
+            # 时长：尝试多个位置/格式提取
             duration_str = ""
+            # 尝试 itunes:duration（带命名空间）
             for ns_prefix in [
                 "{http://www.itunes.com/dtds/podcast-1.0.dtd}",
             ]:
@@ -109,6 +150,24 @@ def parse_rss_feed(feed_url: str, max_episodes: int = 30) -> dict:
                 if dur_el is not None and dur_el.text:
                     duration_str = dur_el.text.strip()
                     break
+            # 回退：尝试不带命名空间的 duration 元素
+            if not duration_str:
+                dur_el = item.find("duration")
+                if dur_el is not None and dur_el.text:
+                    duration_str = dur_el.text.strip()
+            # 回退：尝试从 enclosure 的 length 估算（无时长时的保底）
+            if not duration_str:
+                dur_el = item.find("enclosure")
+                if dur_el is not None and dur_el.get("length"):
+                    # 粗略按 ~64kbps 估算秒数
+                    try:
+                        length = int(dur_el.get("length", "0"))
+                        if length > 0:
+                            duration_str = str(length // 8000)
+                    except (ValueError, TypeError):
+                        pass
+            # 统一格式化为 HH:MM:SS
+            duration_str = _format_duration(duration_str)
 
             pub_date = (item.findtext("pubDate") or "").strip()
 
