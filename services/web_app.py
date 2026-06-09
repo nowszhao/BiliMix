@@ -45,7 +45,7 @@ from core.database import (
     delete_vocabulary, get_vocabulary_stats,
 )
 from core.word_frequency import get_word_to_level, get_level_to_num_map
-from services.podcast_service import search_podcasts_castos, parse_rss_feed
+from services.podcast_service import search_podcasts_itunes, parse_rss_feed
 from core.config_manager import get_all_config, update_config
 
 from pipeline.step1_transcribe import transcribe, extract_full_text, extract_word_timestamps
@@ -1151,7 +1151,7 @@ def podcast_search():
         return jsonify({"error": "请提供搜索关键词 q"}), 400
     # 记录搜索历史
     add_search_keyword(q)
-    result = search_podcasts_castos(q)
+    result = search_podcasts_itunes(q)
     if "error" in result:
         return jsonify({"error": result["error"]}), 500
     return jsonify(result)

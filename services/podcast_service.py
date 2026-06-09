@@ -1,6 +1,6 @@
 """
 播客搜索与 RSS 解析服务模块
-封装 Castos 搜索接口和 RSS Feed 解析功能。
+封装 iTunes Search API 搜索接口和 RSS Feed 解析功能。
 """
 import json
 import urllib.parse
@@ -8,31 +8,37 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 
-def search_podcasts_castos(query: str) -> dict:
-    """通过 Castos 免费搜索接口搜索播客，返回播客列表"""
+def search_podcasts_itunes(query: str, limit: int = 25) -> dict:
+    """通过 iTunes Search API 搜索播客，返回播客列表
+
+    iTunes Search API 是 Apple 官方免费 API，无需 API Key。
+    """
     try:
-        url = "https://castos.com/wp-admin/admin-ajax.php"
-        data = urllib.parse.urlencode({
-            "search": query,
-            "action": "feed_url_lookup_search",
-        }).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers={
+        url = "https://itunes.apple.com/search?" + urllib.parse.urlencode({
+            "term": query,
+            "media": "podcast",
+            "limit": limit,
+        })
+        req = urllib.request.Request(url, headers={
             "User-Agent": "BiliMix-PodcastHelper/1.0",
-            "Content-Type": "application/x-www-form-urlencoded",
         })
         with urllib.request.urlopen(req, timeout=15) as resp:
             result = json.loads(resp.read().decode("utf-8"))
-        if not result.get("success"):
-            return {"error": "搜索服务返回失败"}
-        items = result.get("data", [])
+
+        items = result.get("results", [])
         podcasts = []
         for item in items:
+            feed_url = item.get("feedUrl", "")
+            if not feed_url:
+                continue
             podcasts.append({
-                "title": item.get("title", ""),
-                "author": item.get("author", ""),
-                "description": (item.get("description") or "")[:200],
-                "image": item.get("image", ""),
-                "url": item.get("url", ""),  # RSS Feed URL
+                "title": item.get("collectionName", ""),
+                "author": item.get("artistName", ""),
+                "description": (item.get("collectionCensoredName")
+                                or item.get("primaryGenreName")
+                                or "")[:200],
+                "image": item.get("artworkUrl600", ""),
+                "url": feed_url,  # RSS Feed URL
             })
         return {"podcasts": podcasts, "count": len(podcasts)}
     except Exception as e:

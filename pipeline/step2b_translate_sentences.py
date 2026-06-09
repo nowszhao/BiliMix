@@ -214,7 +214,7 @@ def translate_sentences(segments: list, indices: list = None,
 
     total_batches = len(batches)
     print(f"[Step2b] 开始批量翻译，共 {len(sentence_pairs)} 个句子，"
-          f"分为 {total_batches} 批")
+          f"每批 {batch_size} 句，分为 {total_batches} 批")
 
     all_translations = {}
 

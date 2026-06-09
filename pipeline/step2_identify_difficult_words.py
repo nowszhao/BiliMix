@@ -268,6 +268,10 @@ def call_ollama(prompt: str) -> str:
         str: 模型回复文本
     """
     url = f"{config.OLLAMA_BASE_URL}/api/generate"
+    # num_predict: 单句翻译需要约 512 token，批量翻译可能更多
+    # 同时 qwen3.5 是推理模型，即使 think=False 仍可能输出大量推理 token
+    # 增大 num_predict 可避免响应被截断导致 JSON 解析失败后逐句重试
+    num_predict = getattr(config, "LLM_NUM_PREDICT", 8192)
     payload = {
         "model": config.OLLAMA_MODEL,
         "prompt": prompt,
@@ -275,7 +279,7 @@ def call_ollama(prompt: str) -> str:
         "stream": False,
         "options": {
             "temperature": 0.3,
-            "num_predict": 2048,
+            "num_predict": num_predict,
         }
     }
 

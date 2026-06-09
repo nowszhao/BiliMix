@@ -27,6 +27,7 @@ UPDATABLE_CONFIGS = {
     "ollama_base_url": ("OLLAMA_BASE_URL", str),
     "ollama_model": ("OLLAMA_MODEL", str),
     "llm_batch_size": ("LLM_BATCH_SIZE", int),
+    "llm_num_predict": ("LLM_NUM_PREDICT", int),
     "output_format": ("OUTPUT_FORMAT", str),
     "output_bitrate": ("OUTPUT_BITRATE", str),
     "qwen3_tts_device": ("QWEN3_TTS_DEVICE", str),
@@ -64,6 +65,7 @@ def get_all_config() -> dict:
         "ollama_base_url": getattr(config, "OLLAMA_BASE_URL", "http://localhost:11434"),
         "ollama_model": getattr(config, "OLLAMA_MODEL", "qwen3:8b"),
         "llm_batch_size": getattr(config, "LLM_BATCH_SIZE", 8),
+        "llm_num_predict": getattr(config, "LLM_NUM_PREDICT", 8192),
         # 音频
         "output_format": getattr(config, "OUTPUT_FORMAT", "mp3"),
         "output_bitrate": getattr(config, "OUTPUT_BITRATE", "192k"),
