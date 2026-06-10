@@ -17,10 +17,52 @@ import json
 import os
 import subprocess
 import tempfile
-
-from pydub import AudioSegment
+import threading
 
 from core import config
+
+
+def _get_audio_duration_ms(audio_path: str) -> int:
+    """
+    Get audio duration in milliseconds without loading the full file into memory.
+    Uses pydub's mediainfo (ffprobe under the hood) — reads only metadata.
+    """
+    from pydub.utils import mediainfo
+    info = mediainfo(audio_path)
+    return int(float(info["duration"]) * 1000)
+
+
+def _extract_audio_clip(audio_path: str, start_ms: int, end_ms: int,
+                        output_path: str, timeout: int = 120) -> None:
+    """
+    Extract an audio clip using ffmpeg subprocess.
+    Does NOT load the full source file into memory — ffmpeg handles seeking.
+
+    Uses input seeking (-ss before -i) for fast extraction. Slight keyframe
+    imprecision is acceptable for voice cloning reference audio.
+
+    Args:
+        audio_path: Path to source audio file
+        start_ms: Start time in milliseconds
+        end_ms: End time in milliseconds
+        output_path: Output WAV file path
+        timeout: Maximum seconds for ffmpeg to run
+
+    Raises:
+        subprocess.TimeoutExpired: if ffmpeg takes too long
+        subprocess.CalledProcessError: if ffmpeg fails
+    """
+    start_s = start_ms / 1000.0
+    duration_s = (end_ms - start_ms) / 1000.0
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-ss", str(start_s),
+        "-i", audio_path,
+        "-t", str(duration_s),
+        "-acodec", "pcm_s16le",
+        output_path,
+    ]
+    subprocess.run(cmd, capture_output=True, timeout=timeout, check=True)
 
 
 def _build_tts_text(group_indices: list, replacements: list) -> str:
@@ -96,8 +138,10 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
     print(f"[Step3-Qwen] 涉及 {len(seg_indices)} 个 segment 的替换，"
           f"采用 segment 级别参考模式：每句独立参考音频")
 
-    audio = AudioSegment.from_file(audio_path)
-    audio_duration_ms = len(audio)
+    # 只读取元数据获取时长，不加载完整音频到内存
+    audio_duration_ms = _get_audio_duration_ms(audio_path)
+    print(f"  [Step3-Qwen] 音频时长: {audio_duration_ms / 1000:.1f}s "
+          f"(使用 ffmpeg 按需提取片段，避免全量加载)")
     ref_duration_ms = int(ref_duration * 1000)
     min_ref_duration_ms = int(min_ref_duration * 1000)
 
@@ -130,9 +174,8 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
         fb_clip_end = min(audio_duration_ms, fb_clip_start + ref_duration_ms)
         if fb_clip_end - fb_clip_start < ref_duration_ms:
             fb_clip_start = max(0, fb_clip_end - ref_duration_ms)
-        fb_clip = audio[fb_clip_start:fb_clip_end]
         fallback_path = os.path.join(output_dir, "ref_fallback.wav")
-        fb_clip.export(fallback_path, format="wav")
+        _extract_audio_clip(audio_path, fb_clip_start, fb_clip_end, fallback_path)
         print(f"  [fallback] 全篇参考: segment[{fb_idx}] "
               f"({fb_start:.1f}s-{fb_end:.1f}s) -> {fallback_path}")
 
@@ -182,16 +225,17 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
             clip_start = max(0, seg_mid_ms - ref_duration_ms // 2)
             clip_end = min(audio_duration_ms, clip_start + ref_duration_ms)
 
-        ref_clip = audio[clip_start:clip_end]
         ref_filename = f"ref_seg_{seg_idx}.wav"
         ref_path = os.path.join(output_dir, ref_filename)
-        ref_clip.export(ref_path, format="wav")
+        # 使用 ffmpeg 按需提取片段，不加载完整音频
+        _extract_audio_clip(audio_path, clip_start, clip_end, ref_path)
 
         ref_map[seg_idx] = ref_path
+        clip_dur = (clip_end - clip_start) / 1000.0
         print(f"  seg[{seg_idx}] ({seg_start:.1f}s-{seg_end:.1f}s, "
               f"{seg_dur:.1f}s) -> {ref_filename} "
               f"(clip: {clip_start/1000:.1f}s-{clip_end/1000:.1f}s, "
-              f"{len(ref_clip)/1000:.1f}s)")
+              f"{clip_dur:.1f}s)")
 
     print(f"[Step3-Qwen] 共提取 {len(set(ref_map.values()))} 个独立参考音频 "
           f"(覆盖 {len(ref_map)} 个 segment)")
@@ -434,6 +478,22 @@ def synthesize_with_qwen_tts(replacements: list, ref_audio_map: dict,
         text=False,  # 使用 bytes 模式以支持非阻塞读取
     )
 
+    # 后台线程持续读取 stdout，防止管道缓冲区填满导致 worker 子进程死锁
+    # PyTorch / Qwen3TTS 可能在模型加载时向 stdout 输出大量日志，
+    # 如果管道缓冲区（默认 64KB）填满而父进程未读取，worker 将永久阻塞
+    _stdout_chunks = []
+    def _drain_stdout():
+        try:
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                _stdout_chunks.append(chunk)
+        except Exception:
+            pass
+    _stdout_reader = threading.Thread(target=_drain_stdout, daemon=True)
+    _stdout_reader.start()
+
     # 注册 worker 进程到 task_subprocesses 以便用户终止时能杀掉
     if task_id:
         try:
@@ -528,10 +588,16 @@ def synthesize_with_qwen_tts(replacements: list, ref_audio_map: dict,
                 stderr_lines.append(line)
                 print(f"  {line}")
 
-        # 等待进程结束并获取 stdout（如果 worker 还在运行）
+        # 收集 stdout（后台线程已持续读取到 _stdout_chunks）
+        proc.stderr.close()
+        _stdout_reader.join(timeout=10)
         if not worker_stall_but_done:
-            stdout_data, _ = proc.communicate(timeout=60)
-            stdout_data = stdout_data.decode("utf-8", errors="replace") if stdout_data else ""
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            stdout_data = b"".join(_stdout_chunks).decode("utf-8", errors="replace") if _stdout_chunks else ""
         else:
             stdout_data = ""
 
@@ -759,6 +825,19 @@ def synthesize_sentences_with_qwen_tts(
 
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=False)
+        # 后台线程持续读取 stdout，防止管道缓冲区填满导致 worker 子进程死锁
+        _stdout_chunks_retry = []
+        def _drain_stdout_retry():
+            try:
+                while True:
+                    chunk = proc.stdout.read(4096)
+                    if not chunk:
+                        break
+                    _stdout_chunks_retry.append(chunk)
+            except Exception:
+                pass
+        _stdout_reader_retry = threading.Thread(target=_drain_stdout_retry, daemon=True)
+        _stdout_reader_retry.start()
         # 注册 worker 进程方便用户取消
         if task_id:
             try:
@@ -840,9 +919,16 @@ def synthesize_sentences_with_qwen_tts(
                     stderr_lines.append(line)
                     print(f"  {line}")
 
+            # 收集 stdout（后台线程已持续读取到 _stdout_chunks_retry）
+            proc.stderr.close()
+            _stdout_reader_retry.join(timeout=10)
             if not worker_stall_but_done:
-                stdout_data, _ = proc.communicate(timeout=60)
-                stdout_data = stdout_data.decode("utf-8", errors="replace") if stdout_data else ""
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                stdout_data = b"".join(_stdout_chunks_retry).decode("utf-8", errors="replace") if _stdout_chunks_retry else ""
             else:
                 stdout_data = ""
 
