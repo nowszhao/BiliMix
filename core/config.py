@@ -85,8 +85,16 @@ QWEN3_TTS_DEVICE = "cpu"
 # 参考音频时长（秒）：从原音频中截取多长的片段作为说话人参考
 QWEN3_TTS_REF_DURATION = 8
 # Segment 级别参考的最小时长（秒）：segment 短于此值时向前后扩展
-# 建议 >= 2.0，确保参考音频有足够的声音特征供克隆
-SEGMENT_REF_MIN_DURATION = 3.0
+# 降低到 1.5s，减少需要扩展的 segment，避免跨说话人音色污染
+# x-vector 在 1-2s 音频上效果已足够，ICL 模式下则需更长时间（但需配合边界保护）
+SEGMENT_REF_MIN_DURATION = 1.5
+# 同一说话人连续句段的最大间隔（秒）：相邻 segment 间隔小于此值视为同一说话人
+# 用于将连续短句分组，组内共享最长 segment 的参考音频，保证音色一致
+SAME_SPEAKER_GAP = 0.3
+# 声音克隆模式: False = x-vector 仅音色（默认），True = ICL 保留音色+语气/韵律
+# ICL 模式会提取参考音频的韵律特征（音高、语速、情感），合成更自然
+# 注意：ICL 模式下英文参考音频 + 中文目标文本，language="Chinese" 引导发音
+QWEN3_TTS_ICL_MODE = True
 # TTS 合成语言
 QWEN3_TTS_LANGUAGE = "Chinese"
 # TTS 合成失败时自动重试次数

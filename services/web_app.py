@@ -401,7 +401,7 @@ def continue_after_confirmation(task_id: str):
             update_task(task_id, progress=64,
                         message="Step 3/5: 提取说话人参考音频...")
             ref_dir = os.path.join(result_dir, "ref_audio")
-            ref_audio_map = extract_ref_audio_for_segments(
+            ref_audio_map, ref_source_map = extract_ref_audio_for_segments(
                 audio_path, segments, replacements, ref_dir)
 
             if is_cancelled(task_id):
@@ -424,6 +424,7 @@ def continue_after_confirmation(task_id: str):
             tts_map = synthesize_with_qwen_tts(
                 replacements, ref_audio_map, segments, qwen_cache_dir,
                 adjacent_groups=adjacent_groups,
+                ref_source_map=ref_source_map,
                 cancel_check=_tts_cancel, progress_cb=_tts_progress,
                 task_id=task_id)
 

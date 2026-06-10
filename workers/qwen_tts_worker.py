@@ -154,6 +154,10 @@ def main():
     device = task.get("device", "cpu")
     language = task.get("language", "Chinese")
     jobs = task.get("jobs", [])
+    icl_mode = task.get("icl_mode", False)
+
+    if icl_mode:
+        print(f"[QwenTTS] ⚡ ICL 模式：保留参考音频的语气和韵律", file=sys.stderr)
 
     if not jobs:
         print(json.dumps({"results": [], "message": "没有合成任务"}))
@@ -200,15 +204,21 @@ def main():
 
         try:
             # 创建 voice clone prompt（可复用）
-            # 关键：必须使用 x_vector_only_mode=True（仅提取说话人音色嵌入）
-            # 原因：参考音频和参考文本都是英文，如果使用 ICL 模式(x_vector_only_mode=False)，
-            # 英文的上下文会强烈引导模型输出英文发音，即使 text 和 language 设为中文。
-            # 使用 x_vector_only_mode=True 则只克隆音色特征，不受参考文本语言的影响。
+            # ICL 模式(x_vector_only_mode=False): 同时提取音色和韵律特征（语气、语速、情感）
+            #   - 参考音频 + 参考文本告诉模型「这个人用这种语气说了这句话」
+            #   - 适合需要保留原句情感语调的场景
+            # x-vector 模式(x_vector_only_mode=True): 仅提取音色嵌入
+            #   - 参考文本传 None，不受参考文本语言影响
+            #   - 适合纯音色克隆，中文发音更稳定
+            ref_text_for_prompt = ref_text if icl_mode else None
+            use_x_vector_only = not icl_mode
             prompt_items = model.create_voice_clone_prompt(
                 ref_audio=ref_audio,
-                ref_text=None,
-                x_vector_only_mode=True,
+                ref_text=ref_text_for_prompt,
+                x_vector_only_mode=use_x_vector_only,
             )
+            mode_label = "ICL(音色+语气)" if icl_mode else "x-vector(仅音色)"
+            print(f"         prompt 模式: {mode_label}", file=sys.stderr)
         except Exception as e:
             print(f"[QwenTTS] 构建 prompt 失败: {e}", file=sys.stderr)
             for job in group_jobs:

@@ -97,21 +97,55 @@ def _build_tts_text(group_indices: list, replacements: list) -> str:
         return "".join(replacements[idx]["chinese"] for idx in group_indices)
 
 
+def _group_segments_into_turns(segments: list, same_speaker_gap: float = 0.3) -> list:
+    """
+    Group ALL consecutive segments into speaker turns based on inter-segment gaps.
+
+    In conversation, consecutive segments from the same speaker typically have
+    very short gaps (< same_speaker_gap, e.g., one person saying multiple
+    sentences in a row). Gaps larger than this are likely speaker turns.
+
+    Returns:
+        list of groups, each group is a list of segment indices.
+        e.g., [[0,1,2], [3], [4,5], [6], ...]
+    """
+    if not segments:
+        return []
+
+    groups = []
+    current_group = [0]
+    prev_end = segments[0].get("end", 0)
+
+    for i in range(1, len(segments)):
+        seg_start = segments[i].get("start", 0)
+        gap = seg_start - prev_end
+
+        if gap <= same_speaker_gap:
+            # Very short gap: same speaker continuing in the same turn
+            current_group.append(i)
+        else:
+            # Speaker turn
+            groups.append(current_group)
+            current_group = [i]
+
+        prev_end = segments[i].get("end", 0)
+
+    groups.append(current_group)
+    return groups
+
+
 def extract_ref_audio_for_segments(audio_path: str, segments: list,
                                    replacements: list, output_dir: str,
-                                   ref_duration: float = None) -> dict:
+                                   ref_duration: float = None) -> tuple:
     """
     提取参考音频片段用于声音克隆。
 
-    策略（segment 级别参考）：
-    - 每个需要 TTS 的 segment 单独提取参考音频，实现"谁说的话就用谁的声音"
-    - 参考音频就是该 segment 在原始音频中的完整原声
-    - 对于太短的 segment（< MIN_REF_DURATION），向前后 segment 扩展以达到最小时长
-    - 对于极短 segment（< 1 秒），回退到全篇最长纯净 segment 作为参考
-
-    这样做的好处：
-    1. 多说话人场景下，每个角色的生词自动用该角色的声音克隆
-    2. 参考音频的语气、语速与目标句子一致，合成更自然
+    优化策略（边界感知 + 说话人分组）：
+    - 每个 segment 使用自身边界提取参考音频，不向外扩展到相邻 segment，
+      杜绝跨说话人音色污染
+    - 通过 inter-segment gap 检测说话人轮次，同轮次的连续短句共享
+      最长 segment 的参考音频，保证同一说话人音色一致
+    - 极短 segment（< 1 秒）回退到全篇最长纯净 segment 作为 fallback
 
     Args:
         audio_path: 原始音频文件路径
@@ -121,14 +155,17 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
         ref_duration: 参考音频最大时长上限（秒），默认用 config 配置
 
     Returns:
-        dict: {segment_index: ref_audio_path} 映射
-              每个 segment_index 指向各自的参考音频文件
+        tuple: (ref_map, ref_source_map)
+            ref_map: {segment_index: ref_audio_path}
+            ref_source_map: {segment_index: source_segment_index}
+                告诉调用方每个 segment 实际使用了哪个 segment 的参考音频
+                （同轮次共享时 source 可能不同于 segment_index）
     """
     if ref_duration is None:
         ref_duration = getattr(config, "QWEN3_TTS_REF_DURATION", 8)
 
-    # segment 级别参考的最小时长（秒）
-    min_ref_duration = getattr(config, "SEGMENT_REF_MIN_DURATION", 3.0)
+    min_ref_duration = getattr(config, "SEGMENT_REF_MIN_DURATION", 1.5)
+    same_speaker_gap = getattr(config, "SAME_SPEAKER_GAP", 0.3)
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -136,17 +173,15 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
     seg_indices = sorted(set(r["segment_index"] for r in replacements))
 
     print(f"[Step3-Qwen] 涉及 {len(seg_indices)} 个 segment 的替换，"
-          f"采用 segment 级别参考模式：每句独立参考音频")
+          f"采用边界感知 + 说话人分组模式: "
+          f"min_ref={min_ref_duration}s, same_speaker_gap={same_speaker_gap}s")
 
     # 只读取元数据获取时长，不加载完整音频到内存
     audio_duration_ms = _get_audio_duration_ms(audio_path)
-    print(f"  [Step3-Qwen] 音频时长: {audio_duration_ms / 1000:.1f}s "
-          f"(使用 ffmpeg 按需提取片段，避免全量加载)")
     ref_duration_ms = int(ref_duration * 1000)
     min_ref_duration_ms = int(min_ref_duration * 1000)
 
     # ---- 准备 fallback 参考音频 ----
-    # 对于极短 segment，需要一个全篇级的 fallback
     replacement_seg_set = set(r["segment_index"] for r in replacements)
     seg_durations = []
     for i, seg in enumerate(segments):
@@ -156,10 +191,8 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
         is_clean = i not in replacement_seg_set
         seg_durations.append((i, start_s, end_s, dur, is_clean))
 
-    # fallback: 优先选最长纯净 segment，全翻译时选最长 segment
     clean_segs = [s for s in seg_durations if s[4] and s[3] > 1.0]
     if not clean_segs:
-        # 100% 翻译模式：所有 segment 都在替换集中，用最长 segment 做 fallback
         clean_segs = [s for s in seg_durations if s[3] > 1.0]
     clean_segs.sort(key=lambda x: x[3], reverse=True)
 
@@ -179,8 +212,9 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
         print(f"  [fallback] 全篇参考: segment[{fb_idx}] "
               f"({fb_start:.1f}s-{fb_end:.1f}s) -> {fallback_path}")
 
-    # ---- 为每个 segment 提取独立参考音频 ----
+    # ---- 为每个 segment 提取独立参考音频（边界感知，不跨段扩展） ----
     ref_map = {}
+    ref_source_map = {}  # seg_idx -> source_seg_idx (which segment's audio is used)
     for seg_idx in seg_indices:
         seg = segments[seg_idx]
         seg_start = seg.get("start", 0)
@@ -195,52 +229,77 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
         if seg_dur < 1.0:
             if fallback_path:
                 ref_map[seg_idx] = fallback_path
+                ref_source_map[seg_idx] = seg_idx  # fallback, not tied to a specific segment
                 print(f"  seg[{seg_idx}] ({seg_dur:.1f}s) 极短 -> 使用 fallback")
             else:
                 print(f"  seg[{seg_idx}] ({seg_dur:.1f}s) 极短且无 fallback，跳过")
             continue
 
-        # segment 足够长（>= min_ref_duration）：直接使用
-        if seg_dur_ms >= min_ref_duration_ms:
-            clip_start = seg_start_ms
-            clip_end = seg_end_ms
-        else:
-            # segment 太短（< min_ref_duration 但 >= 1s）：向前后扩展
-            # 以 segment 中心为基准，向两侧对称扩展到 min_ref_duration
-            seg_mid_ms = (seg_start_ms + seg_end_ms) // 2
-            half_needed = min_ref_duration_ms // 2
-            clip_start = max(0, seg_mid_ms - half_needed)
-            clip_end = min(audio_duration_ms, seg_mid_ms + half_needed)
-            # 如果一侧不够，另一侧多取
-            if clip_end - clip_start < min_ref_duration_ms:
-                if clip_start == 0:
-                    clip_end = min(audio_duration_ms, clip_start + min_ref_duration_ms)
-                else:
-                    clip_start = max(0, clip_end - min_ref_duration_ms)
+        # 边界感知：直接用 segment 自身边界，不向外扩展
+        # x-vector 在 1-2s 音频上已足够提取音色特征
+        # ICL 模式需要更长时间，但优先保证音色纯净（不混入其他说话人）
+        clip_start = seg_start_ms
+        clip_end = seg_end_ms
 
-        # 限制最大时长
+        # 限制最大时长（超长 segment 从中心截取）
         if clip_end - clip_start > ref_duration_ms:
-            # 以 segment 中心为基准截取
             seg_mid_ms = (seg_start_ms + seg_end_ms) // 2
             clip_start = max(0, seg_mid_ms - ref_duration_ms // 2)
             clip_end = min(audio_duration_ms, clip_start + ref_duration_ms)
 
         ref_filename = f"ref_seg_{seg_idx}.wav"
         ref_path = os.path.join(output_dir, ref_filename)
-        # 使用 ffmpeg 按需提取片段，不加载完整音频
         _extract_audio_clip(audio_path, clip_start, clip_end, ref_path)
 
         ref_map[seg_idx] = ref_path
+        ref_source_map[seg_idx] = seg_idx
         clip_dur = (clip_end - clip_start) / 1000.0
+        expanded_mark = "" if seg_dur_ms >= min_ref_duration_ms else " [短句-不扩展]"
         print(f"  seg[{seg_idx}] ({seg_start:.1f}s-{seg_end:.1f}s, "
               f"{seg_dur:.1f}s) -> {ref_filename} "
               f"(clip: {clip_start/1000:.1f}s-{clip_end/1000:.1f}s, "
-              f"{clip_dur:.1f}s)")
+              f"{clip_dur:.1f}s){expanded_mark}")
 
-    print(f"[Step3-Qwen] 共提取 {len(set(ref_map.values()))} 个独立参考音频 "
-          f"(覆盖 {len(ref_map)} 个 segment)")
+    # ---- 说话人分组：同轮次 segment 共享最长 segment 的参考音频 ----
+    all_turns = _group_segments_into_turns(segments, same_speaker_gap)
+    # 找出哪些 turn 包含需要 TTS 的 segment
+    turn_has_replacement = {}
+    for turn_idx, turn in enumerate(all_turns):
+        for si in turn:
+            if si in ref_map:
+                turn_has_replacement.setdefault(turn_idx, []).append(si)
 
-    return ref_map
+    share_count = 0
+    for turn_idx, turn_segs in turn_has_replacement.items():
+        if len(turn_segs) <= 1:
+            continue
+        # 找该 turn 中时长最长的 segment（优先选纯净的，其次选有参考音频的）
+        turn = all_turns[turn_idx]
+        # 在 turn 中找有参考音频的最长 segment
+        best_seg = None
+        best_dur = 0
+        for si in turn:
+            seg = segments[si]
+            dur = seg.get("end", 0) - seg.get("start", 0)
+            if dur > best_dur:
+                best_dur = dur
+                best_seg = si
+
+        if best_seg is not None and best_seg in ref_map:
+            best_ref = ref_map[best_seg]
+            for si in turn_segs:
+                if si != best_seg:
+                    ref_map[si] = best_ref
+                    ref_source_map[si] = best_seg
+                    share_count += 1
+
+    unique_refs = len(set(ref_map.values()))
+    turns_with_multi = sum(1 for t in turn_has_replacement.values() if len(t) > 1)
+    print(f"[Step3-Qwen] 共 {unique_refs} 个独立参考音频 "
+          f"(覆盖 {len(ref_map)} 个 segment, "
+          f"{turns_with_multi} 个说话人轮次内共享, {share_count} 个 segment 共享)")
+
+    return ref_map, ref_source_map
 
 
 def group_adjacent_replacements(replacements: list) -> list:
@@ -307,6 +366,7 @@ def group_adjacent_replacements(replacements: list) -> list:
 def synthesize_with_qwen_tts(replacements: list, ref_audio_map: dict,
                               segments: list, cache_dir: str,
                               adjacent_groups: list = None,
+                              ref_source_map: dict = None,
                               cancel_check=None, progress_cb=None,
                               task_id: str = None) -> dict:
     """
@@ -319,6 +379,7 @@ def synthesize_with_qwen_tts(replacements: list, ref_audio_map: dict,
         segments: WhisperX segments 列表
         cache_dir: TTS 缓存目录
         adjacent_groups: 相邻词分组 [[idx, ...], ...]，None 则每个词独立
+        ref_source_map: {segment_index: source_segment_index} ICL 模式下定位参考文本
         cancel_check: 终止检查回调
         progress_cb: 进度回调 (current, total)
 
@@ -328,6 +389,11 @@ def synthesize_with_qwen_tts(replacements: list, ref_audio_map: dict,
             - 合并组: group_key = "merged_{first_index}_{last_index}"
     """
     os.makedirs(cache_dir, exist_ok=True)
+    icl_mode = getattr(config, "QWEN3_TTS_ICL_MODE", False)
+    mode_tag = "icl" if icl_mode else "xvec"
+
+    if icl_mode:
+        print(f"[Step3-Qwen] ⚡ ICL 模式：保留参考音频的语气和韵律特征")
 
     # 如果没有传入分组，则默认每个词独立一组
     if adjacent_groups is None:
@@ -336,7 +402,7 @@ def synthesize_with_qwen_tts(replacements: list, ref_audio_map: dict,
     # 构建合成任务：每个组一个 job
     jobs = []
     for group in adjacent_groups:
-        # 构建合成文本（支持中英混合格式或纯中文格式，由 config.TTS_TEXT_FORMAT 控制）
+        # 构建合成文本
         merged_text = _build_tts_text(group, replacements)
 
         # 用组内第一个替换点的 segment 来确定参考音频
@@ -347,10 +413,12 @@ def synthesize_with_qwen_tts(replacements: list, ref_audio_map: dict,
             print(f"  [警告] seg[{seg_idx}] 无参考音频，跳过 '{merged_text}'")
             continue
 
-        # 参考文本（英文原文，仅用于日志/调试，worker 中不再用于 ICL 模式）
-        # 注意：由于参考音频是英文，如果用 ICL 模式会导致 TTS 输出英文而非中文，
-        # 因此 worker 改用 x_vector_only_mode=True，只提取音色不使用参考文本。
-        ref_text = segments[seg_idx].get("text", "").strip() if seg_idx < len(segments) else ""
+        # 确定参考文本：ICL 模式下需从实际参考音频来源 segment 获取文本
+        if icl_mode and ref_source_map:
+            source_seg = ref_source_map.get(seg_idx, seg_idx)
+        else:
+            source_seg = seg_idx
+        ref_text = segments[source_seg].get("text", "").strip() if source_seg < len(segments) else ""
 
         # 构建 group_key
         if len(group) == 1:
@@ -359,10 +427,9 @@ def synthesize_with_qwen_tts(replacements: list, ref_audio_map: dict,
             group_key = f"merged_{group[0]}_{group[-1]}"
 
         # 缓存 key: 合成文本 + 参考音频 + 合成模式标识 + 文本格式标识
-        # 包含 "xvec" 和 text_format 标识，确保切换模式后不会命中旧缓存
         text_format = getattr(config, "TTS_TEXT_FORMAT", "mixed")
         cache_key = hashlib.md5(
-            f"{merged_text}|{ref_audio}|xvec|{text_format}".encode()
+            f"{merged_text}|{ref_audio}|{mode_tag}|{text_format}".encode()
         ).hexdigest()[:12]
         output_path = os.path.join(cache_dir, f"qwen_tts_{cache_key}.wav")
 
@@ -425,10 +492,12 @@ def synthesize_with_qwen_tts(replacements: list, ref_audio_map: dict,
         raise InterruptedError("任务已被用户终止")
 
     # 构建 worker 任务 JSON
+    icl_mode = getattr(config, "QWEN3_TTS_ICL_MODE", False)
     worker_task = {
         "model_path": config.QWEN3_TTS_MODEL_PATH,
         "device": getattr(config, "QWEN3_TTS_DEVICE", "cpu"),
         "language": getattr(config, "QWEN3_TTS_LANGUAGE", "Chinese"),
+        "icl_mode": icl_mode,
         "jobs": [
             {
                 "text": j["text"],
@@ -713,6 +782,7 @@ def synthesize_sentences_with_qwen_tts(
 
     # 提取参考音频（每个句子用自己的原声，区分多说话人）
     ref_audio_map = {}
+    ref_source_map = {}
     if voice_clone:
         ref_dir = os.path.join(cache_dir, "ref_audio")
         pseudo_replacements = [
@@ -721,9 +791,12 @@ def synthesize_sentences_with_qwen_tts(
             if idx < len(segments)
         ]
         if pseudo_replacements:
-            ref_audio_map = extract_ref_audio_for_segments(
+            ref_audio_map, ref_source_map = extract_ref_audio_for_segments(
                 audio_path, segments, pseudo_replacements, ref_dir)
             print(f"[Step3-Qwen-Sentence] 提取了 {len(ref_audio_map)} 个句子参考音频")
+
+    icl_mode = getattr(config, "QWEN3_TTS_ICL_MODE", False)
+    mode_tag = "icl" if icl_mode else "xvec"
 
     # 构建 TTS 合成任务（每个句子用自己的参考音频）
     jobs = []
@@ -737,10 +810,15 @@ def synthesize_sentences_with_qwen_tts(
         if voice_clone and not ref_audio:
             print(f"  [跳过] seg[{seg_idx}] 无参考音频，跳过 TTS 合成")
             continue
-        ref_text = segments[seg_idx].get("text", "").strip() if seg_idx < len(segments) else ""
+        # ICL 模式下从实际参考音频来源 segment 获取文本
+        if icl_mode and ref_source_map:
+            source_seg = ref_source_map.get(seg_idx, seg_idx)
+        else:
+            source_seg = seg_idx
+        ref_text = segments[source_seg].get("text", "").strip() if source_seg < len(segments) else ""
 
         cache_key = hashlib.md5(
-            f"sent_{chinese_text}|{ref_audio}|xvec".encode()
+            f"sent_{chinese_text}|{ref_audio}|{mode_tag}".encode()
         ).hexdigest()[:12]
         output_path = os.path.join(cache_dir, f"qwen_sent_{cache_key}.wav")
 
@@ -793,6 +871,7 @@ def synthesize_sentences_with_qwen_tts(
             "model_path": config.QWEN3_TTS_MODEL_PATH,
             "device": getattr(config, "QWEN3_TTS_DEVICE", "cpu"),
             "language": getattr(config, "QWEN3_TTS_LANGUAGE", "Chinese"),
+            "icl_mode": icl_mode,
             "jobs": [
                 {"text": j["text"], "ref_audio": j["ref_audio"],
                  "ref_text": j["ref_text"], "output_path": j["output_path"]}

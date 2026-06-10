@@ -75,7 +75,7 @@ def main():
     # 提取参考音频
     print("\n[5] 提取参考音频...")
     ref_dir = os.path.join(output_dir, "ref_audio")
-    ref_audio_map = extract_ref_audio_for_segments(
+    ref_audio_map, ref_source_map = extract_ref_audio_for_segments(
         audio_path, segments, replacements, ref_dir)
 
     # 相邻词分组
@@ -91,6 +91,7 @@ def main():
         replacements, ref_audio_map, segments,
         tts_cache_dir,
         adjacent_groups=adjacent_groups,
+        ref_source_map=ref_source_map,
     )
 
     elapsed = time.time() - start_time
