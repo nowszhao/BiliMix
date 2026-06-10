@@ -92,9 +92,9 @@ SEGMENT_REF_MIN_DURATION = 1.5
 # 用于将连续短句分组，组内共享最长 segment 的参考音频，保证音色一致
 SAME_SPEAKER_GAP = 0.3
 # 声音克隆模式: False = x-vector 仅音色（默认），True = ICL 保留音色+语气/韵律
-# ICL 模式会提取参考音频的韵律特征（音高、语速、情感），合成更自然
-# 注意：ICL 模式下英文参考音频 + 中文目标文本，language="Chinese" 引导发音
-QWEN3_TTS_ICL_MODE = True
+# x-vector 模式仅克隆音色，中文发音由模型独立生成，跨语言场景下更稳定、不产生乱码
+# ICL 模式会提取参考音频的韵律特征（音高、语速、情感），但英语→中文时会冲突
+QWEN3_TTS_ICL_MODE = False
 # TTS 合成语言
 QWEN3_TTS_LANGUAGE = "Chinese"
 # TTS 合成失败时自动重试次数

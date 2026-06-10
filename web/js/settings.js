@@ -654,7 +654,7 @@ function renderSettingsForm(cfg) {
                     <span class="settings-item-desc">新任务默认使用的处理模式</span>
                 </div>
                 <div class="settings-item-control">
-                    <select class="settings-select" id="cfg-process_mode">
+                    <select class="settings-select" id="cfg-process_mode" onchange="onSettingsModeChange()">
                         <option value="word_replace" ${cfg.process_mode === 'word_replace' ? 'selected' : ''}>🔤 生词替换</option>
                         <option value="smart_translate" ${cfg.process_mode === 'smart_translate' ? 'selected' : ''}>🧠 智能翻译</option>
                         <option value="sentence_translate" ${cfg.process_mode === 'sentence_translate' ? 'selected' : ''}>🔄 句子翻译</option>
@@ -691,7 +691,7 @@ function renderSettingsForm(cfg) {
         </div>
 
         <!-- 智能翻译 -->
-        <div class="settings-group">
+        <div class="settings-group" id="settings-group-smart-translate">
             <div class="settings-group-title">🧠 智能翻译</div>
             <div class="settings-item">
                 <div class="settings-item-label">
@@ -710,7 +710,7 @@ function renderSettingsForm(cfg) {
         </div>
 
         <!-- 句子翻译 -->
-        <div class="settings-group">
+        <div class="settings-group" id="settings-group-sentence-translate">
             <div class="settings-group-title">🔄 句子翻译</div>
             <div class="settings-item">
                 <div class="settings-item-label">
@@ -997,6 +997,29 @@ function renderSettingsForm(cfg) {
             </div>
         </div>
     `;
+
+    // 根据当前选中的模式，联动显示/隐藏对应配置组
+    onSettingsModeChange();
+}
+
+function onSettingsModeChange() {
+    const mode = document.getElementById('cfg-process_mode')?.value || 'word_replace';
+    const smartGroup = document.getElementById('settings-group-smart-translate');
+    const sentGroup = document.getElementById('settings-group-sentence-translate');
+
+    if (mode === 'word_replace') {
+        // 生词替换模式：隐藏智能翻译和句子翻译的配置
+        if (smartGroup) smartGroup.classList.add('hidden');
+        if (sentGroup) sentGroup.classList.add('hidden');
+    } else if (mode === 'smart_translate') {
+        // 智能翻译模式：显示智能翻译配置，隐藏句子翻译配置
+        if (smartGroup) smartGroup.classList.remove('hidden');
+        if (sentGroup) sentGroup.classList.add('hidden');
+    } else if (mode === 'sentence_translate') {
+        // 句子翻译模式：隐藏智能翻译配置，显示句子翻译配置
+        if (smartGroup) smartGroup.classList.add('hidden');
+        if (sentGroup) sentGroup.classList.remove('hidden');
+    }
 }
 
 async function saveSettings() {

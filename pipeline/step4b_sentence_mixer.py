@@ -44,10 +44,13 @@ def mix_sentence_audio(
     if gap_ms is None:
         gap_ms = getattr(config, "SENTENCE_GAP_MS", 400)
 
+    # 交叉淡化参数：每段音频首尾做微小 fade，消除硬切爆音
+    FADE_MS = 25
+
     print(f"[Step4b] 开始中英交替音频组装（替换模式）")
     print(f"  原始音频: {audio_path}")
     print(f"  总句子数: {len(segments)}, 翻译句子数: {len(translated_indices)}")
-    print(f"  句间间隔: {gap_ms}ms")
+    print(f"  句间间隔: {gap_ms}ms, 淡入淡出: {FADE_MS}ms")
 
     # 加载原始音频
     original_audio = AudioSegment.from_file(audio_path)
@@ -84,6 +87,7 @@ def mix_sentence_audio(
             if os.path.exists(tts_path):
                 tts_clip = AudioSegment.from_file(tts_path)
                 tts_clip = tts_clip.set_frame_rate(target_sr).set_channels(target_channels)
+                tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
                 tts_len_ms = len(tts_clip)
 
                 # 用中文 TTS 替换这个位置
@@ -107,6 +111,7 @@ def mix_sentence_audio(
                 # TTS 文件缺失，回退保留英文原声
                 print(f"  [{seg_idx}] [警告] TTS 文件不存在: {tts_path}，保留英文")
                 eng_clip = original_audio[seg_start_ms:seg_end_ms]
+                eng_clip = eng_clip.fade_in(FADE_MS).fade_out(FADE_MS)
                 eng_len_ms = len(eng_clip)
                 result += eng_clip
                 time_mapping.append({
@@ -119,22 +124,57 @@ def mix_sentence_audio(
                 })
                 mixed_pos_ms += eng_len_ms
         else:
-            # ---- 无翻译或无 TTS 的句子：保留英文原声 ----
+            # ---- 无翻译或无 TTS 的句子 ----
             if seg_idx in translated_set:
                 # 选了翻译但 TTS 合成失败（tts_audio_map 中无此条目）
-                print(f"  [{seg_idx}] [警告] 已选翻译但缺少 TTS 音频 (tts_audio_map 无此条目)，保留英文")
-            eng_clip = original_audio[seg_start_ms:seg_end_ms]
-            eng_len_ms = len(eng_clip)
-            result += eng_clip
-            time_mapping.append({
-                "mixed_start": round(mixed_pos_ms / 1000.0, 3),
-                "mixed_end": round((mixed_pos_ms + eng_len_ms) / 1000.0, 3),
-                "orig_start": round(seg_start_ms / 1000.0, 3),
-                "orig_end": round(seg_end_ms / 1000.0, 3),
-                "type": "original",
-                "segment_index": seg_idx,
-            })
-            mixed_pos_ms += eng_len_ms
+                if all_translated:
+                    # 100% 全翻译模式：不应包含英文，用静音替代
+                    eng_len_ms = seg_end_ms - seg_start_ms
+                    silent_clip = AudioSegment.silent(
+                        duration=eng_len_ms, frame_rate=target_sr)
+                    result += silent_clip
+                    print(f"  [{seg_idx}] [100%模式] 已选翻译但缺少 TTS 音频，用静音替代 "
+                          f"({eng_len_ms}ms)")
+                    time_mapping.append({
+                        "mixed_start": round(mixed_pos_ms / 1000.0, 3),
+                        "mixed_end": round((mixed_pos_ms + eng_len_ms) / 1000.0, 3),
+                        "orig_start": round(seg_start_ms / 1000.0, 3),
+                        "orig_end": round(seg_end_ms / 1000.0, 3),
+                        "type": "silence",
+                        "segment_index": seg_idx,
+                    })
+                    mixed_pos_ms += eng_len_ms
+                else:
+                    # 非全翻译模式：保留英文原声
+                    print(f"  [{seg_idx}] [警告] 已选翻译但缺少 TTS 音频 (tts_audio_map 无此条目)，保留英文")
+                    eng_clip = original_audio[seg_start_ms:seg_end_ms]
+                    eng_clip = eng_clip.fade_in(FADE_MS).fade_out(FADE_MS)
+                    eng_len_ms = len(eng_clip)
+                    result += eng_clip
+                    time_mapping.append({
+                        "mixed_start": round(mixed_pos_ms / 1000.0, 3),
+                        "mixed_end": round((mixed_pos_ms + eng_len_ms) / 1000.0, 3),
+                        "orig_start": round(seg_start_ms / 1000.0, 3),
+                        "orig_end": round(seg_end_ms / 1000.0, 3),
+                        "type": "original",
+                        "segment_index": seg_idx,
+                    })
+                    mixed_pos_ms += eng_len_ms
+            else:
+                # 未被选中的句子（非翻译目标）：保留英文原声
+                eng_clip = original_audio[seg_start_ms:seg_end_ms]
+                eng_clip = eng_clip.fade_in(FADE_MS).fade_out(FADE_MS)
+                eng_len_ms = len(eng_clip)
+                result += eng_clip
+                time_mapping.append({
+                    "mixed_start": round(mixed_pos_ms / 1000.0, 3),
+                    "mixed_end": round((mixed_pos_ms + eng_len_ms) / 1000.0, 3),
+                    "orig_start": round(seg_start_ms / 1000.0, 3),
+                    "orig_end": round(seg_end_ms / 1000.0, 3),
+                    "type": "original",
+                    "segment_index": seg_idx,
+                })
+                mixed_pos_ms += eng_len_ms
 
             eng_text = seg.get("text", "").strip()[:40]
             print(f"  [{seg_idx}] 🇬🇧 保留: \"{eng_text}\"")
@@ -151,6 +191,7 @@ def mix_sentence_audio(
                     # 插入一段小静音使 TTS 衔接更干净自然
                     clean_gap = AudioSegment.silent(
                         duration=orig_gap_ms, frame_rate=target_sr)
+                    clean_gap = clean_gap.fade_in(FADE_MS).fade_out(FADE_MS)
                     result += clean_gap
                     time_mapping.append({
                         "mixed_start": round(mixed_pos_ms / 1000.0, 3),
@@ -164,6 +205,7 @@ def mix_sentence_audio(
                 else:
                     # 中英交替模式：保留原始的句间间隔（环境音自然过渡）
                     gap_clip = original_audio[seg_end_ms:next_start_ms]
+                    gap_clip = gap_clip.fade_in(FADE_MS).fade_out(FADE_MS)
                     gap_len_ms = len(gap_clip)
                     result += gap_clip
                     time_mapping.append({
@@ -181,6 +223,7 @@ def mix_sentence_audio(
         last_end_ms = int(segments[-1].get("end", 0) * 1000)
         if last_end_ms < original_duration_ms:
             tail_clip = original_audio[last_end_ms:]
+            tail_clip = tail_clip.fade_in(FADE_MS).fade_out(FADE_MS)
             tail_len_ms = len(tail_clip)
             if tail_len_ms > 0:
                 result += tail_clip

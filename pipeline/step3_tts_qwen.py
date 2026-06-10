@@ -65,6 +65,39 @@ def _extract_audio_clip(audio_path: str, start_ms: int, end_ms: int,
     subprocess.run(cmd, capture_output=True, timeout=timeout, check=True)
 
 
+def _estimate_original_speech_rate(segments: list) -> float:
+    """
+    从 WhisperX segments 估算原始说话人的语速（words per second）。
+
+    用于指导 TTS 合成的 max_new_tokens，使中文 TTS 的时长
+    尽可能匹配原始英文的节奏。
+
+    Args:
+        segments: WhisperX segments 列表 [{text, start, end}, ...]
+
+    Returns:
+        float: 每秒单词数，默认 2.5（英语正常语速）
+    """
+    if not segments:
+        return 2.5
+
+    total_words = 0
+    total_dur = 0.0
+    for seg in segments:
+        text = seg.get("text", "").strip()
+        if text:
+            total_words += len(text.split())
+        dur = seg.get("end", 0) - seg.get("start", 0)
+        total_dur += dur
+
+    if total_dur > 0:
+        wps = total_words / total_dur
+        print(f"[Step3-Qwen] 原始语速: {wps:.1f} words/sec "
+              f"({total_words} 词 / {total_dur:.1f}s)")
+        return wps
+    return 2.5
+
+
 def _build_tts_text(group_indices: list, replacements: list) -> str:
     """
     根据配置构建 TTS 合成文本。
@@ -504,6 +537,7 @@ def synthesize_with_qwen_tts(replacements: list, ref_audio_map: dict,
                 "ref_audio": j["ref_audio"],
                 "ref_text": j["ref_text"],
                 "output_path": j["output_path"],
+                "target_duration_s": j.get("target_duration_s"),
             }
             for j in unique_pending
         ],
@@ -798,6 +832,9 @@ def synthesize_sentences_with_qwen_tts(
     icl_mode = getattr(config, "QWEN3_TTS_ICL_MODE", False)
     mode_tag = "icl" if icl_mode else "xvec"
 
+    # 计算原始说话人的平均语速（words/sec），用于节奏匹配
+    original_wps = _estimate_original_speech_rate(segments)
+
     # 构建 TTS 合成任务（每个句子用自己的参考音频）
     jobs = []
     for seg_idx in translated_indices:
@@ -817,6 +854,12 @@ def synthesize_sentences_with_qwen_tts(
             source_seg = seg_idx
         ref_text = segments[source_seg].get("text", "").strip() if source_seg < len(segments) else ""
 
+        # 计算目标时长：基于原始英文 segment 的时长
+        target_duration_s = None
+        if seg_idx < len(segments):
+            seg = segments[seg_idx]
+            target_duration_s = round(seg.get("end", 0) - seg.get("start", 0), 1)
+
         cache_key = hashlib.md5(
             f"sent_{chinese_text}|{ref_audio}|{mode_tag}".encode()
         ).hexdigest()[:12]
@@ -828,6 +871,7 @@ def synthesize_sentences_with_qwen_tts(
             "ref_text": ref_text,
             "output_path": output_path,
             "segment_index": seg_idx,
+            "target_duration_s": target_duration_s,
         })
 
     if not jobs:
@@ -874,7 +918,8 @@ def synthesize_sentences_with_qwen_tts(
             "icl_mode": icl_mode,
             "jobs": [
                 {"text": j["text"], "ref_audio": j["ref_audio"],
-                 "ref_text": j["ref_text"], "output_path": j["output_path"]}
+                 "ref_text": j["ref_text"], "output_path": j["output_path"],
+                 "target_duration_s": j.get("target_duration_s")}
                 for j in pending_jobs
             ],
         }

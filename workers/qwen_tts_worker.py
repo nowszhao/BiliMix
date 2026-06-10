@@ -39,13 +39,13 @@ import soundfile as sf
 # =============================================
 CODEC_HZ = 12  # Qwen3-TTS-12Hz: 每秒 12 个 codec token
 
-# 每个汉字预估时长上限（秒），用于计算 max_new_tokens
-SECONDS_PER_CHAR = 0.6
+# 每个汉字预估时长（秒），中文正常语速约 0.25-0.35s/字
+SECONDS_PER_CHAR = 0.3
 # 额外的缓冲时间（秒），防止裁得太紧
-BUFFER_SECONDS = 1.5
+BUFFER_SECONDS = 1.0
 # 绝对最短/最长 max_new_tokens
 MIN_TOKENS = 36      # 至少 3 秒
-MAX_TOKENS = 360     # 最多 30 秒（对短词短语足够）
+MAX_TOKENS = 360     # 最多 30 秒
 
 # 尾部静音裁剪阈值（归一化振幅）
 SILENCE_THRESHOLD = 0.01
@@ -54,16 +54,35 @@ SILENCE_WINDOW = 480
 # 裁剪后最少保留时长（秒）
 MIN_AUDIO_DURATION = 0.3
 # 裁剪后最大保留时长（秒），超过则强制截断
-MAX_AUDIO_DURATION = 15.0
+MAX_AUDIO_DURATION = 30.0
+
+# 音频质量校验阈值
+# 最短有效时长（秒），低于此值视为合成失败
+VALIDATION_MIN_DURATION = 0.25
+# 最低 RMS 振幅，低于此值视为静音/失败
+VALIDATION_MIN_RMS = 0.003
 
 
-def estimate_max_tokens(text: str) -> int:
+def estimate_max_tokens(text: str, target_duration_s: float = None) -> int:
     """
     根据输入文本长度估算合理的 max_new_tokens。
-    短词短语不需要生成很长的音频。
+
+    如果提供了 target_duration_s（来自原始英文 segment 的时长），
+    则以它为基准，让 TTS 合成的中文语音尽量接近原始语速节奏。
+
+    Args:
+        text: 待合成的中文文本
+        target_duration_s: 原始英文 segment 的目标时长（秒），用于节奏匹配
     """
     n_chars = len(text)
     est_seconds = n_chars * SECONDS_PER_CHAR + BUFFER_SECONDS
+
+    if target_duration_s and target_duration_s > 0:
+        # 在文本估算和原始时长之间取加权平衡
+        # 中文正常语速下不会比原始英文长太多，也不会奇短
+        est_seconds = min(est_seconds, target_duration_s * 1.3)
+        est_seconds = max(est_seconds, target_duration_s * 0.5)
+
     tokens = int(est_seconds * CODEC_HZ)
     return max(MIN_TOKENS, min(tokens, MAX_TOKENS))
 
@@ -96,6 +115,44 @@ def trim_trailing_silence(wav: np.ndarray, sr: int) -> np.ndarray:
     # 多保留一点余量（0.1 秒）
     end_idx = min(len(wav), last_sound_idx + int(sr * 0.1))
     return wav[:end_idx]
+
+
+def validate_audio(wav: np.ndarray, sr: int, text: str) -> tuple:
+    """
+    校验合成音频质量，检测乱码/静音/过短等异常。
+
+    Returns:
+        (is_valid: bool, reason: str)
+    """
+    dur = len(wav) / sr
+    rms = float(np.sqrt(np.mean(wav ** 2)))
+
+    # 1. 时长检查
+    if dur < VALIDATION_MIN_DURATION:
+        return False, f"音频过短 ({dur:.2f}s < {VALIDATION_MIN_DURATION}s)"
+
+    # 2. 振幅检查：静音或极低音量 = 合成失败
+    if rms < VALIDATION_MIN_RMS:
+        return False, f"音频振幅过低 (RMS={rms:.5f})"
+
+    # 3. 异常高频能量检查（乱码通常伴随大量高频噪声）
+    if len(wav) > sr * 0.5:  # 至少 0.5s 才做频谱分析
+        try:
+            from scipy import signal
+            f, psd = signal.welch(wav, sr, nperseg=min(2048, len(wav)))
+            # 计算 4kHz-8kHz 频段能量占比（中文语音主要能量在 4kHz 以下）
+            low_mask = (f >= 80) & (f <= 4000)
+            high_mask = (f > 4000) & (f <= 8000)
+            low_energy = np.sum(psd[low_mask])
+            high_energy = np.sum(psd[high_mask])
+            if low_energy > 0:
+                high_ratio = high_energy / low_energy
+                if high_ratio > 1.5:
+                    return False, f"异常高频能量 (ratio={high_ratio:.2f})"
+        except ImportError:
+            pass  # scipy 不可用时跳过频谱检查
+
+    return True, ""
 
 
 def postprocess_audio(wav: np.ndarray, sr: int, text: str) -> np.ndarray:
@@ -234,12 +291,15 @@ def main():
         for job in group_jobs:
             text = job["text"]
             output_path = job["output_path"]
+            target_dur = job.get("target_duration_s")  # 原始英文 segment 时长
             done_count += 1
 
-            # 动态计算 max_new_tokens
-            max_tokens = estimate_max_tokens(text)
+            # 动态计算 max_new_tokens（基于原始语速匹配）
+            max_tokens = estimate_max_tokens(text, target_dur)
             print(f"[QwenTTS] [{done_count}/{total_jobs}] 合成: {text} "
-                  f"(max_tokens={max_tokens})", file=sys.stderr)
+                  f"(max_tokens={max_tokens}"
+                  + (f", target={target_dur:.1f}s" if target_dur else "")
+                  + ")", file=sys.stderr)
 
             try:
                 t1 = time.time()
@@ -248,11 +308,22 @@ def main():
                     language=language,
                     voice_clone_prompt=prompt_items,
                     max_new_tokens=max_tokens,
-                    temperature=0.7,
-                    top_k=50,
-                    top_p=0.95,
-                    repetition_penalty=1.05,
+                    temperature=0.3,
+                    top_k=20,
+                    top_p=0.85,
+                    repetition_penalty=1.3,
                 )
+
+                # 质量校验
+                is_valid, val_reason = validate_audio(wavs[0], sr, text)
+                if not is_valid:
+                    print(f"[QwenTTS] 质量校验失败 '{text}': {val_reason}", file=sys.stderr)
+                    results.append({
+                        "text": text,
+                        "output_path": "",
+                        "error": f"质量校验: {val_reason}",
+                    })
+                    continue
 
                 # 后处理：裁剪静音和异常长度
                 wav_data = postprocess_audio(wavs[0], sr, text)
