@@ -244,6 +244,53 @@ def generate_task_id(url: str) -> str:
     return hashlib.md5(url.encode("utf-8")).hexdigest()
 
 
+def _try_resolve_local_url(url: str) -> str:
+    """
+    检测是否为本地服务器自己的音频 URL，如果是则解析到本地文件路径。
+
+    支持两种模式：
+    1. /api/audio/<basename>/<filename>  → data/results/<basename>/<filename>
+    2. /api/audio/<basename>.<ext>       → 依次查 results/、downloads/、项目根目录
+
+    这样可以避免后台下载线程对本地 URL 发起 HTTP 请求导致的 401 认证问题。
+
+    Returns:
+        str: 本地文件路径，如果不是本地 URL 或无对应文件则返回空字符串
+    """
+    # 匹配 /api/audio/<path> 模式
+    m = re.search(r'/api/audio/(.+)', url)
+    if not m:
+        return ""
+
+    # 检查 host 是否指向本地服务器
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    local_hosts = {"127.0.0.1", "localhost", "0.0.0.0"}
+    hostname = parsed.hostname or ""
+    port = parsed.port or 5000
+
+    # 仅当 host 匹配本地或同机器时才解析
+    # （外网 URL 不应该被误解析为本地文件）
+    if hostname not in local_hosts and not hostname.startswith(("192.168.", "10.", "172.")):
+        # 可能是外网 URL，不做本地解析
+        return ""
+
+    filepath = m.group(1)
+
+    # 按 serve_audio 的查找顺序查找文件
+    search_paths = [
+        os.path.join(config.RESULT_DIR, filepath),
+        os.path.join(config.DOWNLOAD_DIR, filepath),
+        os.path.join(config.BASE_DIR, filepath),
+    ]
+    for p in search_paths:
+        if os.path.isfile(p):
+            print(f"[本地解析] {url} → {p}")
+            return p
+
+    return ""
+
+
 # ============================================================
 # 处理模式：word_replace（生词替换）
 # ============================================================
@@ -1238,15 +1285,65 @@ def index():
     return send_from_directory(_web_dir, "index.html")
 
 
+@app.route("/api/upload", methods=["POST"])
+def upload_audio():
+    """上传本地音频文件"""
+    if "file" not in request.files:
+        return jsonify({"error": "请选择文件"}), 400
+
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "文件名为空"}), 400
+
+    # 校验文件扩展名
+    ext = os.path.splitext(f.filename)[1].lower()
+    allowed = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"}
+    if ext not in allowed:
+        return jsonify({"error": f"不支持的文件格式: {ext}，支持 {', '.join(sorted(allowed))}"}), 400
+
+    # 生成安全文件名（保留原始文件名但防止路径遍历）
+    safe_name = os.path.basename(f.filename)
+    save_path = os.path.join(config.DOWNLOAD_DIR, safe_name)
+
+    # 如果已存在同名文件，加时间戳
+    if os.path.exists(save_path):
+        name, e = os.path.splitext(safe_name)
+        save_path = os.path.join(config.DOWNLOAD_DIR,
+                                 f"{name}_{int(time.time())}{e}")
+
+    f.save(save_path)
+    size_mb = os.path.getsize(save_path) / (1024 * 1024)
+
+    print(f"[Upload] 已保存: {save_path} ({size_mb:.1f} MB)")
+
+    return jsonify({
+        "ok": True,
+        "local_path": save_path,
+        "filename": os.path.basename(save_path),
+        "size_mb": round(size_mb, 1),
+    })
+
+
 @app.route("/api/submit", methods=["POST"])
 def submit_task():
     """提交音频处理任务"""
     data = request.get_json()
-    if not data or "url" not in data:
-        return jsonify({"error": "请提供音频URL"}), 400
+    if not data:
+        return jsonify({"error": "请提供数据"}), 400
 
-    audio_url = data["url"].strip()
-    if not audio_url.startswith(("http://", "https://")):
+    local_path = data.get("local_path", "").strip()
+    audio_url = data.get("url", "").strip()
+
+    if not local_path and not audio_url:
+        return jsonify({"error": "请提供音频URL或上传本地文件"}), 400
+
+    # 优先使用本地文件路径
+    if local_path:
+        if not os.path.isfile(local_path):
+            return jsonify({"error": f"文件不存在: {local_path}"}), 400
+        # 本地文件：用文件路径构造虚拟 URL 作为任务标识
+        audio_url = f"file://{local_path}"
+    elif not audio_url.startswith(("http://", "https://")):
         return jsonify({"error": "请提供有效的HTTP/HTTPS URL"}), 400
 
     difficulty = data.get("difficulty", config.DIFFICULTY_LEVEL)
@@ -1285,18 +1382,41 @@ def submit_task():
         }
 
     def worker():
-        basename = hashlib.md5(audio_url.encode()).hexdigest()
-        ext = os.path.splitext(audio_url.split("?")[0])[-1] or ".mp3"
-        if ext not in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"):
-            ext = ".mp3"
-        audio_path = os.path.join(config.DOWNLOAD_DIR, f"{basename}{ext}")
-        update_task(task_id, _basename=basename, _audio_path=audio_path)
-
-        if os.path.exists(audio_path):
-            update_task(task_id, progress=5, message="音频文件已存在，跳过下载")
-        else:
-            if not download_audio(audio_url, audio_path, task_id):
+        # 处理 file:// 协议（用户上传的本地文件）
+        is_file_url = audio_url.startswith("file://")
+        if is_file_url:
+            local_path = audio_url[len("file://"):]
+            if os.path.isfile(local_path):
+                local_file = local_path
+            else:
+                update_task(task_id, status="error",
+                            message=f"文件不存在: {local_path}")
                 return
+        else:
+            # 尝试解析本地 HTTP URL 到本地文件路径（避免 401 认证）
+            local_file = _try_resolve_local_url(audio_url)
+
+        if local_file:
+            # 本地文件，跳过下载
+            basename = os.path.splitext(os.path.basename(local_file))[0]
+            audio_path = local_file
+            update_task(task_id, _basename=basename, _audio_path=audio_path)
+            size_mb = os.path.getsize(local_file) / (1024 * 1024)
+            update_task(task_id, progress=5,
+                        message=f"使用本地音频文件 ({size_mb:.1f} MB)")
+        else:
+            basename = hashlib.md5(audio_url.encode()).hexdigest()
+            ext = os.path.splitext(audio_url.split("?")[0])[-1] or ".mp3"
+            if ext not in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"):
+                ext = ".mp3"
+            audio_path = os.path.join(config.DOWNLOAD_DIR, f"{basename}{ext}")
+            update_task(task_id, _basename=basename, _audio_path=audio_path)
+
+            if os.path.exists(audio_path):
+                update_task(task_id, progress=5, message="音频文件已存在，跳过下载")
+            else:
+                if not download_audio(audio_url, audio_path, task_id):
+                    return
 
         task = get_task(task_id)
         mode = task.get("process_mode", "word_replace")

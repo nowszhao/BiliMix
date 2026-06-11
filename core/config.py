@@ -41,10 +41,10 @@ WHISPERX_LANGUAGE = "en"
 # Ollama 配置
 # ========================
 OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL = "qwen3.5:9b"
+OLLAMA_MODEL = "translategemma:12b"
 # 生词识别时每批合并的句子数量（越大越快，但过大可能降低识别精度）
 # 建议范围: 5~15，默认 8
-LLM_BATCH_SIZE = 8
+LLM_BATCH_SIZE = 5
 # 每次 LLM 调用最大输出 token 数
 # qwen3.5 是推理模型，即使 think=False 仍可能输出大量推理 token
 # 批量翻译多句时需更大额度，调小可降低单次响应时间但可能导致输出截断

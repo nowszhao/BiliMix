@@ -87,6 +87,9 @@
                         <button class="input-mode-tab" data-mode="url" onclick="switchInputMode('url')">
                             🔗 粘贴URL
                         </button>
+                        <button class="input-mode-tab" data-mode="file" onclick="switchInputMode('file')">
+                            📁 本地文件
+                        </button>
                         <button class="input-mode-tab" data-mode="rss" onclick="switchInputMode('rss')">
                             📡 RSS订阅
                         </button>
@@ -164,6 +167,29 @@
                                 placeholder="粘贴音频 URL（支持 mp3, wav, m4a...）"
                                 spellcheck="false"
                             >
+                        </div>
+                    </div>
+
+                    <!-- 本地上传模式 -->
+                    <div class="input-mode-content" id="input-mode-file">
+                        <div class="input-row file-upload-row" id="file-upload-area">
+                            <div class="input-icon">📁</div>
+                            <div class="file-upload-label" id="file-upload-label">
+                                <span>点击选择或拖拽音频文件到此处</span>
+                                <span class="file-upload-hint">支持 mp3, wav, m4a, ogg, flac, aac</span>
+                            </div>
+                            <input
+                                type="file"
+                                id="file-upload-input"
+                                accept=".mp3,.wav,.m4a,.ogg,.flac,.aac"
+                                onchange="onFileSelected(this)"
+                            >
+                        </div>
+                        <div class="file-upload-info" id="file-upload-info" style="display:none;">
+                            <span class="file-upload-icon">✅</span>
+                            <span class="file-upload-name" id="file-upload-name"></span>
+                            <span class="file-upload-size" id="file-upload-size"></span>
+                            <button class="file-upload-clear" onclick="clearUploadedFile()" title="移除文件">✕</button>
                         </div>
                     </div>
 

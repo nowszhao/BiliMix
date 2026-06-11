@@ -18,6 +18,85 @@ function switchInputMode(mode) {
 }
 
 // ============================================================
+// File Upload
+// ============================================================
+
+let uploadedFilePath = '';
+let uploadedFileName = '';
+
+async function onFileSelected(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    // 校验文件类型
+    const allowed = ['.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac'];
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    if (!allowed.includes(ext)) {
+        showToast('❌ 不支持的文件格式，支持: ' + allowed.join(', '));
+        input.value = '';
+        return;
+    }
+
+    // 显示上传中
+    const infoEl = document.getElementById('file-upload-info');
+    const nameEl = document.getElementById('file-upload-name');
+    const sizeEl = document.getElementById('file-upload-size');
+    const labelEl = document.getElementById('file-upload-label');
+
+    infoEl.style.display = 'flex';
+    nameEl.textContent = '⏳ 上传中...';
+    sizeEl.textContent = formatFileSize(file.size);
+    labelEl.querySelector('span').textContent = '正在上传...';
+
+    // 上传文件
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const resp = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData,
+        });
+        const data = await resp.json();
+
+        if (!resp.ok || !data.ok) {
+            showToast('❌ ' + (data.error || '上传失败'));
+            infoEl.style.display = 'none';
+            labelEl.querySelector('span').textContent = '点击选择或拖拽音频文件到此处';
+            input.value = '';
+            return;
+        }
+
+        uploadedFilePath = data.local_path;
+        uploadedFileName = data.filename;
+        nameEl.textContent = '✅ ' + data.filename;
+        sizeEl.textContent = formatFileSize(file.size);
+        labelEl.querySelector('span').textContent = '上传完成，点击可重新选择';
+        showToast('✅ 上传成功 (' + data.size_mb + ' MB)');
+    } catch (err) {
+        showToast('❌ 上传失败: ' + err.message);
+        infoEl.style.display = 'none';
+        labelEl.querySelector('span').textContent = '点击选择或拖拽音频文件到此处';
+        input.value = '';
+    }
+}
+
+function clearUploadedFile() {
+    uploadedFilePath = '';
+    uploadedFileName = '';
+    document.getElementById('file-upload-info').style.display = 'none';
+    document.getElementById('file-upload-input').value = '';
+    document.getElementById('file-upload-label').querySelector('span').textContent =
+        '点击选择或拖拽音频文件到此处';
+}
+
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// ============================================================
 // Submit Task
 // ============================================================
 
@@ -33,6 +112,7 @@ async function submitTask() {
 
     let url = '';
     let title = '';
+    let localPath = '';
     if (currentInputMode === 'search') {
         url = selectedEpisodeUrl;
         title = selectedEpisodeTitle;
@@ -41,6 +121,13 @@ async function submitTask() {
         url = rssSelectedEpisodeUrl;
         title = rssSelectedEpisodeTitle;
         if (!url) { showToast('❗ 请先解析 RSS 并选择一个单集'); return; }
+    } else if (currentInputMode === 'file') {
+        if (!uploadedFilePath) {
+            showToast('❗ 请先选择并上传一个音频文件');
+            return;
+        }
+        localPath = uploadedFilePath;
+        title = uploadedFileName;
     } else {
         const urlInput = document.getElementById('audio-url');
         url = urlInput.value.trim();
@@ -50,23 +137,29 @@ async function submitTask() {
         }
     }
 
-    tasks_url = url;
+    tasks_url = url || ('file://' + localPath);
     currentTaskTitle = title;
     currentProcessMode = modeSelect ? modeSelect.value : 'word_replace';
     btn.disabled = true;
     btn.querySelector('.btn-text').textContent = '提交中...';
 
     try {
+        const body = {
+            title: title,
+            difficulty: difficultySelect.value,
+            process_mode: currentProcessMode,
+            skip_confirmation: document.getElementById('skip-confirm-check')?.checked ?? true,
+        };
+        if (localPath) {
+            body.local_path = localPath;
+        } else {
+            body.url = url;
+        }
+
         const resp = await fetch('/api/submit', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                url: url,
-                title: title,
-                difficulty: difficultySelect.value,
-                process_mode: currentProcessMode,
-                skip_confirmation: document.getElementById('skip-confirm-check')?.checked ?? true,
-            }),
+            body: JSON.stringify(body),
         });
         const data = await resp.json();
         if (!resp.ok) {
