@@ -35,6 +35,9 @@ UPDATABLE_CONFIGS = {
     "qwen3_tts_ref_duration": ("QWEN3_TTS_REF_DURATION", int),
     "qwen3_tts_retry_max": ("QWEN3_TTS_RETRY_MAX", int),
     "qwen3_tts_custom_ref": ("QWEN3_TTS_CUSTOM_REF_AUDIO", str),
+    "fish_speech_host": ("FISH_SPEECH_HOST", str),
+    "fish_speech_port": ("FISH_SPEECH_PORT", int),
+    "fish_speech_timeout": ("FISH_SPEECH_TIMEOUT", int),
     "same_speaker_gap": ("SAME_SPEAKER_GAP", float),
     "auto_retry_max": ("AUTO_RETRY_MAX", int),
     # 登录认证
@@ -80,6 +83,9 @@ def get_all_config() -> dict:
         "qwen3_tts_ref_duration": getattr(config, "QWEN3_TTS_REF_DURATION", 8),
         "qwen3_tts_retry_max": getattr(config, "QWEN3_TTS_RETRY_MAX", 3),
         "qwen3_tts_custom_ref": getattr(config, "QWEN3_TTS_CUSTOM_REF_AUDIO", ""),
+        "fish_speech_host": getattr(config, "FISH_SPEECH_HOST", "127.0.0.1"),
+        "fish_speech_port": getattr(config, "FISH_SPEECH_PORT", 3030),
+        "fish_speech_timeout": getattr(config, "FISH_SPEECH_TIMEOUT", 120),
         "same_speaker_gap": getattr(config, "SAME_SPEAKER_GAP", 0.8),
         # 重试
         "auto_retry_max": getattr(config, "AUTO_RETRY_MAX", 3),

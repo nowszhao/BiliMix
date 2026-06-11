@@ -59,7 +59,10 @@ DIFFICULTY_LEVEL = "CET-4"
 # ========================
 # TTS 配置
 # ========================
-# TTS 引擎选择: "edge-tts" (微软在线TTS) 或 "qwen3-tts" (本地声音克隆)
+# TTS 引擎选择: "edge-tts" | "qwen3-tts" | "fish-speech"
+#   edge-tts:     微软在线 TTS，免部署，音色统一
+#   qwen3-tts:    本地声音克隆（x-vector），需 GPU/CPU 推理
+#   fish-speech:  Fish Speech S2 Pro (s2.cpp HTTP 服务)，音色克隆最强，需先启动 s2.cpp
 TTS_ENGINE = "qwen3-tts"
 
 # --- Edge-TTS 配置 ---
@@ -107,6 +110,14 @@ QWEN3_TTS_LANGUAGE = "Chinese"
 QWEN3_TTS_RETRY_MAX = 3
 # 全局自动重试次数（LLM 翻译 / 识别生词失败自动重试）
 AUTO_RETRY_MAX = 3
+
+# --- Fish Speech S2 Pro 配置（s2.cpp HTTP 服务） ---
+# Fish Speech s2.cpp HTTP 服务器地址
+FISH_SPEECH_HOST = "127.0.0.1"
+# Fish Speech s2.cpp HTTP 服务器端口
+FISH_SPEECH_PORT = 3030
+# Fish Speech HTTP 请求超时（秒），CPU 推理较慢需更多时间
+FISH_SPEECH_TIMEOUT = 120
 
 # ========================
 # 相邻词合并配置

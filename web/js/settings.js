@@ -769,9 +769,10 @@ function renderSettingsForm(cfg) {
                     <span class="settings-item-desc">edge-tts 在线合成 / qwen3-tts 本地克隆</span>
                 </div>
                 <div class="settings-item-control">
-                    <select class="settings-select" id="cfg-tts_engine">
+                    <select class="settings-select" id="cfg-tts_engine" onchange="onTTSEngineChange()">
                         <option value="edge-tts" ${cfg.tts_engine === 'edge-tts' ? 'selected' : ''}>Edge-TTS</option>
                         <option value="qwen3-tts" ${cfg.tts_engine === 'qwen3-tts' ? 'selected' : ''}>Qwen3-TTS</option>
+                        <option value="fish-speech" ${cfg.tts_engine === 'fish-speech' ? 'selected' : ''}>Fish Speech (S2 Pro)</option>
                     </select>
                 </div>
             </div>
@@ -862,6 +863,41 @@ function renderSettingsForm(cfg) {
                     <input type="text" class="settings-input" id="cfg-qwen3_tts_custom_ref"
                         value="${escapeAttr(cfg.qwen3_tts_custom_ref || '')}"
                         placeholder="留空=自动提取" style="width:220px;">
+                </div>
+            </div>
+        </div>
+
+        <!-- Fish Speech S2 Pro -->
+        <div class="settings-group" id="settings-group-fish-speech">
+            <div class="settings-group-title">🐟 Fish Speech S2 Pro</div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">服务地址</span>
+                    <span class="settings-item-desc">s2.cpp HTTP 服务器地址</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="text" class="settings-input" id="cfg-fish_speech_host"
+                        value="${escapeAttr(cfg.fish_speech_host || '127.0.0.1')}" style="width:140px;">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">服务端口</span>
+                    <span class="settings-item-desc">s2.cpp HTTP 服务器端口</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-fish_speech_port"
+                        value="${cfg.fish_speech_port}" min="1024" max="65535" step="1">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">请求超时</span>
+                    <span class="settings-item-desc">HTTP 请求超时时间（秒），CPU 推理较慢需更长时间</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-fish_speech_timeout"
+                        value="${cfg.fish_speech_timeout}" min="30" max="600" step="10">
                 </div>
             </div>
         </div>
@@ -1029,8 +1065,17 @@ function renderSettingsForm(cfg) {
         </div>
     `;
 
-    // 根据当前选中的模式，联动显示/隐藏对应配置组
+    // 根据当前选中的模式和 TTS 引擎，联动显示/隐藏对应配置组
     onSettingsModeChange();
+    onTTSEngineChange();
+}
+
+function onTTSEngineChange() {
+    const engine = document.getElementById('cfg-tts_engine')?.value || 'edge-tts';
+    const fishGroup = document.getElementById('settings-group-fish-speech');
+    if (fishGroup) {
+        fishGroup.classList.toggle('hidden', engine !== 'fish-speech');
+    }
 }
 
 function onSettingsModeChange() {
@@ -1091,6 +1136,9 @@ async function saveSettings() {
         qwen3_tts_ref_duration: getValue('cfg-qwen3_tts_ref_duration'),
         qwen3_tts_retry_max: getValue('cfg-qwen3_tts_retry_max'),
         qwen3_tts_custom_ref: getValue('cfg-qwen3_tts_custom_ref'),
+        fish_speech_host: getValue('cfg-fish_speech_host'),
+        fish_speech_port: getValue('cfg-fish_speech_port'),
+        fish_speech_timeout: getValue('cfg-fish_speech_timeout'),
         same_speaker_gap: getValue('cfg-same_speaker_gap'),
         auto_retry_max: getValue('cfg-auto_retry_max'),
         auth_enabled: getValue('cfg-auth_enabled'),

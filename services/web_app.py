@@ -58,6 +58,9 @@ from pipeline.step3_tts_qwen import (
     build_tts_audio_map_for_replacements, group_adjacent_replacements,
     _build_tts_text, synthesize_sentences_with_qwen_tts,
 )
+from pipeline.step3_tts_fish import (
+    synthesize_sentences_with_fish_tts,
+)
 from pipeline.step4_audio_editor import load_audio, apply_replacements, export_audio
 from pipeline.step2b_translate_sentences import (
     select_sentences_to_translate,
@@ -909,7 +912,43 @@ def continue_after_sentence_confirmation(task_id: str):
 
         tts_audio_map = {}
 
-        if tts_engine == "qwen3-tts" and voice_clone:
+        if tts_engine == "fish-speech":
+            # Fish Speech S2 Pro: 通过 s2.cpp HTTP 服务合成
+            fish_cache_dir = os.path.join(result_dir, "tts_fish_cache")
+            fish_ref_dir = os.path.join(fish_cache_dir, "ref_audio")
+            os.makedirs(fish_ref_dir, exist_ok=True)
+
+            # 提取参考音频（复用 Qwen3-TTS 的提取逻辑）
+            from pipeline.step3_tts_qwen import extract_ref_audio_for_segments
+            pseudo_replacements = [
+                {"segment_index": idx}
+                for idx in translated_indices if idx < len(segments)
+            ]
+            fish_ref_map = {}
+            fish_ref_source_map = {}
+            if voice_clone and pseudo_replacements:
+                fish_ref_map, fish_ref_source_map = extract_ref_audio_for_segments(
+                    audio_path, segments, pseudo_replacements, fish_ref_dir)
+                print(f"[Fish] 提取了 {len(fish_ref_map)} 个参考音频")
+
+            def _fish_progress(current, total):
+                pct = 60 + int((current / max(total, 1)) * 20)
+                engine_label = "Fish Speech"
+                update_task(task_id, progress=pct,
+                            message=f"Step 3/4: {engine_label} 句子合成 ({current}/{total})")
+
+            def _fish_cancel():
+                return is_cancelled(task_id)
+
+            tts_audio_map = synthesize_sentences_with_fish_tts(
+                segments, translated_indices, translations,
+                audio_path, fish_cache_dir,
+                ref_audio_map=fish_ref_map if voice_clone else {},
+                ref_source_map=fish_ref_source_map,
+                cancel_check=_fish_cancel, progress_cb=_fish_progress,
+                task_id=task_id)
+
+        elif tts_engine == "qwen3-tts" and voice_clone:
             qwen_cache_dir = os.path.join(result_dir, "tts_sent_cache")
 
             def _tts_progress(current, total):

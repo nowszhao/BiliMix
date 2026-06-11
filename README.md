@@ -16,6 +16,7 @@
   <img src="https://img.shields.io/badge/WhisperX-词级时间戳-green" alt="WhisperX">
   <img src="https://img.shields.io/badge/Qwen3.5-9B-orange?logo=alibabacloud" alt="Qwen3.5">
   <img src="https://img.shields.io/badge/TTS-声音克隆-purple" alt="TTS">
+  <img src="https://img.shields.io/badge/Fish_Speech-S2_Pro-blue" alt="Fish Speech">
   <img src="https://img.shields.io/badge/Flask-Web_UI-red?logo=flask" alt="Flask">
 </p>
 
@@ -102,6 +103,7 @@
 | **词频过滤** | BNC/COCA 25000 词频表 | 25000 词头 + 全部词形变化，无需词形还原 |
 | **TTS 引擎 A** | [Edge-TTS](https://github.com/rany2/edge-tts) | 微软在线 TTS，毫秒级合成，零部署成本 |
 | **TTS 引擎 B** | [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) | 本地声音克隆，12Hz codec，0.6B / 1.7B 参数量 |
+| **TTS 引擎 C** | [Fish Speech S2 Pro](https://github.com/fishaudio/fish-speech) | SOTA 开源 TTS，via [s2.cpp](https://github.com/rodrigomatta/s2.cpp) GGUF 量化 CPU 推理 |
 | **音频处理** | [pydub](https://github.com/jiaaro/pydub) + FFmpeg | 格式转换、切割、拼接、采样率统一 |
 | **Web 后端** | Flask | REST API + 后台线程 + 任务持久化 |
 | **Web 前端** | 原生 HTML/CSS/JS | Apple 设计风格，无框架依赖，全屏转录同步 |
@@ -115,8 +117,12 @@
     │                    └─ WhisperX + PyTorch + transformers
     │
     └── subprocess ──→ qwen3-tts conda 环境 (qwen3-tts)
-                         └─ Qwen3-TTS + PyTorch + soundfile
-                         └─ 通过 JSON 文件传参，stdout 返回结果
+    │                    └─ Qwen3-TTS + PyTorch + soundfile
+    │                    └─ 通过 JSON 文件传参，stdout 返回结果
+    │
+    └── HTTP ──→ s2.cpp Fish Speech server (localhost:3030)
+                     └─ GGUF 量化模型，纯 C++ CPU 推理
+                     └─ POST /generate 接口
 ```
 
 > 各 AI 模型的依赖存在版本冲突，通过 conda 环境隔离 + subprocess 跨进程调用解决。
@@ -181,6 +187,31 @@ pip install qwen-tts  # 或按照 Qwen3-TTS 官方文档安装
 # 下载模型
 # 0.6B (轻量): Qwen/Qwen3-TTS-12Hz-0.6B-Base
 # 1.7B (推荐): Qwen/Qwen3-TTS-12Hz-1.7B-Base
+```
+
+### 3b. 安装 Fish Speech S2 Pro（可选，最佳音色克隆）
+
+Fish Speech S2 Pro 通过社区移植版 [s2.cpp](https://github.com/rodrigomatta/s2.cpp) 在 CPU 上运行，音色克隆质量远超 Qwen3-TTS。
+
+```bash
+# 1. 安装依赖
+dnf install -y cmake gcc-c++   # TencentOS / CentOS
+# 或: apt install -y cmake g++  # Ubuntu / Debian
+
+# 2. 克隆并构建 s2.cpp
+git clone --recurse-submodules https://github.com/rodrigomatta/s2.cpp.git /root/s2.cpp
+cd /root/s2.cpp
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel $(nproc)
+
+# 3. 下载 GGUF 量化模型（Q4_K_M ≈ 3.6GB, 运行内存 ≈ 7GB）
+mkdir -p models
+wget -P models https://huggingface.co/rodrigomt/s2-pro-gguf/resolve/main/s2-pro-q4_k_m.gguf
+
+# 4. 启动 HTTP 服务
+nohup ./build/s2 --model ./models/s2-pro-q4_k_m.gguf --server --host 0.0.0.0 --port 3030 --threads 4 > server.log 2>&1 &
+
+# 5. 在 BiliMix 设置面板中将 TTS 引擎切换为 "Fish Speech (S2 Pro)"
 ```
 
 ### 4. 安装主项目依赖
@@ -273,17 +304,18 @@ DIFFICULTY_LEVEL = "CET-4"
 ### TTS 引擎选择
 
 ```python
-# "edge-tts": 微软在线 TTS（快速、免费、无需 GPU）
-# "qwen3-tts": 本地声音克隆（音色自然、需要更多资源）
+# "edge-tts":    微软在线 TTS（快速、免费、无需 GPU）
+# "qwen3-tts":   本地声音克隆（音色自然、需要更多资源）
+# "fish-speech": Fish Speech S2 Pro（SOTA 音色克隆，需启动 s2.cpp）
 TTS_ENGINE = "qwen3-tts"
 ```
 
-| 特性 | Edge-TTS | Qwen3-TTS |
-|------|----------|-----------|
-| 合成速度 | 毫秒级 | 秒级（CPU）/ 亚秒（GPU） |
-| 音色 | 固定中文女声 | 克隆原始说话人声音 |
-| 部署要求 | 联网即可 | 需下载模型 (1~4GB) |
-| 适用场景 | 快速预览 | 高质量产出 |
+| 特性 | Edge-TTS | Qwen3-TTS | Fish Speech S2 Pro |
+|------|----------|-----------|-------------------|
+| 合成速度 | 毫秒级 | 秒级（CPU）/ 亚秒（GPU） | 数秒（CPU） |
+| 音色 | 固定中文女声 | 克隆原始说话人声音 | **极致**声音克隆 |
+| 部署要求 | 联网即可 | 需下载模型 (1~4GB) | s2.cpp + GGUF 模型 (3.6GB) |
+| 适用场景 | 快速预览 | 高质量产出 | 最逼真的原声还原 |
 
 ### Edge-TTS 参数
 
@@ -338,6 +370,7 @@ whipserx/
 │   ├── step2b_translate_sentences.py      # Step 2b: 句子翻译模式
 │   ├── step3_tts_synthesize.py  # Step 3A: Edge-TTS 中文语音合成
 │   ├── step3_tts_qwen.py        # Step 3B: Qwen3-TTS 声音克隆合成
+│   ├── step3_tts_fish.py        # Step 3C: Fish Speech S2 Pro 声音克隆
 │   ├── step4_audio_editor.py    # Step 4: 音频编辑拼接
 │   └── step4b_sentence_mixer.py # Step 4b: 句子翻译模式音频混合
 │
@@ -466,6 +499,7 @@ whipserx/
 | Step 2: 识词 | ~30s | 约 13 批 LLM 调用（100 句 ÷ 8 句/批） |
 | Step 3: TTS (Edge) | ~5s | 在线合成，极快 |
 | Step 3: TTS (Qwen3) | ~6-10min | CPU 模式下每词约 10s；GPU 下降至 0.3~1s/词 |
+| Step 3: TTS (Fish Speech) | ~3-5min | CPU 模式 Q4_K_M 量化，每句约 5-10s |
 | Step 4: 拼接 | ~3s | 纯内存操作 |
 
 ### 优化建议
