@@ -117,7 +117,8 @@ FISH_SPEECH_HOST = "127.0.0.1"
 # Fish Speech s2.cpp HTTP 服务器端口
 FISH_SPEECH_PORT = 3030
 # Fish Speech HTTP 请求超时（秒），CPU 推理较慢需更多时间
-FISH_SPEECH_TIMEOUT = 120
+# 长句可能需要 60-120s，设置 180s 留足余量
+FISH_SPEECH_TIMEOUT = 180
 
 # ========================
 # 相邻词合并配置

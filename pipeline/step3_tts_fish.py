@@ -143,52 +143,77 @@ def synthesize_sentences_with_fish_tts(
         if progress_cb:
             progress_cb(i, total)
 
-        # 调用 Fish Speech HTTP 服务
+        # 调用 Fish Speech HTTP 服务（无限重试直到成功或用户终止）
         print(f"  [{i+1}/{total}] seg[{seg_idx}] 合成: {chinese_text[:30]}... "
               f"(ref: {os.path.basename(ref_audio)})")
 
-        try:
-            t0 = time.time()
-            # s2.cpp /generate 接口要求 multipart/form-data 格式
-            # text / prompt_text 为表单字段，prompt_audio 为文件上传
-            # prompt_text 为必填：有参考音频就必须有参考文本
-            form_data = {"text": (None, chinese_text)}
-            form_data["prompt_text"] = (None, ref_text if ref_text else chinese_text)
-            with open(ref_audio, "rb") as ref_f:
-                form_data["prompt_audio"] = (os.path.basename(ref_audio),
-                                              ref_f.read(),
-                                              "audio/wav")
-            resp = requests.post(
-                fish_url,
-                files=form_data,
-                timeout=timeout,
-            )
+        # 预先构建 form_data（内容不变，每次重试复用）
+        form_data = {"text": (None, chinese_text)}
+        form_data["prompt_text"] = (None, ref_text if ref_text else chinese_text)
+        with open(ref_audio, "rb") as ref_f:
+            ref_bytes = ref_f.read()
+        form_data["prompt_audio"] = (os.path.basename(ref_audio),
+                                      ref_bytes, "audio/wav")
 
-            if resp.status_code != 200:
-                # 尝试解析错误信息
-                try:
-                    err_detail = resp.json().get("error", resp.text[:200])
-                except Exception:
-                    err_detail = resp.text[:200]
-                print(f"  [失败] seg[{seg_idx}] HTTP {resp.status_code}: {err_detail}")
-                continue
+        attempt = 0
+        sentence_start = time.time()
+        SENTENCE_MAX_WALL = 600  # 单句最大总耗时 10 分钟
+        while True:
+            if cancel_check and cancel_check():
+                raise InterruptedError("任务已被用户终止")
 
-            # 保存合成音频
-            with open(output_path, "wb") as f:
-                f.write(resp.content)
+            elapsed_total = time.time() - sentence_start
+            if elapsed_total > SENTENCE_MAX_WALL:
+                raise RuntimeError(
+                    f"句子 seg[{seg_idx}] 合成超时 "
+                    f"({elapsed_total:.0f}s > {SENTENCE_MAX_WALL}s)，"
+                    f"请点击「重试」继续断点续传")
 
-            elapsed = time.time() - t0
-            print(f"  [完成] seg[{seg_idx}] -> {os.path.basename(output_path)} "
-                  f"({len(resp.content)/1024:.0f}KB, {elapsed:.1f}s)")
-            tts_audio_map[seg_idx] = output_path
+            attempt += 1
+            try:
+                t0 = time.time()
+                resp = requests.post(
+                    fish_url,
+                    files=form_data,
+                    timeout=timeout,
+                )
 
-        except requests.Timeout:
-            print(f"  [超时] seg[{seg_idx}] 请求超时 ({timeout}s): {chinese_text[:30]}...")
-        except requests.ConnectionError:
-            print(f"  [连接失败] seg[{seg_idx}] Fish Speech 服务断连")
-            break
-        except Exception as e:
-            print(f"  [异常] seg[{seg_idx}] {e}")
+                if resp.status_code == 200:
+                    with open(output_path, "wb") as f:
+                        f.write(resp.content)
+                    elapsed = time.time() - t0
+                    retry_note = f" (重试{attempt-1}次)" if attempt > 1 else ""
+                    print(f"  [完成] seg[{seg_idx}] -> "
+                          f"{os.path.basename(output_path)} "
+                          f"({len(resp.content)/1024:.0f}KB, {elapsed:.1f}s)"
+                          f"{retry_note}")
+                    tts_audio_map[seg_idx] = output_path
+                    break
+
+                # 503 或超时后可能出现的其他状态 → 等一会重试
+                err_msg = resp.text[:100] if resp.text else f"HTTP {resp.status_code}"
+                wait = min(attempt * 10, 60)  # 10s, 20s, 30s... 最多 60s
+                print(f"  [重试] seg[{seg_idx}] {err_msg}，{wait}s 后重试 (第{attempt}次)")
+                time.sleep(wait)
+
+            except requests.Timeout:
+                wait = min(attempt * 15, 90)  # 超时多等一会儿
+                print(f"  [超时] seg[{seg_idx}] 第{attempt}次超时({timeout}s)，"
+                      f"{wait}s 后重试")
+                time.sleep(wait)
+
+            except requests.ConnectionError:
+                wait = min(attempt * 5, 30)
+                print(f"  [断连] seg[{seg_idx}] 服务不可达，{wait}s 后重试 (第{attempt}次)")
+                time.sleep(wait)
+
+            except InterruptedError:
+                raise
+
+            except Exception as e:
+                wait = min(attempt * 10, 60)
+                print(f"  [异常] seg[{seg_idx}] {e}，{wait}s 后重试")
+                time.sleep(wait)
 
         if progress_cb:
             progress_cb(i + 1, total)
