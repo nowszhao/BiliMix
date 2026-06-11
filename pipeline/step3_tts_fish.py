@@ -149,14 +149,18 @@ def synthesize_sentences_with_fish_tts(
 
         try:
             t0 = time.time()
+            # s2.cpp /generate 接口要求 multipart/form-data 格式
+            # text / prompt_text 为表单字段，prompt_audio 为文件上传
+            # prompt_text 为必填：有参考音频就必须有参考文本
+            form_data = {"text": (None, chinese_text)}
+            form_data["prompt_text"] = (None, ref_text if ref_text else chinese_text)
+            with open(ref_audio, "rb") as ref_f:
+                form_data["prompt_audio"] = (os.path.basename(ref_audio),
+                                              ref_f.read(),
+                                              "audio/wav")
             resp = requests.post(
                 fish_url,
-                json={
-                    "text": chinese_text,
-                    "prompt_audio": ref_audio,
-                    "prompt_text": ref_text,
-                },
-                headers={"Content-Type": "application/json"},
+                files=form_data,
                 timeout=timeout,
             )
 
