@@ -75,8 +75,11 @@ def estimate_max_tokens(text: str, target_duration_s: float = None) -> int:
     """
     根据输入文本长度估算合理的 max_new_tokens。
 
-    如果提供了 target_duration_s（来自原始英文 segment 的时长），
-    则以它为基准，让 TTS 合成的中文语音尽量接近原始语速节奏。
+    策略：
+    - 文本所需时长（n_chars × SECONDS_PER_CHAR + BUFFER）是**最低保障**
+    - target_duration_s 作为**参考下限**（不低于原句的 70%），防止中文说得过快
+    - **不设置上限**：中文翻译通常比英文原文更需要时间表达，上限会在
+      postprocess_audio 中基于文本长度做合理截断，不会让模型无限生成
 
     Args:
         text: 待合成的中文文本
@@ -86,10 +89,8 @@ def estimate_max_tokens(text: str, target_duration_s: float = None) -> int:
     est_seconds = n_chars * SECONDS_PER_CHAR + BUFFER_SECONDS
 
     if target_duration_s and target_duration_s > 0:
-        # 在文本估算和原始时长之间取加权平衡
-        # 中文正常语速下不会比原始英文长太多，也不会奇短
-        est_seconds = min(est_seconds, target_duration_s * 1.3)
-        est_seconds = max(est_seconds, target_duration_s * 0.5)
+        # 不低于原始时长的 70%（中文不宜说得比英文快太多）
+        est_seconds = max(est_seconds, target_duration_s * 0.7)
 
     tokens = int(est_seconds * CODEC_HZ)
     return max(MIN_TOKENS, min(tokens, MAX_TOKENS))
