@@ -738,6 +738,16 @@ function renderSettingsForm(cfg) {
             </div>
             <div class="settings-item">
                 <div class="settings-item-label">
+                    <span class="settings-item-name">全翻译句间间隔</span>
+                    <span class="settings-item-desc">100% 翻译模式下的句间间隔（毫秒）</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-sentence_full_gap_ms"
+                        value="${cfg.sentence_full_gap_ms}" min="0" max="2000" step="50">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
                     <span class="settings-item-name">克隆原声</span>
                     <span class="settings-item-desc">翻译 TTS 是否克隆原音频说话人声音</span>
                 </div>
@@ -831,6 +841,27 @@ function renderSettingsForm(cfg) {
                 <div class="settings-item-control">
                     <input type="number" class="settings-input" id="cfg-qwen3_tts_retry_max"
                         value="${cfg.qwen3_tts_retry_max}" min="0" max="10" step="1">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">说话人间隔阈值</span>
+                    <span class="settings-item-desc">同说话人最大间隔（秒），单人演讲建议 0.8</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-same_speaker_gap"
+                        value="${cfg.same_speaker_gap}" min="0.1" max="3.0" step="0.1">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">自定义参考音频</span>
+                    <span class="settings-item-desc">手动指定参考 WAV 路径（留空则自动提取）</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="text" class="settings-input" id="cfg-qwen3_tts_custom_ref"
+                        value="${escapeAttr(cfg.qwen3_tts_custom_ref || '')}"
+                        placeholder="留空=自动提取" style="width:220px;">
                 </div>
             </div>
         </div>
@@ -1042,6 +1073,7 @@ async function saveSettings() {
         smart_max_translate_ratio: getValue('cfg-smart_max_translate_ratio'),
         sentence_cn_ratio: getValue('cfg-sentence_cn_ratio'),
         sentence_gap_ms: getValue('cfg-sentence_gap_ms'),
+        sentence_full_gap_ms: getValue('cfg-sentence_full_gap_ms'),
         sentence_tts_voice_clone: getValue('cfg-sentence_tts_voice_clone'),
         tts_engine: getValue('cfg-tts_engine'),
         tts_voice: getValue('cfg-tts_voice'),
@@ -1058,6 +1090,8 @@ async function saveSettings() {
         qwen3_tts_device: getValue('cfg-qwen3_tts_device'),
         qwen3_tts_ref_duration: getValue('cfg-qwen3_tts_ref_duration'),
         qwen3_tts_retry_max: getValue('cfg-qwen3_tts_retry_max'),
+        qwen3_tts_custom_ref: getValue('cfg-qwen3_tts_custom_ref'),
+        same_speaker_gap: getValue('cfg-same_speaker_gap'),
         auto_retry_max: getValue('cfg-auto_retry_max'),
         auth_enabled: getValue('cfg-auth_enabled'),
         auth_username: getValue('cfg-auth_username'),

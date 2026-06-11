@@ -214,24 +214,31 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
     ref_duration_ms = int(ref_duration * 1000)
     min_ref_duration_ms = int(min_ref_duration * 1000)
 
-    # ---- 准备 fallback 参考音频 ----
+    # ---- 准备 fallback 参考音频（按说话人轮次） ----
+    all_turns = _group_segments_into_turns(segments, same_speaker_gap)
     replacement_seg_set = set(r["segment_index"] for r in replacements)
-    seg_durations = []
-    for i, seg in enumerate(segments):
-        start_s = seg.get("start", 0)
-        end_s = seg.get("end", 0)
-        dur = end_s - start_s
-        is_clean = i not in replacement_seg_set
-        seg_durations.append((i, start_s, end_s, dur, is_clean))
 
-    clean_segs = [s for s in seg_durations if s[4] and s[3] > 1.0]
-    if not clean_segs:
-        clean_segs = [s for s in seg_durations if s[3] > 1.0]
-    clean_segs.sort(key=lambda x: x[3], reverse=True)
+    # 构建每个 turn 内最适合做参考的 segment：该 turn 中最长且未被替换的
+    turn_best_ref = {}  # turn_idx -> (seg_idx, start_s, end_s, dur)
+    for turn_idx, turn in enumerate(all_turns):
+        best = None
+        for si in turn:
+            seg = segments[si]
+            dur = seg.get("end", 0) - seg.get("start", 0)
+            if dur < 1.0:
+                continue
+            is_clean = si not in replacement_seg_set
+            score = dur + (0.5 if is_clean else 0)  # 纯净段有加分
+            if best is None or score > best[3]:
+                best = (si, seg.get("start", 0), seg.get("end", 0), score)
+        if best:
+            turn_best_ref[turn_idx] = best
 
-    fallback_path = None
-    if clean_segs:
-        fb_idx, fb_start, fb_end, fb_dur, _ = clean_segs[0]
+    # 全局 fallback：跨所有 turn 的最长纯净段
+    global_fallback_path = None
+    all_candidates = sorted(turn_best_ref.values(), key=lambda x: x[3], reverse=True)
+    if all_candidates:
+        fb_idx, fb_start, fb_end, _ = all_candidates[0]
         fb_start_ms = int(fb_start * 1000)
         fb_end_ms = int(fb_end * 1000)
         fb_mid_ms = (fb_start_ms + fb_end_ms) // 2
@@ -240,10 +247,16 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
         fb_clip_end = min(audio_duration_ms, fb_clip_start + ref_duration_ms)
         if fb_clip_end - fb_clip_start < ref_duration_ms:
             fb_clip_start = max(0, fb_clip_end - ref_duration_ms)
-        fallback_path = os.path.join(output_dir, "ref_fallback.wav")
-        _extract_audio_clip(audio_path, fb_clip_start, fb_clip_end, fallback_path)
-        print(f"  [fallback] 全篇参考: segment[{fb_idx}] "
-              f"({fb_start:.1f}s-{fb_end:.1f}s) -> {fallback_path}")
+        global_fallback_path = os.path.join(output_dir, "ref_fallback.wav")
+        _extract_audio_clip(audio_path, fb_clip_start, fb_clip_end, global_fallback_path)
+        print(f"  [fallback] 全局参考: segment[{fb_idx}] "
+              f"({fb_start:.1f}s-{fb_end:.1f}s) -> {global_fallback_path}")
+
+    # 预构建每个 segment 所属的 turn 索引
+    seg_to_turn = {}
+    for turn_idx, turn in enumerate(all_turns):
+        for si in turn:
+            seg_to_turn[si] = turn_idx
 
     # ---- 为每个 segment 提取独立参考音频（边界感知，不跨段扩展） ----
     ref_map = {}
@@ -258,12 +271,25 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
         seg_end_ms = int(seg_end * 1000)
         seg_dur_ms = seg_end_ms - seg_start_ms
 
-        # 极短 segment（< 1 秒）：使用 fallback
+        # 极短 segment（< 1 秒）：优先使用同轮次最佳参考，其次全局 fallback
         if seg_dur < 1.0:
-            if fallback_path:
-                ref_map[seg_idx] = fallback_path
-                ref_source_map[seg_idx] = seg_idx  # fallback, not tied to a specific segment
-                print(f"  seg[{seg_idx}] ({seg_dur:.1f}s) 极短 -> 使用 fallback")
+            turn_idx = seg_to_turn.get(seg_idx)
+            if turn_idx is not None and turn_idx in turn_best_ref:
+                # 同轮次有长段可用 → 从该轮次最佳段提取参考音频
+                bs_idx, bs_start, bs_end, _ = turn_best_ref[turn_idx]
+                bs_mid = (bs_start + bs_end) / 2
+                bs_start_ms = max(0, int(bs_mid * 1000) - ref_duration_ms // 2)
+                bs_end_ms = min(audio_duration_ms, bs_start_ms + ref_duration_ms)
+                ref_path = os.path.join(output_dir, f"ref_turn_{turn_idx}_for_{seg_idx}.wav")
+                _extract_audio_clip(audio_path, bs_start_ms, bs_end_ms, ref_path)
+                ref_map[seg_idx] = ref_path
+                ref_source_map[seg_idx] = bs_idx
+                print(f"  seg[{seg_idx}] ({seg_dur:.1f}s) 极短 -> 同轮次 turn[{turn_idx}] "
+                      f"seg[{bs_idx}] ({bs_end-bs_start:.1f}s)")
+            elif global_fallback_path:
+                ref_map[seg_idx] = global_fallback_path
+                ref_source_map[seg_idx] = seg_idx
+                print(f"  seg[{seg_idx}] ({seg_dur:.1f}s) 极短 -> 使用全局 fallback")
             else:
                 print(f"  seg[{seg_idx}] ({seg_dur:.1f}s) 极短且无 fallback，跳过")
             continue
@@ -818,15 +844,25 @@ def synthesize_sentences_with_qwen_tts(
     ref_audio_map = {}
     ref_source_map = {}
     if voice_clone:
-        ref_dir = os.path.join(cache_dir, "ref_audio")
-        pseudo_replacements = [
-            {"segment_index": idx}
-            for idx in translated_indices
-            if idx < len(segments)
-        ]
-        if pseudo_replacements:
-            ref_audio_map, ref_source_map = extract_ref_audio_for_segments(
-                audio_path, segments, pseudo_replacements, ref_dir)
+        # 检查是否有用户手动指定的高质量参考音频
+        custom_ref = getattr(config, "QWEN3_TTS_CUSTOM_REF_AUDIO", "")
+        if custom_ref and os.path.isfile(custom_ref):
+            print(f"[Step3-Qwen-Sentence] 使用自定义参考音频: {custom_ref}")
+            # 所有 segment 共用同一个高质量参考音频
+            for idx in translated_indices:
+                if idx < len(segments):
+                    ref_audio_map[idx] = custom_ref
+                    ref_source_map[idx] = idx
+        else:
+            ref_dir = os.path.join(cache_dir, "ref_audio")
+            pseudo_replacements = [
+                {"segment_index": idx}
+                for idx in translated_indices
+                if idx < len(segments)
+            ]
+            if pseudo_replacements:
+                ref_audio_map, ref_source_map = extract_ref_audio_for_segments(
+                    audio_path, segments, pseudo_replacements, ref_dir)
             print(f"[Step3-Qwen-Sentence] 提取了 {len(ref_audio_map)} 个句子参考音频")
 
     icl_mode = getattr(config, "QWEN3_TTS_ICL_MODE", False)

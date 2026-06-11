@@ -44,6 +44,9 @@ def mix_sentence_audio(
     if gap_ms is None:
         gap_ms = getattr(config, "SENTENCE_GAP_MS", 400)
 
+    # 全翻译模式下的固定短间隙（保证连贯不割裂）
+    full_gap_ms = getattr(config, "SENTENCE_FULL_GAP_MS", 250)
+
     # 交叉淡化参数：每段音频首尾做淡入淡出，平滑 TTS 与原声之间的音色切换。
     # 25ms 仅够消除爆音；60ms 能更好掩盖音色差异（约 1-2 个音节过渡时间）。
     FADE_MS = 60
@@ -188,21 +191,23 @@ def mix_sentence_audio(
 
             if orig_gap_ms > 0:
                 if all_translated:
-                    # 100% 全翻译模式：跳过原始间隙（含呼吸/环境音/click），
-                    # 插入一段小静音使 TTS 衔接更干净自然
+                    # 100% 全翻译模式：用固定短间隙替换原始的句间停顿。
+                    # 原始间隙含呼吸、换气、戏剧停顿（可达 3s+），
+                    # 中文 TTS 句间保留这些会严重割裂连贯性。
+                    gap_dur = full_gap_ms
                     clean_gap = AudioSegment.silent(
-                        duration=orig_gap_ms, frame_rate=target_sr)
+                        duration=gap_dur, frame_rate=target_sr)
                     clean_gap = clean_gap.fade_in(FADE_MS).fade_out(FADE_MS)
                     result += clean_gap
                     time_mapping.append({
                         "mixed_start": round(mixed_pos_ms / 1000.0, 3),
-                        "mixed_end": round((mixed_pos_ms + orig_gap_ms) / 1000.0, 3),
+                        "mixed_end": round((mixed_pos_ms + gap_dur) / 1000.0, 3),
                         "orig_start": round(seg_end_ms / 1000.0, 3),
                         "orig_end": round(next_start_ms / 1000.0, 3),
                         "type": "gap",
                         "segment_index": -1,
                     })
-                    mixed_pos_ms += orig_gap_ms
+                    mixed_pos_ms += gap_dur
                 else:
                     # 中英交替模式：保留原始的句间间隔（环境音自然过渡）
                     gap_clip = original_audio[seg_end_ms:next_start_ms]

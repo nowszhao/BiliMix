@@ -83,14 +83,20 @@ QWEN3_TTS_PYTHON = "/root/miniconda3/envs/qwen3-tts/bin/python"
 # Qwen3-TTS 推理设备: "cuda:0" 或 "cpu"
 QWEN3_TTS_DEVICE = "cpu"
 # 参考音频时长（秒）：从原音频中截取多长的片段作为说话人参考
-QWEN3_TTS_REF_DURATION = 8
+# 越长的参考音频能提供更丰富的音色特征，x-vector 推荐 5-10s
+QWEN3_TTS_REF_DURATION = 10
+# 自定义参考音频路径（可选）：手动指定一个高质量 WAV 文件作为声音克隆参考
+# 设置后所有 TTS 句段共用此参考音频，不再从原始音频中自动提取
+# 示例: QWEN3_TTS_CUSTOM_REF_AUDIO = "/path/to/speaker_ref.wav"
+QWEN3_TTS_CUSTOM_REF_AUDIO = ""
 # Segment 级别参考的最小时长（秒）：segment 短于此值时向前后扩展
 # 降低到 1.5s，减少需要扩展的 segment，避免跨说话人音色污染
 # x-vector 在 1-2s 音频上效果已足够，ICL 模式下则需更长时间（但需配合边界保护）
 SEGMENT_REF_MIN_DURATION = 1.5
 # 同一说话人连续句段的最大间隔（秒）：相邻 segment 间隔小于此值视为同一说话人
 # 用于将连续短句分组，组内共享最长 segment 的参考音频，保证音色一致
-SAME_SPEAKER_GAP = 0.3
+# 单人演讲/播客：建议 0.8~1.2s（演讲者自然停顿）; 多人对话：建议 0.2~0.4s
+SAME_SPEAKER_GAP = 0.8
 # 声音克隆模式: False = x-vector 仅音色（默认），True = ICL 保留音色+语气/韵律
 # x-vector 模式仅克隆音色，中文发音由模型独立生成，跨语言场景下更稳定、不产生乱码
 # ICL 模式会提取参考音频的韵律特征（音高、语速、情感），但英语→中文时会冲突
@@ -153,8 +159,11 @@ SMART_MAX_TRANSLATE_RATIO = 0.7
 #   0.0 = 不替换（纯英文原声）
 # 效果：被选中的句子用中文TTS替换英文原声，形成中英交替讲述
 SENTENCE_CN_RATIO = 0.55
-# 句子之间的静音间隔（毫秒）
+# 句子之间的静音间隔（毫秒），中英交替模式使用
 SENTENCE_GAP_MS = 400
+# 全翻译模式（100%）句间静音间隔（毫秒）
+# 全翻译时所有句子都是中文 TTS，用短间隔保证连贯性
+SENTENCE_FULL_GAP_MS = 250
 # 中文翻译 TTS 是否克隆原声（否则用默认中文语音）
 SENTENCE_TTS_VOICE_CLONE = True
 

@@ -16,6 +16,7 @@ UPDATABLE_CONFIGS = {
     "smart_max_translate_ratio": ("SMART_MAX_TRANSLATE_RATIO", float),
     "sentence_cn_ratio": ("SENTENCE_CN_RATIO", float),
     "sentence_gap_ms": ("SENTENCE_GAP_MS", int),
+    "sentence_full_gap_ms": ("SENTENCE_FULL_GAP_MS", int),
     "sentence_tts_voice_clone": ("SENTENCE_TTS_VOICE_CLONE", bool),
     "tts_engine": ("TTS_ENGINE", str),
     "tts_voice": ("TTS_VOICE", str),
@@ -33,6 +34,8 @@ UPDATABLE_CONFIGS = {
     "qwen3_tts_device": ("QWEN3_TTS_DEVICE", str),
     "qwen3_tts_ref_duration": ("QWEN3_TTS_REF_DURATION", int),
     "qwen3_tts_retry_max": ("QWEN3_TTS_RETRY_MAX", int),
+    "qwen3_tts_custom_ref": ("QWEN3_TTS_CUSTOM_REF_AUDIO", str),
+    "same_speaker_gap": ("SAME_SPEAKER_GAP", float),
     "auto_retry_max": ("AUTO_RETRY_MAX", int),
     # 登录认证
     "auth_enabled": ("AUTH_ENABLED", bool),
@@ -53,6 +56,7 @@ def get_all_config() -> dict:
         # 句子翻译
         "sentence_cn_ratio": getattr(config, "SENTENCE_CN_RATIO", 0.9),
         "sentence_gap_ms": getattr(config, "SENTENCE_GAP_MS", 400),
+        "sentence_full_gap_ms": getattr(config, "SENTENCE_FULL_GAP_MS", 250),
         "sentence_tts_voice_clone": getattr(config, "SENTENCE_TTS_VOICE_CLONE", True),
         # TTS
         "tts_engine": getattr(config, "TTS_ENGINE", "edge-tts"),
@@ -75,6 +79,8 @@ def get_all_config() -> dict:
         "qwen3_tts_device": getattr(config, "QWEN3_TTS_DEVICE", "cpu"),
         "qwen3_tts_ref_duration": getattr(config, "QWEN3_TTS_REF_DURATION", 8),
         "qwen3_tts_retry_max": getattr(config, "QWEN3_TTS_RETRY_MAX", 3),
+        "qwen3_tts_custom_ref": getattr(config, "QWEN3_TTS_CUSTOM_REF_AUDIO", ""),
+        "same_speaker_gap": getattr(config, "SAME_SPEAKER_GAP", 0.8),
         # 重试
         "auto_retry_max": getattr(config, "AUTO_RETRY_MAX", 3),
         # 登录认证
