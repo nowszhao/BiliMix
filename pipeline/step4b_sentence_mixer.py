@@ -44,8 +44,9 @@ def mix_sentence_audio(
     if gap_ms is None:
         gap_ms = getattr(config, "SENTENCE_GAP_MS", 400)
 
-    # 交叉淡化参数：每段音频首尾做微小 fade，消除硬切爆音
-    FADE_MS = 25
+    # 交叉淡化参数：每段音频首尾做淡入淡出，平滑 TTS 与原声之间的音色切换。
+    # 25ms 仅够消除爆音；60ms 能更好掩盖音色差异（约 1-2 个音节过渡时间）。
+    FADE_MS = 60
 
     print(f"[Step4b] 开始中英交替音频组装（替换模式）")
     print(f"  原始音频: {audio_path}")

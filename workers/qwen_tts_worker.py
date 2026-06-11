@@ -39,22 +39,30 @@ import soundfile as sf
 # =============================================
 CODEC_HZ = 12  # Qwen3-TTS-12Hz: 每秒 12 个 codec token
 
-# 每个汉字预估时长（秒），中文正常语速约 0.25-0.35s/字
-SECONDS_PER_CHAR = 0.3
-# 额外的缓冲时间（秒），防止裁得太紧
-BUFFER_SECONDS = 1.0
+# 每个汉字预估时长（秒）。
+# 中文语速因说话人/情感/句型差异显著，偏快约 0.22s/字，偏慢约 0.40s/字。
+# 原值 0.30 对带停顿或感叹语气的句子会截掉末尾字，调整为 0.38 给更多余量。
+SECONDS_PER_CHAR = 0.38
+# 额外的缓冲时间（秒），防止裁得太紧。
+# 原值 1.0s 对长句已足够，但对 3-5 字的短句相对有限，调整为 1.5s。
+BUFFER_SECONDS = 1.5
 # 绝对最短/最长 max_new_tokens
 MIN_TOKENS = 36      # 至少 3 秒
 MAX_TOKENS = 360     # 最多 30 秒
 
-# 尾部静音裁剪阈值（归一化振幅）
-SILENCE_THRESHOLD = 0.01
+# 尾部静音裁剪阈值（归一化振幅）。
+# 原值 0.01 会把中文语气词/韵母尾部的自然衰减（"了、吧、呢、啊"）当静音截掉。
+# 调低到 0.005，只裁真正接近无声的部分。
+SILENCE_THRESHOLD = 0.005
 # 尾部静音窗口大小（采样点数，24kHz 下 480 = 20ms）
 SILENCE_WINDOW = 480
 # 裁剪后最少保留时长（秒）
 MIN_AUDIO_DURATION = 0.3
 # 裁剪后最大保留时长（秒），超过则强制截断
 MAX_AUDIO_DURATION = 30.0
+# 尾部静音裁剪后额外保留的余量（秒）。
+# 原值 0.1s 太短，语气词尾音容易被刚好截掉，调整为 0.25s。
+TAIL_KEEP_SECONDS = 0.25
 
 # 音频质量校验阈值
 # 最短有效时长（秒），低于此值视为合成失败
@@ -112,8 +120,8 @@ def trim_trailing_silence(wav: np.ndarray, sr: int) -> np.ndarray:
         # 整段都是静音，保留最小时长
         return wav[:int(sr * MIN_AUDIO_DURATION)]
 
-    # 多保留一点余量（0.1 秒）
-    end_idx = min(len(wav), last_sound_idx + int(sr * 0.1))
+    # 多保留一点余量（TAIL_KEEP_SECONDS，让语气词尾音自然衰减完毕）
+    end_idx = min(len(wav), last_sound_idx + int(sr * TAIL_KEEP_SECONDS))
     return wav[:end_idx]
 
 
@@ -160,6 +168,9 @@ def postprocess_audio(wav: np.ndarray, sr: int, text: str) -> np.ndarray:
     音频后处理：
     1. 裁剪尾部静音
     2. 限制最大时长（防止模型跑飞生成超长音频）
+
+    句末保护：末尾 2 个字的估算时长不计入文本长度裁剪上限，
+    避免语气词/尾音（"了、吧、呢、啊"）被误截。
     """
     # 1. 强制限制最大时长
     max_samples = int(MAX_AUDIO_DURATION * sr)
@@ -169,9 +180,13 @@ def postprocess_audio(wav: np.ndarray, sr: int, text: str) -> np.ndarray:
     # 2. 裁剪尾部静音
     wav = trim_trailing_silence(wav, sr)
 
-    # 3. 基于文本长度的合理时长上限
+    # 3. 基于文本长度的合理时长上限（含句末保护）
     n_chars = len(text)
-    reasonable_max = max(MIN_AUDIO_DURATION, n_chars * SECONDS_PER_CHAR + BUFFER_SECONDS)
+    # 末尾 2 个字额外豁免，防止语气词尾音被截
+    TAIL_PROTECT_CHARS = 2
+    protected_extra = TAIL_PROTECT_CHARS * SECONDS_PER_CHAR
+    reasonable_max = max(MIN_AUDIO_DURATION,
+                         n_chars * SECONDS_PER_CHAR + BUFFER_SECONDS + protected_extra)
     reasonable_samples = int(reasonable_max * sr)
     if len(wav) > reasonable_samples:
         # 不直接硬截，先尝试在合理范围附近找一个静音点截断
