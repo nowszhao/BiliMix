@@ -988,20 +988,33 @@ def continue_after_sentence_confirmation(task_id: str):
 def translate_word_via_llm(english: str, context_sentence: str = "") -> str:
     """调用 Ollama 翻译单个词/短语为中文（基于句子语境）"""
     from pipeline.step2_identify_difficult_words import call_ollama
+    from pipeline.step2b_translate_sentences import _apply_colloquial_fixup
+
+    # 先检查口语习语字典，命中则直接返回（跳过 LLM 调用）
+    fixup = _apply_colloquial_fixup(english, "")
+    if fixup and fixup != "":
+        return fixup
 
     if context_sentence:
         prompt = f"""请根据以下英文句子的语境，翻译其中的"{english}"为中文。
 
-要求：
-1. 翻译必须基于该词/短语在句子中的实际用法和词性
-2. 只给一个最贴合语境的中文翻译
-3. 不要解释，不要额外内容，直接输出中文翻译
-4. 不要用分号、斜杠列举多个含义
+这是来自英语播客的口语对话，请注意：
+1. 翻译必须基于该词/短语在句子中的实际用法
+2. 如果是口语习语，翻译其实际含义，不要字面翻译
+   例如："a hundred percent"→"百分之百确定"（不是"一百分"）
+        "you bet"→"当然"（不是"你打赌"）
+3. 只给一个最贴合口语语境的中文翻译
+4. 不要解释，不要额外内容，直接输出中文翻译
+5. 不要用分号、斜杠列举多个含义
 
 英文句子：{context_sentence}
 要翻译的词/短语：{english}"""
     else:
-        prompt = f"""请将以下英文单词或短语翻译为中文，只给一个最常用的释义，不要解释，不要额外内容，直接输出中文翻译：
+        prompt = f"""请将以下英文口语表达翻译为中文。
+
+如果是口语习语，翻译其实际含义，不要字面翻译。
+例如："a hundred percent"→"百分之百确定"，"no way"→"不会吧"。
+只给一个翻译，不要解释，直接输出：
 
 {english}"""
 
@@ -1011,6 +1024,8 @@ def translate_word_via_llm(english: str, context_sentence: str = "") -> str:
         if line:
             line = re.split(r'[；;/、]', line)[0].strip()
             line = re.sub(r'[（(][^）)]*[）)]', '', line).strip()
+            # 再次应用兜底修正
+            line = _apply_colloquial_fixup(english, line)
             return line if line else english
     return english
 

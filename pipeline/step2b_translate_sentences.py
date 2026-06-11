@@ -108,10 +108,134 @@ def select_sentences_to_translate(segments: list, ratio: float = None) -> list:
     return sorted(set(indices))
 
 
+# ============================================================
+# 口语/习语易错短语字典 — 兜底后处理
+# ============================================================
+# 模型有时会对口语表达做字面翻译（如 a hundred percent → 一百分），
+# 此字典用于后处理修正。key 为英文（小写），value 为正确的中文口语翻译。
+_COLLOQUIAL_FIXUPS: dict[str, str] = {
+    # 肯定/确认
+    "a hundred percent": "百分之百确定",
+    "one hundred percent": "百分之百确定",
+    "you bet": "当然",
+    "you betcha": "当然了",
+    "for sure": "肯定的",
+    "absolutely": "绝对的",
+    "definitely": "肯定的",
+    "without a doubt": "毫无疑问",
+    # 惊讶/质疑
+    "no way": "不会吧",
+    "no kidding": "真的假的",
+    "you don't say": "真的假的",
+    "for real": "真的假的",
+    "are you serious": "你说真的吗",
+    "you're kidding": "你开玩笑吧",
+    "get out of here": "别逗了",
+    "shut up": "不会吧",
+    "no shot": "不可能",
+    # 共鸣/附和
+    "tell me about it": "可不是嘛",
+    "i know right": "谁说不是呢",
+    "i feel you": "我懂你",
+    "same here": "我也是",
+    "you and me both": "彼此彼此",
+    # 认同/接受
+    "fair enough": "说得过去",
+    "that works": "可以",
+    "sounds good": "听起来不错",
+    "i'm down": "我同意",
+    "count me in": "算我一个",
+    "i'm game": "我没问题",
+    # 口语填充/语气
+    "you know": "你知道的",
+    "i mean": "我是说",
+    "like": "",
+    "sort of": "算是吧",
+    "kind of": "有点",
+    "pretty much": "差不多",
+    "at the end of the day": "说到底",
+    "to be honest": "说实话",
+    "honestly": "说真的",
+    # 转折/让步
+    "that being said": "话虽如此",
+    "having said that": "话虽这么说",
+    "don't get me wrong": "别误会",
+    "not gonna lie": "讲真",
+    "to be fair": "公平地说",
+    # 时间/顺序
+    "right off the bat": "一开始",
+    "down the road": "以后",
+    "in the long run": "长远来看",
+    "on the fly": "临时地",
+    "off the top of my head": "凭印象说",
+}
+
+
+def _apply_colloquial_fixup(english: str, chinese: str) -> str:
+    """
+    对翻译结果做口语习语兜底修正。
+    如果英语原文匹配已知口语短语，用字典值替换直译结果。
+
+    Args:
+        english: 英文原文（整句）
+        chinese: 模型翻译的中文
+
+    Returns:
+        str: 修正后的中文（如无需修正则返回原值）
+    """
+    eng_lower = english.strip().rstrip(".!?。！？").lower()
+    if eng_lower in _COLLOQUIAL_FIXUPS:
+        return _COLLOQUIAL_FIXUPS[eng_lower]
+    return chinese
+
+
+# ============================================================
+# 口语翻译 Few-shot 示例
+# ============================================================
+_CONVERSATIONAL_FEWSHOT = """---口语翻译示例---
+对话:
+[1] Really?
+[2] A hundred percent.
+
+翻译: 这段对话中 [2] 是对 [1] 的肯定回应，"A hundred percent" 不是数学百分比，而是口语中表示"完全确定"。
+[1] 真的吗？
+[2] 百分之百确定。
+
+对话:
+[1] Are you coming to the party tonight?
+[2] You bet.
+
+翻译: "You bet" 是口语中表示"当然"的意思，不要翻译为"你打赌"。
+[1] 你今晚来参加派对吗？
+[2] 当然。
+
+对话:
+[1] He said he finished the whole project in one night.
+[2] No way.
+
+翻译: "No way" 在此表示惊讶/不相信，不是"没路"。
+[1] 他说他一晚上就完成了整个项目。
+[2] 不会吧。
+
+对话:
+[1] The traffic was insane today.
+[2] Tell me about it.
+
+翻译: "Tell me about it" 是口语中表示强烈共鸣"可不是嘛/还用你说"，不是字面的"跟我说说"。
+[1] 今天堵车堵疯了。
+[2] 可不是嘛。
+---示例结束---"""
+
+
 def build_translation_prompt(sentences: list) -> str:
     """
-    构建批量翻译 prompt，适配 TranslateGemma。
-    使用 [seq_id] 前缀标记句子，要求模型按相同格式输出。
+    构建批量翻译 prompt，针对播客口语对话场景优化。
+
+    与旧版相比的改进：
+    - 注入领域上下文（播客口语对话）
+    - 告知模型多行构成连续对话，需感知上下文
+    - 提醒常见口语表达不要字面翻译
+    - Few-shot 示例展示对话场景下的正确翻译
 
     Args:
         sentences: 待翻译的句子列表 [(seq_id, text), ...]
@@ -120,14 +244,52 @@ def build_translation_prompt(sentences: list) -> str:
         str: prompt 文本
     """
     numbered = "\n".join(f"[{seq_id}] {text}" for seq_id, text in sentences)
-    return (f"You are a professional English (en) to Chinese (zh-Hans) translator.\n"
-            f"Your goal is to accurately convey the meaning and nuances of the original "
-            f"English text while adhering to Chinese grammar, vocabulary, and cultural "
-            f"sensitivities.\n"
-            f"Produce only the Chinese translation, without any additional explanations "
-            f"or commentary.\n"
-            f"Please translate the following English text into Chinese:\n\n\n"
-            f"{numbered}")
+    is_dialogue = len(sentences) > 1
+
+    # 根据是否多句构建不同级别的 prompt
+    if is_dialogue:
+        return (
+            f"你是专业的英译中播客对话翻译。以下 {len(sentences)} 行英文来自一段英语播客的连续口语对话，"
+            f"行与行之间构成自然的交谈。\n\n"
+            f"## 核心要求\n"
+            f"1. **上下文感知**：翻译每一行时，请结合前后文理解语义。"
+            f"例如「Really?」→「A hundred percent.」中，后者是对前者的肯定回应，不应翻译为\"一百分\"。\n"
+            f"2. **口语化输出**：使用自然的中文口语/对话语气，不要书面语。"
+            f"中文里应出现\"吧、呢、嘛、啊、哦\"等口语语气词。\n"
+            f"3. **习语不要直译**：遇到口语习语/俚语，必须翻译其实际含义，而非字面意思。\n"
+            f"4. **短句不要补全**：如果英文是简短的口语应答（如\"A hundred percent.\"），"
+            f"中文也保持简短自然，不要自行扩展为完整描述句。\n\n"
+            f"## 常见易错口语表达（翻译时注意）\n"
+            f"- a/one hundred percent → 百分之百确定 / 没错（不是：一百分）\n"
+            f"- you bet → 当然（不是：你打赌）\n"
+            f"- no way → 不会吧（不是：没路）\n"
+            f"- tell me about it → 可不是嘛（不是：跟我说说）\n"
+            f"- fair enough → 说得过去 / 有道理\n"
+            f"- for real / no kidding → 真的假的\n"
+            f"- I know, right? → 谁说不是呢\n"
+            f"- that being said → 话虽如此\n"
+            f"- don't get me wrong → 别误会\n"
+            f"- at the end of the day → 说到底\n\n"
+            f"{_CONVERSATIONAL_FEWSHOT}\n"
+            f"请按 [N] 格式输出每行对应的中文翻译，不要额外解释：\n\n"
+            f"{numbered}"
+        )
+    else:
+        # 单句模式
+        return (
+            f"你是专业的英译中播客对话翻译。以下英文来自播客口语对话。\n\n"
+            f"## 核心要求\n"
+            f"1. **口语化输出**：使用自然的中文口语语气，适当加入\"吧、呢、嘛、啊\"等语气词。\n"
+            f"2. **习语不要直译**：口语习语翻译实际含义，而非字面意思。\n"
+            f"   例如：a hundred percent → 百分之百确定（不是：一百分）\n"
+            f"        you bet → 当然（不是：你打赌）\n"
+            f"        no way → 不会吧（不是：没路）\n"
+            f"3. **短句保持简短**：如果英文是简短的口语应答，中文也保持简短自然。\n"
+            f"4. 只输出中文翻译，不要任何解释或额外内容。\n\n"
+            f"{_CONVERSATIONAL_FEWSHOT}\n"
+            f"请翻译：\n\n"
+            f"{numbered}"
+        )
 
 
 def _clean_pinyin(text: str) -> str:
@@ -278,14 +440,18 @@ def translate_sentences(segments: list, indices: list = None,
         for seq_id, text in batch:
             actual_idx = seq_to_idx[seq_id]
             if seq_id in batch_translations and batch_translations[seq_id]:
-                all_translations[actual_idx] = batch_translations[seq_id]
+                # 口语习语兜底修正 + 拼音清洗
+                translation = batch_translations[seq_id]
+                translation = _apply_colloquial_fixup(text, translation)
+                all_translations[actual_idx] = translation
             else:
-                # 单句重试
+                # 单句重试（使用对话感知 prompt）
                 print(f"  [重试] 句子 {actual_idx} 单句重试...")
-                retry_prompt = f"Translate the following text from English to Chinese:\n\n{text}"
+                retry_prompt = build_translation_prompt([(1, text)])
                 retry_resp = call_ollama(retry_prompt)
-                retry_text = retry_resp.strip() if retry_resp else ""
+                retry_text = _clean_pinyin(retry_resp.strip()) if retry_resp else ""
                 if retry_text:
+                    retry_text = _apply_colloquial_fixup(text, retry_text)
                     all_translations[actual_idx] = retry_text
                 else:
                     print(f"  [失败] 句子 {actual_idx} 翻译失败，跳过")
