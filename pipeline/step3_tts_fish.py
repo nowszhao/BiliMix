@@ -37,11 +37,14 @@ def _get_fish_url() -> str:
 
 
 def _check_server_health() -> bool:
-    """检查 Fish Speech 服务是否在线"""
+    """检查 Fish Speech 服务是否在线（TCP 端口可达即可）"""
+    import socket
+    host = getattr(config, "FISH_SPEECH_HOST", "127.0.0.1")
+    port = getattr(config, "FISH_SPEECH_PORT", 3030)
     try:
-        url = f"{_get_fish_url()}/health"
-        resp = requests.get(url, timeout=5)
-        return resp.status_code == 200
+        sock = socket.create_connection((host, port), timeout=3)
+        sock.close()
+        return True
     except Exception:
         return False
 
