@@ -51,6 +51,100 @@ def mix_sentence_audio(
     # 25ms 仅够消除爆音；60ms 能更好掩盖音色差异（约 1-2 个音节过渡时间）。
     FADE_MS = 60
 
+    # 已翻译索引集合（快速查找）
+    translated_set = set(translated_indices)
+    all_translated = len(translated_set) >= len(segments)
+
+    # ============================================================
+    # 100% 全翻译模式：直接拼接中文 TTS，无需加载英文原音频
+    # ============================================================
+    if all_translated:
+        print(f"[Step4b] 100% 全翻译模式：直接拼接 TTS 音频")
+        print(f"  总句子数: {len(translated_indices)}, 句间间隔: {full_gap_ms}ms")
+
+        # 从第一个 TTS 文件获取音频参数（采样率/通道数）
+        first_seg = translated_indices[0]
+        first_tts = tts_audio_map.get(first_seg, "")
+        if first_tts and os.path.exists(first_tts):
+            probe = AudioSegment.from_file(first_tts)
+            target_sr = probe.frame_rate
+            target_channels = probe.channels
+        else:
+            raise RuntimeError(
+                f"seg[{first_seg}] TTS 文件缺失 ({first_tts or '(无)'}), 100% 模式无法继续")
+
+        gap_seg = AudioSegment.silent(duration=full_gap_ms, frame_rate=target_sr)
+        result = AudioSegment.empty()
+        time_mapping = []
+        mixed_pos_ms = 0
+
+        for i, seg_idx in enumerate(translated_indices):
+            tts_path = tts_audio_map.get(seg_idx, "")
+            if not tts_path or not os.path.exists(tts_path):
+                raise RuntimeError(
+                    f"seg[{seg_idx}] TTS 文件缺失 ({tts_path or '(无)'}), 100% 模式无法继续")
+
+            tts_clip = AudioSegment.from_file(tts_path)
+            tts_clip = tts_clip.set_frame_rate(target_sr).set_channels(target_channels)
+            tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
+            tts_len_ms = len(tts_clip)
+
+            result += tts_clip
+            chinese_text = translations.get(seg_idx, "")
+            time_mapping.append({
+                "mixed_start": round(mixed_pos_ms / 1000.0, 3),
+                "mixed_end": round((mixed_pos_ms + tts_len_ms) / 1000.0, 3),
+                "orig_start": 0,
+                "orig_end": 0,
+                "type": "tts_chinese",
+                "segment_index": seg_idx,
+                "chinese": chinese_text,
+            })
+            mixed_pos_ms += tts_len_ms
+            print(f"  [{seg_idx}] 🇨🇳 {chinese_text[:30]} ({tts_len_ms}ms)")
+
+            # 句间固定间隔（最后一句不加）
+            if i < len(translated_indices) - 1:
+                result += gap_seg
+                time_mapping.append({
+                    "mixed_start": round(mixed_pos_ms / 1000.0, 3),
+                    "mixed_end": round((mixed_pos_ms + full_gap_ms) / 1000.0, 3),
+                    "orig_start": 0,
+                    "orig_end": 0,
+                    "type": "gap",
+                    "segment_index": -1,
+                })
+                mixed_pos_ms += full_gap_ms
+
+        # 导出
+        fmt = getattr(config, "OUTPUT_FORMAT", "mp3")
+        bitrate = getattr(config, "OUTPUT_BITRATE", "192k")
+        result.export(output_path, format=fmt, bitrate=bitrate)
+
+        original_duration = segments[-1].get("end", 0) if segments else 0
+        mixed_duration = len(result) / 1000.0
+
+        print(f"[Step4b] 组装完成:")
+        print(f"  原始时长: {original_duration:.1f}s")
+        print(f"  混合时长: {mixed_duration:.1f}s")
+        print(f"  中文句数: {len(translated_indices)}")
+        print(f"  输出: {output_path}")
+
+        return {
+            "output_path": output_path,
+            "original_duration": round(original_duration, 1),
+            "mixed_duration": round(mixed_duration, 1),
+            "total_segments": len(segments),
+            "translated_segments": len(translated_indices),
+            "chinese_segments": len(translated_indices),
+            "english_segments": 0,
+            "time_mapping": time_mapping,
+        }
+
+    # ============================================================
+    # 中英交替模式：逐句替换，英文原声 + 中文 TTS 交替
+    # ============================================================
+
     print(f"[Step4b] 开始中英交替音频组装（替换模式）")
     print(f"  原始音频: {audio_path}")
     print(f"  总句子数: {len(segments)}, 翻译句子数: {len(translated_indices)}")
@@ -64,10 +158,6 @@ def mix_sentence_audio(
 
     # 静音片段
     silence = AudioSegment.silent(duration=gap_ms, frame_rate=target_sr)
-
-    # 已翻译索引集合（快速查找）
-    translated_set = set(translated_indices)
-    all_translated = len(translated_set) >= len(segments)
 
     # 构建混合音频
     result = AudioSegment.empty()
