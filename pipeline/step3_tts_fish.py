@@ -98,7 +98,7 @@ def synthesize_sentences_with_fish_tts(
     print(f"[Step3-Fish] 准备为 {len(translated_indices)} 个句子合成中文 TTS")
 
     fish_url = f"{_get_fish_url()}/generate"
-    timeout = getattr(config, "FISH_SPEECH_TIMEOUT", 120)
+    timeout = getattr(config, "FISH_SPEECH_TIMEOUT", 300)
     total = len(translated_indices)
 
     tts_audio_map = {}
@@ -109,8 +109,8 @@ def synthesize_sentences_with_fish_tts(
 
         chinese_text = translations.get(seg_idx, "")
         if not chinese_text:
-            print(f"  [跳过] seg[{seg_idx}] 翻译文本为空")
-            continue
+            raise RuntimeError(
+                f"seg[{seg_idx}] 翻译文本为空，无法合成，任务中断")
 
         # 参考音频及文本
         ref_audio = ""
@@ -123,8 +123,8 @@ def synthesize_sentences_with_fish_tts(
                 ref_text = segments[source_seg].get("text", "").strip()
 
         if not ref_audio or not os.path.isfile(ref_audio):
-            print(f"  [跳过] seg[{seg_idx}] 无有效参考音频: {ref_audio}")
-            continue
+            raise RuntimeError(
+                f"seg[{seg_idx}] 缺少参考音频 ({ref_audio or '(空)'})，无法合成，任务中断")
 
         # 缓存 key: 文本 + 参考音频路径
         cache_key = hashlib.md5(
@@ -191,13 +191,16 @@ def synthesize_sentences_with_fish_tts(
                     break
 
                 # 503 或超时后可能出现的其他状态 → 等一会重试
+                # s2.cpp 是单 worker，503 意味着服务器正在处理上一个请求，
+                # 需要给足够时间完成当前任务后再重试
                 err_msg = resp.text[:100] if resp.text else f"HTTP {resp.status_code}"
-                wait = min(attempt * 10, 60)  # 10s, 20s, 30s... 最多 60s
+                wait = min(30 + attempt * 15, 90)  # 45s, 60s, 75s, 90s
                 print(f"  [重试] seg[{seg_idx}] {err_msg}，{wait}s 后重试 (第{attempt}次)")
                 time.sleep(wait)
 
             except requests.Timeout:
-                wait = min(attempt * 15, 90)  # 超时多等一会儿
+                # HTTP 超时说明合成耗时过长，s2.cpp 可能仍在处理中
+                wait = min(45 + attempt * 15, 120)  # 60s, 75s, 90s, 105s, 120s
                 print(f"  [超时] seg[{seg_idx}] 第{attempt}次超时({timeout}s)，"
                       f"{wait}s 后重试")
                 time.sleep(wait)

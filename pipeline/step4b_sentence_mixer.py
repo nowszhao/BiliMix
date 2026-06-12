@@ -179,9 +179,8 @@ def mix_sentence_audio(
                     "segment_index": seg_idx,
                 })
                 mixed_pos_ms += eng_len_ms
-
-            eng_text = seg.get("text", "").strip()[:40]
-            print(f"  [{seg_idx}] 🇬🇧 保留: \"{eng_text}\"")
+                eng_text = seg.get("text", "").strip()[:40]
+                print(f"  [{seg_idx}] 🇬🇧 保留: \"{eng_text}\"")
 
         # 句子之间添加间隔
         if seg_idx < len(segments) - 1:
