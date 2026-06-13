@@ -74,6 +74,10 @@ _web_dir = os.path.join(config.BASE_DIR, "web")
 app = Flask(__name__, static_folder=_web_dir, static_url_path="")
 app.secret_key = getattr(config, "SECRET_KEY", "bilimix-secret-key-change-me")
 
+# 全局任务队列锁：保证同一时间只有一个任务在运行，后续任务排队
+# Python threading.Lock 不支持优先级，但 FIFO 语义基本满足先提交先执行
+task_queue_lock = threading.Lock()
+
 
 # ============================================================
 # 登录认证
@@ -1421,6 +1425,16 @@ def submit_task():
         }
 
     def worker():
+        # 排队等待：同一时间只允许一个任务运行
+        update_task(task_id, status="queued",
+                    message="排队中，请稍候…")
+        print(f"[Queue] 任务 {task_id[:8]}... 排队等待")
+        with task_queue_lock:
+            update_task(task_id, status="processing",
+                        message="开始处理…")
+            _run_worker(task_id, audio_url)
+
+    def _run_worker(task_id, audio_url):
         # 处理 file:// 协议（用户上传的本地文件）
         is_file_url = audio_url.startswith("file://")
         if is_file_url:

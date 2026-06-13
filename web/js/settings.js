@@ -454,6 +454,7 @@ async function loadHistory() {
         tasks.forEach(t => {
             const statusMap = {
                 'completed': '已完成', 'processing': '处理中', 'downloading': '下载中',
+                'queued': '排队中',
                 'awaiting_confirmation': '待确认', 'awaiting_sentence_confirmation': '待确认翻译',
                 'error': '出错', 'cancelled': '已终止',
             };
