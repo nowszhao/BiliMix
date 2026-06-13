@@ -197,90 +197,21 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
     if ref_duration is None:
         ref_duration = getattr(config, "QWEN3_TTS_REF_DURATION", 8)
 
-    min_ref_duration = getattr(config, "SEGMENT_REF_MIN_DURATION", 1.5)
-    same_speaker_gap = getattr(config, "SAME_SPEAKER_GAP", 0.3)
-
     os.makedirs(output_dir, exist_ok=True)
-
-    # 检测是否有 WhisperX diarization 的 speaker 标签
-    has_diarization = any("speaker" in seg for seg in segments if seg)
 
     # 找出所有涉及的 segment_index（需要 TTS 的 segment）
     seg_indices = sorted(set(r["segment_index"] for r in replacements))
 
     print(f"[Step3-Qwen] 涉及 {len(seg_indices)} 个 segment 的替换，"
-          f"采用边界感知 + 说话人分组模式: "
-          f"min_ref={min_ref_duration}s, same_speaker_gap={same_speaker_gap}s")
+          f"每个 segment 使用自己的原声作为参考")
 
     # 只读取元数据获取时长，不加载完整音频到内存
     audio_duration_ms = _get_audio_duration_ms(audio_path)
     ref_duration_ms = int(ref_duration * 1000)
-    min_ref_duration_ms = int(min_ref_duration * 1000)
 
-    # ---- 准备 fallback 参考音频（按说话人轮次） ----
-    all_turns = _group_segments_into_turns(segments, same_speaker_gap)
-    replacement_seg_set = set(r["segment_index"] for r in replacements)
-
-    # 构建每个 turn 内最适合做参考的 segment
-    # 策略：优先选 ≥ REF_TARGET 的纯净段，不盲目取最长（避免拖慢合成）
-    ref_target = getattr(config, "REF_TARGET_DURATION", 3)
-    turn_best_ref = {}  # turn_idx -> (seg_idx, start_s, end_s, score)
-    for turn_idx, turn in enumerate(all_turns):
-        best = None
-        for si in turn:
-            seg = segments[si]
-            dur = seg.get("end", 0) - seg.get("start", 0)
-            if dur < min_ref_duration:
-                continue
-            is_clean = si not in replacement_seg_set
-            # 评分：达标长度 + 纯净优先，超过 target 后长度不加分
-            capped_dur = min(dur, ref_target)
-            score = capped_dur + (1.0 if is_clean else 0)
-            if best is None or score > best[3]:
-                best = (si, seg.get("start", 0), seg.get("end", 0), score)
-        if best:
-            turn_best_ref[turn_idx] = best
-
-    # 全局 fallback：跨所有 turn 的最长纯净段
-    global_fallback_path = None
-    all_candidates = sorted(turn_best_ref.values(), key=lambda x: x[3], reverse=True)
-    if all_candidates:
-        fb_idx, fb_start, fb_end, _ = all_candidates[0]
-        fb_start_ms = int(fb_start * 1000)
-        fb_end_ms = int(fb_end * 1000)
-        fb_mid_ms = (fb_start_ms + fb_end_ms) // 2
-        half = ref_duration_ms // 2
-        fb_clip_start = max(0, fb_mid_ms - half)
-        fb_clip_end = min(audio_duration_ms, fb_clip_start + ref_duration_ms)
-        if fb_clip_end - fb_clip_start < ref_duration_ms:
-            fb_clip_start = max(0, fb_clip_end - ref_duration_ms)
-        global_fallback_path = os.path.join(output_dir, "ref_fallback.wav")
-        _extract_audio_clip(audio_path, fb_clip_start, fb_clip_end, global_fallback_path)
-        print(f"  [fallback] 全局参考: segment[{fb_idx}] "
-              f"({fb_start:.1f}s-{fb_end:.1f}s) -> {global_fallback_path}")
-
-    # 预构建每个 segment 所属的 turn 索引
-    seg_to_turn = {}
-    for turn_idx, turn in enumerate(all_turns):
-        for si in turn:
-            seg_to_turn[si] = turn_idx
-
-    # 如果有 WhisperX diarization speaker 标签，构建 group_by_speaker 辅助字典
-    speaker_to_segs = {}  # {speaker_id: [(seg_idx, dur), ...]}
-    if has_diarization:
-        for si in seg_indices:
-            if si < len(segments):
-                spk = segments[si].get("speaker", "")
-                if spk:
-                    dur = segments[si].get("end", 0) - segments[si].get("start", 0)
-                    speaker_to_segs.setdefault(spk, []).append((si, dur))
-        if speaker_to_segs:
-            print(f"[Step3-Qwen] 检测到 WhisperX 说话人标签: "
-                  f"{len(speaker_to_segs)} 个说话人")
-
-    # ---- 为每个 segment 提取独立参考音频（边界感知，不跨段扩展） ----
+    # ---- 为每个 segment 用自己的原声做参考音频 ----
     ref_map = {}
-    ref_source_map = {}  # seg_idx -> source_seg_idx (which segment's audio is used)
+    ref_source_map = {}
     for seg_idx in seg_indices:
         seg = segments[seg_idx]
         seg_start = seg.get("start", 0)
@@ -289,72 +220,12 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
 
         seg_start_ms = int(seg_start * 1000)
         seg_end_ms = int(seg_end * 1000)
-        seg_dur_ms = seg_end_ms - seg_start_ms
 
-        # 极短 segment（< min_ref_duration 秒）：按优先级找 fallback 参考音频
-        if seg_dur < min_ref_duration:
-            fallback_used = False
-
-            # 优先级 0: WhisperX 同说话人段（优先 ≥target 的，不盲目取最长）
-            if has_diarization and speaker_to_segs:
-                spk = seg.get("speaker", "")
-                if spk and spk in speaker_to_segs:
-                    ref_target = getattr(config, "REF_TARGET_DURATION", 3)
-                    candidates = [(si, dur) for si, dur in speaker_to_segs[spk]
-                                  if si != seg_idx]
-                    if candidates:
-                        candidates.sort(key=lambda x: x[1])  # 升序
-                        best_si, best_dur = candidates[-1]    # 默认最长的
-                        for si, dur in candidates:
-                            if dur >= ref_target:
-                                best_si, best_dur = si, dur  # 最短的够用段
-                                break
-                    if best_si is not None:
-                        cseg = segments[best_si]
-                        cs, ce = cseg.get("start", 0), cseg.get("end", 0)
-                        cmid = (cs + ce) / 2
-                        cs_ms = max(0, int(cmid * 1000) - ref_duration_ms // 2)
-                        ce_ms = min(audio_duration_ms, cs_ms + ref_duration_ms)
-                        ref_path = os.path.join(output_dir,
-                                                f"ref_spk_{spk}_for_{seg_idx}.wav")
-                        _extract_audio_clip(audio_path, cs_ms, ce_ms, ref_path)
-                        ref_map[seg_idx] = ref_path
-                        ref_source_map[seg_idx] = best_si
-                        picked_dur = ce - cs if best_si else 0
-                        print(f"  seg[{seg_idx}] ({seg_dur:.1f}s) 极短 -> "
-                              f"同说话人 {spk} seg[{best_si}] "
-                              f"(源{dur:.1f}s→截{picked_dur:.1f}s)")
-                        fallback_used = True
-
-            # 优先级 1: 同轮次内的最长段（gap-based）
-            if not fallback_used:
-                turn_idx = seg_to_turn.get(seg_idx)
-                if turn_idx is not None and turn_idx in turn_best_ref:
-                    bs_idx, bs_start, bs_end, _ = turn_best_ref[turn_idx]
-                    bs_mid = (bs_start + bs_end) / 2
-                    bs_start_ms = max(0, int(bs_mid * 1000) - ref_duration_ms // 2)
-                    bs_end_ms = min(audio_duration_ms, bs_start_ms + ref_duration_ms)
-                    ref_path = os.path.join(output_dir,
-                                            f"ref_turn_{turn_idx}_for_{seg_idx}.wav")
-                    _extract_audio_clip(audio_path, bs_start_ms, bs_end_ms, ref_path)
-                    ref_map[seg_idx] = ref_path
-                    ref_source_map[seg_idx] = bs_idx
-                    print(f"  seg[{seg_idx}] ({seg_dur:.1f}s) 极短 -> "
-                          f"同轮次 turn[{turn_idx}] seg[{bs_idx}] ({bs_end-bs_start:.1f}s)")
-                    fallback_used = True
-
-            # 优先级 2: 全局 fallback（最后手段）
-            if not fallback_used:
-                if global_fallback_path:
-                    ref_map[seg_idx] = global_fallback_path
-                    ref_source_map[seg_idx] = seg_idx
-                    print(f"  seg[{seg_idx}] ({seg_dur:.1f}s) 极短 -> 使用全局 fallback")
-                else:
-                    print(f"  seg[{seg_idx}] ({seg_dur:.1f}s) 极短且无 fallback，跳过")
+        if seg_end_ms <= seg_start_ms:
+            print(f"  seg[{seg_idx}] 无效时间范围，跳过")
             continue
 
-        # 用自己的原声做参考：用完整的 segment 原声，不截断
-        # 参考音频越长，音色特征越丰富，克隆效果越接近原声
+        # 用自己的段边界做参考，不向外扩展
         # 极长段（>60s）从中间取 60s 防极端情况
         self_max = max(ref_duration_ms * 2, 60_000)
         clip_start = seg_start_ms
@@ -371,50 +242,13 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
         ref_map[seg_idx] = ref_path
         ref_source_map[seg_idx] = seg_idx
         clip_dur = (clip_end - clip_start) / 1000.0
-        expanded_mark = "" if seg_dur_ms >= min_ref_duration_ms else " [短句-不扩展]"
         print(f"  seg[{seg_idx}] ({seg_start:.1f}s-{seg_end:.1f}s, "
               f"{seg_dur:.1f}s) -> {ref_filename} "
               f"(clip: {clip_start/1000:.1f}s-{clip_end/1000:.1f}s, "
-              f"{clip_dur:.1f}s){expanded_mark}")
+              f"{clip_dur:.1f}s)")
 
-    # ---- 说话人分组：同轮次 segment 共享最长 segment 的参考音频 ----
-    all_turns = _group_segments_into_turns(segments, same_speaker_gap)
-    # 找出哪些 turn 包含需要 TTS 的 segment
-    turn_has_replacement = {}
-    for turn_idx, turn in enumerate(all_turns):
-        for si in turn:
-            if si in ref_map:
-                turn_has_replacement.setdefault(turn_idx, []).append(si)
-
-    share_count = 0
-    for turn_idx, turn_segs in turn_has_replacement.items():
-        if len(turn_segs) <= 1:
-            continue
-        # 找该 turn 中时长最长的 segment（优先选纯净的，其次选有参考音频的）
-        turn = all_turns[turn_idx]
-        # 在 turn 中找有参考音频的最长 segment
-        best_seg = None
-        best_dur = 0
-        for si in turn:
-            seg = segments[si]
-            dur = seg.get("end", 0) - seg.get("start", 0)
-            if dur > best_dur:
-                best_dur = dur
-                best_seg = si
-
-        if best_seg is not None and best_seg in ref_map:
-            best_ref = ref_map[best_seg]
-            for si in turn_segs:
-                if si != best_seg:
-                    ref_map[si] = best_ref
-                    ref_source_map[si] = best_seg
-                    share_count += 1
-
-    unique_refs = len(set(ref_map.values()))
-    turns_with_multi = sum(1 for t in turn_has_replacement.values() if len(t) > 1)
-    print(f"[Step3-Qwen] 共 {unique_refs} 个独立参考音频 "
-          f"(覆盖 {len(ref_map)} 个 segment, "
-          f"{turns_with_multi} 个说话人轮次内共享, {share_count} 个 segment 共享)")
+    print(f"[Step3-Qwen] 共 {len(ref_map)} 个独立参考音频 "
+          f"(每个 segment 用自己的原声)")
 
     return ref_map, ref_source_map
 
