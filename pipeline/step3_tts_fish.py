@@ -150,6 +150,7 @@ def synthesize_sentences_with_fish_tts(
         # 预先构建 form_data（内容不变，每次重试复用）
         form_data = {"text": (None, chinese_text)}
         form_data["prompt_text"] = (None, ref_text if ref_text else chinese_text)
+        form_data["language"] = (None, "zh")
         with open(ref_audio, "rb") as ref_f:
             ref_bytes = ref_f.read()
         form_data["prompt_audio"] = (os.path.basename(ref_audio),
