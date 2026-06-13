@@ -37,6 +37,19 @@ WHISPERX_COMPUTE_TYPE = "int8"
 WHISPERX_BATCH_SIZE = 10
 WHISPERX_LANGUAGE = "en"
 
+# --- WhisperX 说话人分离（Diarization）---
+# 启用后每个 segment 会带 speaker 标签，用于精确匹配克隆音色
+# 需要: conda 环境中安装 pyannote.audio
+#       设置 HF_TOKEN 环境变量或下方 WHISPERX_HF_TOKEN
+WHISPERX_DIARIZE = True
+# HuggingFace Token（需同意 pyannote/speaker-diarization-3.1 模型协议）
+# https://huggingface.co/pyannote/speaker-diarization-3.1
+WHISPERX_HF_TOKEN = ""
+# 最少说话人数（0=自动）
+WHISPERX_MIN_SPEAKERS = 0
+# 最多说话人数（0=自动）
+WHISPERX_MAX_SPEAKERS = 0
+
 # ========================
 # Ollama 配置
 # ========================
@@ -85,17 +98,18 @@ QWEN3_TTS_MODEL_PATH = "/root/Qwen3-TTS/models/Qwen/Qwen3-TTS-12Hz-1.7B-Base"
 QWEN3_TTS_PYTHON = "/root/miniconda3/envs/qwen3-tts/bin/python"
 # Qwen3-TTS 推理设备: "cuda:0" 或 "cpu"
 QWEN3_TTS_DEVICE = "cpu"
-# 参考音频时长（秒）：从原音频中截取多长的片段作为说话人参考
-# 越长的参考音频能提供更丰富的音色特征，x-vector 推荐 5-10s
-QWEN3_TTS_REF_DURATION = 10
+# 参考音频最大时长（秒）：从原音频中截取的最长片段
+QWEN3_TTS_REF_DURATION = 8
+# 参考音频理想时长（秒）：选段时优先找 ≥ 此时长的段，超过则截取中心部分
+# 2-4s 已足够 x-vector 提取音色，过长只会拖慢合成速度
+REF_TARGET_DURATION = 5
 # 自定义参考音频路径（可选）：手动指定一个高质量 WAV 文件作为声音克隆参考
 # 设置后所有 TTS 句段共用此参考音频，不再从原始音频中自动提取
 # 示例: QWEN3_TTS_CUSTOM_REF_AUDIO = "/path/to/speaker_ref.wav"
 QWEN3_TTS_CUSTOM_REF_AUDIO = ""
-# Segment 级别参考的最小时长（秒）：segment 短于此值时向前后扩展
-# 降低到 1.5s，减少需要扩展的 segment，避免跨说话人音色污染
-# x-vector 在 1-2s 音频上效果已足够，ICL 模式下则需更长时间（但需配合边界保护）
-SEGMENT_REF_MIN_DURATION = 1.5
+# Segment 级别参考的最小时长（秒）：segment 短于此值不走 fallback 直接用自己
+# 0.3s 足够提取基本音色（半句"Wow!"也含音高/音色信息）
+SEGMENT_REF_MIN_DURATION = 0.3
 # 同一说话人连续句段的最大间隔（秒）：相邻 segment 间隔小于此值视为同一说话人
 # 用于将连续短句分组，组内共享最长 segment 的参考音频，保证音色一致
 # 单人演讲/播客：建议 0.8~1.2s（演讲者自然停顿）; 多人对话：建议 0.2~0.4s

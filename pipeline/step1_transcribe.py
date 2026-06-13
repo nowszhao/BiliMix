@@ -51,6 +51,27 @@ def transcribe(audio_path: str, output_dir: str = None) -> dict:
         "--output_format", "json",
     ]
 
+    # 说话人分离（Diarization）
+    if getattr(config, "WHISPERX_DIARIZE", False):
+        hf_token = getattr(config, "WHISPERX_HF_TOKEN", "")
+        if hf_token:
+            cmd += ["--diarize", "--hf_token", hf_token]
+        else:
+            # 尝试从环境变量读取
+            import os as _os
+            env_token = _os.environ.get("HF_TOKEN", "")
+            if env_token:
+                cmd += ["--diarize", "--hf_token", env_token]
+            else:
+                print("[Step1] ⚠️ 未设置 WHISPERX_HF_TOKEN，跳过说话人分离")
+
+        min_s = getattr(config, "WHISPERX_MIN_SPEAKERS", 0)
+        max_s = getattr(config, "WHISPERX_MAX_SPEAKERS", 0)
+        if min_s > 0:
+            cmd += ["--min_speakers", str(min_s)]
+        if max_s > 0:
+            cmd += ["--max_speakers", str(max_s)]
+
     print(f"[Step1] 执行命令: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
 
