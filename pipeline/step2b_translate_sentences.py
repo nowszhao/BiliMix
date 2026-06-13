@@ -227,18 +227,20 @@ _CONVERSATIONAL_FEWSHOT = """---口语翻译示例---
 ---示例结束---"""
 
 
-def build_translation_prompt(sentences: list) -> str:
+def build_translation_prompt(sentences: list, prev_context: list = None) -> str:
     """
     构建批量翻译 prompt，针对播客口语对话场景优化。
 
     与旧版相比的改进：
     - 注入领域上下文（播客口语对话）
     - 告知模型多行构成连续对话，需感知上下文
+    - 支持传入上一批的翻译结果作为前文参考
     - 提醒常见口语表达不要字面翻译
     - Few-shot 示例展示对话场景下的正确翻译
 
     Args:
         sentences: 待翻译的句子列表 [(seq_id, text), ...]
+        prev_context: 上一批末尾的上下文 [(english原文, 中文翻译), ...]
 
     Returns:
         str: prompt 文本
@@ -246,11 +248,25 @@ def build_translation_prompt(sentences: list) -> str:
     numbered = "\n".join(f"[{seq_id}] {text}" for seq_id, text in sentences)
     is_dialogue = len(sentences) > 1
 
+    # 构建前文上下文（跨 batch 连贯性保障）
+    context_section = ""
+    if prev_context:
+        ctx_lines = "\n".join(
+            f"  {eng} → {chi}" for eng, chi in prev_context
+        )
+        context_section = (
+            f"\n## 前文参考\n"
+            f"以下是你上一批已经翻译好的内容（英文→中文）：\n"
+            f"{ctx_lines}\n"
+            f"当前待翻译的句子紧接着前文之后，请保持人称指代、话题的连贯性。\n\n"
+        )
+
     # 根据是否多句构建不同级别的 prompt
     if is_dialogue:
         return (
             f"你是专业的英译中播客对话翻译。以下 {len(sentences)} 行英文来自一段英语播客的连续口语对话，"
             f"行与行之间构成自然的交谈。\n\n"
+            f"{context_section}"
             f"## 核心要求\n"
             f"1. **上下文感知**：翻译每一行时，请结合前后文理解语义。"
             f"例如「Really?」→「A hundred percent.」中，后者是对前者的肯定回应，不应翻译为\"一百分\"。\n"
@@ -415,6 +431,8 @@ def translate_sentences(segments: list, indices: list = None,
           f"每批 {batch_size} 句，分为 {total_batches} 批")
 
     all_translations = {}
+    # 跨 batch 上下文：记录上一批末尾 2 句的 (英文原文, 中文翻译)
+    prev_context = []
 
     for batch_idx, batch in enumerate(batches):
         if cancel_check and cancel_check():
@@ -429,7 +447,7 @@ def translate_sentences(segments: list, indices: list = None,
               f"翻译 {len(batch)} 句: {preview}...")
 
         t0 = time.time()
-        prompt = build_translation_prompt(batch)
+        prompt = build_translation_prompt(batch, prev_context)
         response = call_ollama(prompt)
         batch_translations = parse_translation_response(response, expected_ids)
 
@@ -437,6 +455,8 @@ def translate_sentences(segments: list, indices: list = None,
         print(f"         耗时 {elapsed:.1f}s，翻译到 {len(batch_translations)} 句")
 
         # 合并结果：将 seq_id 映射回实际 segment 索引
+        # 同时收集本批的英文→中文对，供下一批做上下文
+        batch_english_chi = []  # 本批所有翻译的结果
         for seq_id, text in batch:
             actual_idx = seq_to_idx[seq_id]
             if seq_id in batch_translations and batch_translations[seq_id]:
@@ -444,17 +464,23 @@ def translate_sentences(segments: list, indices: list = None,
                 translation = batch_translations[seq_id]
                 translation = _apply_colloquial_fixup(text, translation)
                 all_translations[actual_idx] = translation
+                batch_english_chi.append((text, translation))
             else:
                 # 单句重试（使用对话感知 prompt）
                 print(f"  [重试] 句子 {actual_idx} 单句重试...")
-                retry_prompt = build_translation_prompt([(1, text)])
+                retry_prompt = build_translation_prompt([(1, text)], prev_context)
                 retry_resp = call_ollama(retry_prompt)
                 retry_text = _clean_pinyin(retry_resp.strip()) if retry_resp else ""
                 if retry_text:
                     retry_text = _apply_colloquial_fixup(text, retry_text)
                     all_translations[actual_idx] = retry_text
+                    batch_english_chi.append((text, retry_text))
                 else:
                     print(f"  [失败] 句子 {actual_idx} 翻译失败，跳过")
+
+        # 更新跨 batch 上下文：取本批最后 2 条翻译
+        if batch_english_chi:
+            prev_context = batch_english_chi[-2:]
 
     print(f"[Step2b] 翻译完成: {len(all_translations)}/{len(sentence_pairs)} 句")
     return all_translations
