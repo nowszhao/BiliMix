@@ -251,6 +251,21 @@ def generate_task_id(url: str) -> str:
     return hashlib.md5(url.encode("utf-8")).hexdigest()
 
 
+def _cleanup_intermediate_files(result_dir: str):
+    """删除任务完成后不再需要的中间文件（参考音频、TTS 缓存）"""
+    cleanup_dirs = [
+        "tts_fish_cache",
+        "tts_sent_cache",
+        "tts_cache",
+        "ref_audio",
+    ]
+    for subdir in cleanup_dirs:
+        path = os.path.join(result_dir, subdir)
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+            print(f"[Cleanup] 已删除: {subdir}/")
+
+
 def _try_resolve_local_url(url: str) -> str:
     """
     检测是否为本地服务器自己的音频 URL，如果是则解析到本地文件路径。
@@ -594,6 +609,8 @@ def continue_after_confirmation(task_id: str):
             "result": result_data,
             "time_mapping": time_mapping,
         })
+
+        _cleanup_intermediate_files(result_dir)
 
         # ---- 保存生词到全局生词库 ----
         try:
@@ -1048,6 +1065,8 @@ def continue_after_sentence_confirmation(task_id: str):
             "result": result_data,
             "time_mapping": mix_result["time_mapping"],
         })
+
+        _cleanup_intermediate_files(result_dir)
 
         # ---- 保存生词到全局生词库（智能翻译模式也有生词识别） ----
         try:
@@ -1728,6 +1747,8 @@ def retry_sentence_synthesis(task_id):
         "result": result_data,
         "time_mapping": mix_result["time_mapping"],
     })
+
+    _cleanup_intermediate_files(result_dir)
 
     return jsonify({"message": "重试完成", "result": result_data})
 
