@@ -932,6 +932,7 @@ def continue_after_sentence_confirmation(task_id: str):
                     message="Step 3/4: 合成中文语音...")
 
         tts_audio_map = {}
+        fish_ref_map = {}
 
         if tts_engine == "fish-speech":
             # Fish Speech S2 Pro: 通过 s2.cpp HTTP 服务合成
@@ -1006,8 +1007,86 @@ def continue_after_sentence_confirmation(task_id: str):
         update_task(task_id, progress=80,
                     message=f"语音合成完成: {len(tts_audio_map)} 条中文语音")
 
+        # ---- TTS 审查：存储审查数据，暂停等待用户试听确认 ----
+        # 构建 segment 审查列表
+        tts_review_segments = []
+        for seg_idx in translated_indices:
+            seg = segments[seg_idx] if seg_idx < len(segments) else {}
+            tts_path = tts_audio_map.get(seg_idx, "")
+            ref_path = ""
+            if voice_clone and fish_ref_map:
+                ref_path = fish_ref_map.get(seg_idx, "")
+
+            tts_review_segments.append({
+                "seg_idx": seg_idx,
+                "english_text": seg.get("text", "").strip() if seg else "",
+                "chinese_text": translations.get(seg_idx, ""),
+                "tts_status": "completed" if tts_path and os.path.exists(tts_path) else "missing",
+                "tts_path": tts_path,
+                "ref_audio_path": ref_path,
+                "start_s": seg.get("start", 0) if seg else 0,
+                "end_s": seg.get("end", 0) if seg else 0,
+            })
+
+        update_task(task_id, step="review", progress=80,
+                    status="awaiting_tts_review",
+                    message=f"🎧 TTS 合成完成 ({len(tts_audio_map)} 句)，请试听确认",
+                    tts_review_segments=tts_review_segments,
+                    _tts_audio_map=tts_audio_map,
+                    _fish_ref_map=fish_ref_map if voice_clone else {})
+
+        # 直接返回，不继续 Step 4；用户确认后由 confirm_tts 端点触发
+        save_task_result_to_disk(result_dir, {
+            "task_id": task_id,
+            "status": "awaiting_tts_review",
+            "process_mode": task.get("process_mode", "sentence_translate"),
+            "transcription_text": full_text,
+            "segments": segments,
+            "translations": translations,
+            "translated_indices": translated_indices,
+            "tts_review_segments": tts_review_segments,
+        })
+        return
+
+    except InterruptedError:
+        update_task(task_id, status="cancelled", message="任务已被终止")
+    except Exception as e:
+        traceback.print_exc()
+        task = get_task(task_id) or {}
+        update_task(task_id, status="error", message=f"处理出错: {str(e)}",
+                    _failed_step=task.get("step", "synthesize"))
+    finally:
+        cancel_flags.pop(task_id, None)
+        task_subprocesses.pop(task_id, None)
+
+
+def finish_sentence_task(task_id: str):
+    """TTS 审查通过后，执行 Step 4 音频混音 + 完成。"""
+    try:
+        task = get_task(task_id)
+        if not task:
+            return
+
+        audio_path = task.get("_audio_path", "")
+        basename = task.get("_basename", "")
+        translations = task.get("translations", {})
+        translated_indices = task.get("translated_indices", [])
+        segments = task.get("segments", [])
+        full_text = task.get("transcription_text", "")
+        result_dir = os.path.join(config.RESULT_DIR, basename)
+        tts_audio_map = task.get("_tts_audio_map", {})
+
+        if not tts_audio_map:
+            raise RuntimeError("TTS 音频数据缺失，无法继续混音")
+
+        if task_id not in cancel_flags:
+            cancel_flags[task_id] = threading.Event()
+
         # ---- Step 4: 中英交替音频组装 ----
-        update_task(task_id, step="merge", progress=82,
+        if is_cancelled(task_id):
+            raise InterruptedError("任务已被用户终止")
+
+        update_task(task_id, status="processing", step="merge", progress=85,
                     message="Step 4/4: 组装中英交替音频...")
 
         output_audio_path = os.path.join(
@@ -1068,7 +1147,7 @@ def continue_after_sentence_confirmation(task_id: str):
 
         _cleanup_intermediate_files(result_dir)
 
-        # ---- 保存生词到全局生词库（智能翻译模式也有生词识别） ----
+        # ---- 保存生词到全局生词库 ----
         try:
             dw = task.get("difficult_words", [])
             if dw:
@@ -1084,10 +1163,123 @@ def continue_after_sentence_confirmation(task_id: str):
         traceback.print_exc()
         task = get_task(task_id) or {}
         update_task(task_id, status="error", message=f"处理出错: {str(e)}",
-                    _failed_step=task.get("step", "synthesize"))
+                    _failed_step=task.get("step", "merge"))
     finally:
         cancel_flags.pop(task_id, None)
         task_subprocesses.pop(task_id, None)
+
+
+# ============================================================
+# TTS 审查 API
+# ============================================================
+
+@app.route("/api/task/<task_id>/tts-review", methods=["GET"])
+def get_tts_review(task_id):
+    """获取 TTS 审查数据：segment 列表及合成状态"""
+    task = get_task(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
+
+    segments = task.get("tts_review_segments", [])
+    total = len(segments)
+    completed = sum(1 for s in segments if s.get("tts_status") == "completed")
+
+    # 为每个 segment 补充音频信息
+    review_items = []
+    for seg in segments:
+        item = dict(seg)
+        tts_path = item.get("tts_path", "")
+        if tts_path and os.path.exists(tts_path):
+            try:
+                item["tts_size_kb"] = round(os.path.getsize(tts_path) / 1024, 1)
+            except Exception:
+                item["tts_size_kb"] = 0
+            try:
+                from pydub.utils import mediainfo
+                info = mediainfo(tts_path)
+                item["tts_duration_s"] = round(float(info.get("duration", 0)), 1)
+            except Exception:
+                item["tts_duration_s"] = 0
+            item["tts_url"] = f"/api/task/{task_id}/tts-audio/{item['seg_idx']}"
+        else:
+            item["tts_size_kb"] = 0
+            item["tts_duration_s"] = 0
+            item["tts_url"] = ""
+
+        ref_path = item.get("ref_audio_path", "")
+        if ref_path and os.path.exists(ref_path):
+            item["ref_audio_url"] = f"/api/task/{task_id}/ref-audio/{item['seg_idx']}"
+        else:
+            item["ref_audio_url"] = ""
+
+        review_items.append(item)
+
+    return jsonify({
+        "total": total,
+        "completed": completed,
+        "segments": review_items,
+        "status": task.get("status", ""),
+        "message": task.get("message", ""),
+    })
+
+
+@app.route("/api/task/<task_id>/tts-audio/<int:seg_idx>", methods=["GET"])
+def serve_tts_audio(task_id, seg_idx):
+    """服务单个 segment 的 TTS 合成音频文件"""
+    task = get_task(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
+
+    tts_audio_map = task.get("_tts_audio_map", {})
+    tts_path = tts_audio_map.get(seg_idx, "")
+    if not tts_path or not os.path.exists(tts_path):
+        return jsonify({"error": f"seg[{seg_idx}] TTS 音频不存在"}), 404
+
+    return send_file(tts_path, mimetype="audio/wav",
+                     conditional=True, max_age=3600)
+
+
+@app.route("/api/task/<task_id>/ref-audio/<int:seg_idx>", methods=["GET"])
+def serve_ref_audio(task_id, seg_idx):
+    """服务单个 segment 的参考音频（英文原声片段）"""
+    task = get_task(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
+
+    review_segments = task.get("tts_review_segments", [])
+    ref_path = ""
+    for seg in review_segments:
+        if seg.get("seg_idx") == seg_idx:
+            ref_path = seg.get("ref_audio_path", "")
+            break
+
+    if not ref_path:
+        fish_ref_map = task.get("_fish_ref_map", {})
+        ref_path = fish_ref_map.get(seg_idx, "")
+
+    if not ref_path or not os.path.exists(ref_path):
+        return jsonify({"error": f"seg[{seg_idx}] 参考音频不存在"}), 404
+
+    return send_file(ref_path, mimetype="audio/wav",
+                     conditional=True, max_age=3600)
+
+
+@app.route("/api/task/<task_id>/confirm_tts", methods=["POST"])
+def confirm_tts(task_id):
+    """用户确认 TTS 审查通过，继续执行 Step 4 混音"""
+    task = get_task(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
+    if task.get("status") != "awaiting_tts_review":
+        return jsonify({"error": f"任务状态为 {task.get('status')}，不在 TTS 审查状态"}), 400
+
+    update_task(task_id, status="processing", step="merge", progress=82,
+                message="审查通过，开始组装中英交替音频...")
+
+    thread = threading.Thread(target=finish_sentence_task,
+                              args=(task_id,), daemon=True)
+    thread.start()
+    return jsonify({"message": "审查通过，继续组装音频"})
 
 
 # ============================================================

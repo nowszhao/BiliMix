@@ -577,6 +577,74 @@
             </div>
         </section>
 
+        <!-- ====== TTS 试听审查区 ====== -->
+        <section id="tts-review-section" class="confirm-section hidden">
+            <div class="confirm-card">
+                <!-- 步骤条 -->
+                <div class="pipeline-stepper">
+                    <div class="stepper-step done">
+                        <div class="stepper-dot"><span>✓</span></div>
+                        <span class="stepper-label">转录</span>
+                    </div>
+                    <div class="stepper-line done"></div>
+                    <div class="stepper-step done">
+                        <div class="stepper-dot"><span>✓</span></div>
+                        <span class="stepper-label">翻译</span>
+                    </div>
+                    <div class="stepper-line done"></div>
+                    <div class="stepper-step done">
+                        <div class="stepper-dot"><span>✓</span></div>
+                        <span class="stepper-label">合成</span>
+                    </div>
+                    <div class="stepper-line active"></div>
+                    <div class="stepper-step active">
+                        <div class="stepper-dot"><span>4</span></div>
+                        <span class="stepper-label">试听审查</span>
+                    </div>
+                    <div class="stepper-line"></div>
+                    <div class="stepper-step">
+                        <div class="stepper-dot"><span>5</span></div>
+                        <span class="stepper-label">完成</span>
+                    </div>
+                </div>
+
+                <p class="confirm-subtitle">🎧 TTS 合成完成，请试听中文语音效果。可逐句播放对比原声，确认无误后继续混音。</p>
+
+                <!-- 全局播放控制 -->
+                <div class="tts-review-controls">
+                    <button class="btn-primary" id="tts-review-play-all" onclick="ttsReviewPlayAll()">
+                        <span class="btn-icon">▶</span>
+                        <span class="btn-text">顺序播放全部</span>
+                    </button>
+                    <button class="btn-secondary" id="tts-review-stop" onclick="ttsReviewStop()" style="display:none;">
+                        <span class="btn-icon">⏹</span>
+                        <span class="btn-text">停止</span>
+                    </button>
+                    <span class="tts-review-info" id="tts-review-info"></span>
+                </div>
+
+                <!-- Segment 列表 -->
+                <div class="sentence-confirm-body">
+                    <div class="sentence-confirm-list" id="tts-review-list">
+                        <!-- 动态填充 -->
+                    </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="confirm-actions-bar">
+                    <button class="btn-secondary" onclick="cancelFromTTsReview()">
+                        ← 返回首页
+                    </button>
+                    <div class="confirm-actions-right">
+                        <button class="btn-primary" id="tts-review-confirm-btn" onclick="confirmTtsReview()">
+                            <span class="btn-icon">✅</span>
+                            <span class="btn-text">确认无误，继续混音</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- ====== 结果区 ====== -->
         <section id="result-section" class="result-section hidden">
 
@@ -685,6 +753,8 @@
         </div>
         <!-- 历史任务内嵌音频播放器 -->
         <audio id="history-audio" preload="none"></audio>
+        <!-- TTS 审查页内嵌音频播放器 -->
+        <audio id="tts-review-audio" preload="none"></audio>
     </aside>
 
     <!-- ====== 生词库抽屉 ====== -->
@@ -863,6 +933,7 @@
     <script src="js/task.js"></script>
     <script src="js/result.js"></script>
     <script src="js/confirm.js"></script>
+    <script src="js/review.js"></script>
     <script src="js/podcast.js"></script>
     <script src="js/settings.js"></script>
 </body>

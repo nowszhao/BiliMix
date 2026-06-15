@@ -2258,6 +2258,131 @@ body {
     cursor: not-allowed;
 }
 
+/* ---- TTS Review ---- */
+.tts-review-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+    background: var(--bg-hover);
+    border-radius: var(--radius-sm);
+    margin-bottom: 12px;
+}
+
+.tts-review-info {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-left: auto;
+}
+
+.tts-review-item {
+    padding: 14px 16px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 6px;
+    border: 1px solid var(--border-light);
+    transition: var(--transition);
+}
+
+.tts-review-item:hover {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-sm);
+}
+
+.tts-review-item.playing {
+    border-color: var(--accent);
+    background: var(--accent-light);
+    box-shadow: 0 0 0 2px var(--accent-light);
+}
+
+.tts-review-item.playing-ref {
+    border-color: #FF9500;
+    background: rgba(255, 149, 0, 0.05);
+    box-shadow: 0 0 0 2px rgba(255, 149, 0, 0.15);
+}
+
+.tts-review-item-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.tts-review-item-num {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent);
+    background: var(--accent-light);
+    padding: 2px 8px;
+    border-radius: 6px;
+}
+
+.tts-review-item-status {
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.tts-review-item-status.status-ok {
+    color: #34C759;
+}
+
+.tts-review-item-status.status-err {
+    color: #FF3B30;
+}
+
+.tts-review-item-english {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    line-height: 1.5;
+}
+
+.tts-review-item-chinese {
+    font-size: 14px;
+    color: var(--text-primary);
+    font-weight: 500;
+    margin-bottom: 8px;
+}
+
+.tts-review-item-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.tts-play-btn {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.tts-play-btn:hover {
+    background: var(--accent-light);
+    border-color: var(--accent);
+}
+
+.tts-play-btn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+.tts-btn-ref.active {
+    background: #FF9500;
+    color: #fff;
+    border-color: #FF9500;
+}
+
+.tts-no-audio {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    font-style: italic;
+}
+
 /* ---- Sentence Mode Result ---- */
 .segment-content {
     display: flex;

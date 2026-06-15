@@ -303,6 +303,9 @@ async function pollStatus() {
         } else if (data.status === 'awaiting_sentence_confirmation') {
             stopPolling();
             await loadSentenceConfirmationUI();
+        } else if (data.status === 'awaiting_tts_review') {
+            stopPolling();
+            await loadTtsReviewUI();
         } else if (data.status === 'error') {
             stopPolling();
             showError(data.message);
