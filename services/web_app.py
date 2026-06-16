@@ -2498,6 +2498,12 @@ def api_index():
 if __name__ == "__main__":
     os.makedirs(_web_dir, exist_ok=True)
     os.makedirs(config.DOWNLOAD_DIR, exist_ok=True)
+
+    # 抑制 Flask 轮询类 API 的请求日志（如 /api/task/<id> 每 1.5s 轮询一次）
+    import logging
+    log = logging.getLogger("werkzeug")
+    log.setLevel(logging.WARNING)
+
     # 初始化 SQLite 数据库（建表 + 迁移旧 JSON 数据）
     setup_database()
     _index = load_tasks_index()

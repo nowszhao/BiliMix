@@ -433,6 +433,7 @@ def translate_sentences(segments: list, indices: list = None,
     all_translations = {}
     # 跨 batch 上下文：记录上一批末尾 2 句的 (英文原文, 中文翻译)
     prev_context = []
+    prompt_logged = 0  # 只打印前 10 个 prompt 方便调试
 
     for batch_idx, batch in enumerate(batches):
         if cancel_check and cancel_check():
@@ -448,6 +449,17 @@ def translate_sentences(segments: list, indices: list = None,
 
         t0 = time.time()
         prompt = build_translation_prompt(batch, prev_context)
+        if prompt_logged < 10:
+            prompt_logged += 1
+            print(f"  [Prompt #{prompt_logged}] 长度 {len(prompt)} 字符:")
+            # 只打印 prompt 的句子部分（跳过系统指令），最多 500 字符
+            lines = prompt.split("\n")
+            sentence_start = next((i for i, ln in enumerate(lines) if ln.startswith("[")), 0)
+            snippet = "\n".join(lines[sentence_start:])
+            if len(snippet) > 500:
+                snippet = snippet[:500] + "..."
+            print(f"  {snippet}")
+            print(f"  ---")
         response = call_ollama(prompt)
         batch_translations = parse_translation_response(response, expected_ids)
 
