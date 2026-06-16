@@ -190,60 +190,43 @@ def _apply_colloquial_fixup(english: str, chinese: str) -> str:
 
 
 # ============================================================
-# 口语翻译 Few-shot 示例
+# 口语翻译 Few-shot 示例（精简为 2 组）
 # ============================================================
-_CONVERSATIONAL_FEWSHOT = """---口语翻译示例---
-对话:
-[1] Really?
-[2] A hundred percent.
+_DIALOGUE_FEWSHOT = (
+    "示例：\n"
+    "[1] Really?\n"
+    "[2] A hundred percent.\n"
+    "→ [1] 真的吗？\n"
+    "→ [2] 百分之百确定。\n\n"
+    "[3] Are you coming tonight?\n"
+    "[4] You bet.\n"
+    "→ [3] 你今晚来吗？\n"
+    "→ [4] 当然。\n"
+)
 
-翻译: 这段对话中 [2] 是对 [1] 的肯定回应，"A hundred percent" 不是数学百分比，而是口语中表示"完全确定"。
-[1] 真的吗？
-[2] 百分之百确定。
-
-对话:
-[1] Are you coming to the party tonight?
-[2] You bet.
-
-翻译: "You bet" 是口语中表示"当然"的意思，不要翻译为"你打赌"。
-[1] 你今晚来参加派对吗？
-[2] 当然。
-
-对话:
-[1] He said he finished the whole project in one night.
-[2] No way.
-
-翻译: "No way" 在此表示惊讶/不相信，不是"没路"。
-[1] 他说他一晚上就完成了整个项目。
-[2] 不会吧。
-
-对话:
-[1] The traffic was insane today.
-[2] Tell me about it.
-
-翻译: "Tell me about it" 是口语中表示强烈共鸣"可不是嘛/还用你说"，不是字面的"跟我说说"。
-[1] 今天堵车堵疯了。
-[2] 可不是嘛。
----示例结束---"""
+_SINGLE_FEWSHOT = (
+    "示例：\n"
+    "英文：A hundred percent.\n"
+    "中文：百分之百确定。\n"
+    "英文：I had no idea what I wanted to do with my life.\n"
+    "中文：我完全不知道这辈子想干什么。\n"
+)
 
 
 def build_translation_prompt(sentences: list, prev_context: list = None) -> str:
     """
-    构建批量翻译 prompt，针对播客口语对话场景优化。
+    构建批量翻译 prompt，针对播客口语 + 叙事场景优化。
 
-    与旧版相比的改进：
-    - 注入领域上下文（播客口语对话）
-    - 告知模型多行构成连续对话，需感知上下文
-    - 支持传入上一批的翻译结果作为前文参考
-    - 提醒常见口语表达不要字面翻译
-    - Few-shot 示例展示对话场景下的正确翻译
+    改进点（v2）：
+    - 大幅精简：去掉习语列表，模型自己知道
+    - 多句用对话 few-shot，单句用独立 few-shot
+    - 放开推理：让模型先理解语境再翻译，而非禁止思考
+    - 区分应答短句 vs 叙述长句的处理策略
+    - 跨 batch 上下文保持连贯
 
     Args:
         sentences: 待翻译的句子列表 [(seq_id, text), ...]
         prev_context: 上一批末尾的上下文 [(english原文, 中文翻译), ...]
-
-    Returns:
-        str: prompt 文本
     """
     numbered = "\n".join(f"[{seq_id}] {text}" for seq_id, text in sentences)
     is_dialogue = len(sentences) > 1
@@ -255,56 +238,35 @@ def build_translation_prompt(sentences: list, prev_context: list = None) -> str:
             f"  {eng} → {chi}" for eng, chi in prev_context
         )
         context_section = (
-            f"\n## 前文参考\n"
-            f"以下是你上一批已经翻译好的内容（英文→中文）：\n"
-            f"{ctx_lines}\n"
-            f"当前待翻译的句子紧接着前文之后，请保持人称指代、话题的连贯性。\n\n"
+            f"## 前文参考\n"
+            f"上一批已翻译（英文→中文）：\n{ctx_lines}\n"
+            f"当前句子紧接着前文，请保持连贯。\n\n"
         )
 
-    # 根据是否多句构建不同级别的 prompt
     if is_dialogue:
+        # ---- 多句（对话/段落）模式 ----
         return (
-            f"你是专业的英译中播客对话翻译。以下 {len(sentences)} 行英文来自一段英语播客的连续口语对话，"
-            f"行与行之间构成自然的交谈。\n\n"
+            f"你是专业英译中翻译。以下 {len(sentences)} 行英文来自播客口语，行与行之间构成连续的对话或叙述。\n\n"
             f"{context_section}"
-            f"## 核心要求\n"
-            f"1. **上下文感知**：翻译每一行时，请结合前后文理解语义。"
-            f"例如「Really?」→「A hundred percent.」中，后者是对前者的肯定回应，不应翻译为\"一百分\"。\n"
-            f"2. **口语化输出**：使用自然的中文口语/对话语气，不要书面语。"
-            f"中文里应出现\"吧、呢、嘛、啊、哦\"等口语语气词。\n"
-            f"3. **习语不要直译**：遇到口语习语/俚语，必须翻译其实际含义，而非字面意思。\n"
-            f"4. **短句不要补全**：如果英文是简短的口语应答（如\"A hundred percent.\"），"
-            f"中文也保持简短自然，不要自行扩展为完整描述句。\n\n"
-            f"## 常见易错口语表达（翻译时注意）\n"
-            f"- a/one hundred percent → 百分之百确定 / 没错（不是：一百分）\n"
-            f"- you bet → 当然（不是：你打赌）\n"
-            f"- no way → 不会吧（不是：没路）\n"
-            f"- tell me about it → 可不是嘛（不是：跟我说说）\n"
-            f"- fair enough → 说得过去 / 有道理\n"
-            f"- for real / no kidding → 真的假的\n"
-            f"- I know, right? → 谁说不是呢\n"
-            f"- that being said → 话虽如此\n"
-            f"- don't get me wrong → 别误会\n"
-            f"- at the end of the day → 说到底\n\n"
-            f"{_CONVERSATIONAL_FEWSHOT}\n"
-            f"请按 [N] 格式输出每行对应的中文翻译，不要额外解释：\n\n"
+            f"## 要求\n"
+            f"先通读所有句子理解语境和前后文关系，再逐行翻译：\n"
+            f"1. 口语化：用自然中文口语，适当加入\"吧、呢、嘛、啊\"等语气词。\n"
+            f"2. 习语意译：口语习语翻译实际含义，不要字面直译。\n"
+            f"3. 应答短句保持简短（如\"A hundred percent.\" → \"百分之百确定。\"），"
+            f"但叙述长句要完整翻译，不要截断。\n\n"
+            f"{_DIALOGUE_FEWSHOT}"
+            f"按 [N] 中文翻译 格式输出：\n\n"
             f"{numbered}"
         )
     else:
-        # 单句模式
+        # ---- 单句模式 ----
         return (
-            f"你是专业的英译中播客对话翻译。以下英文来自播客口语对话。\n\n"
-            f"## 核心要求\n"
-            f"1. **口语化输出**：使用自然的中文口语语气，适当加入\"吧、呢、嘛、啊\"等语气词。\n"
-            f"2. **习语不要直译**：口语习语翻译实际含义，而非字面意思。\n"
-            f"   例如：a hundred percent → 百分之百确定（不是：一百分）\n"
-            f"        you bet → 当然（不是：你打赌）\n"
-            f"        no way → 不会吧（不是：没路）\n"
-            f"3. **短句保持简短**：如果英文是简短的口语应答，中文也保持简短自然。\n"
-            f"4. 只输出中文翻译，不要任何解释或额外内容。\n\n"
-            f"{_CONVERSATIONAL_FEWSHOT}\n"
-            f"请翻译：\n\n"
-            f"{numbered}"
+            f"你是专业英译中翻译，将以下英文播客口语翻译为自然中文口语。\n\n"
+            f"要求：口语化（可加语气词）、习语意译、应答短句简短、叙述长句完整。\n"
+            f"只输出中文翻译，不要解释。\n\n"
+            f"{_SINGLE_FEWSHOT}"
+            f"英文：{sentences[0][1]}\n"
+            f"中文："
         )
 
 
