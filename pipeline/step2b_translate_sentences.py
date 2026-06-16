@@ -382,9 +382,13 @@ def parse_translation_response(response_text: str, expected_ids: list) -> dict:
 
 def translate_sentences(segments: list, indices: list = None,
                         batch_size: int = None,
-                        cancel_check=None, progress_cb=None) -> dict:
+                        cancel_check=None, progress_cb=None,
+                        resume_batch: int = 0,
+                        existing_translations: dict = None,
+                        checkpoint_cb=None) -> dict:
     """
     批量翻译指定的句子，适配 TranslateGemma。
+    支持断点续跑：resume_batch 跳过已完成批次，existing_translations 预填充。
 
     Args:
         segments: WhisperX segments 列表
@@ -427,15 +431,23 @@ def translate_sentences(segments: list, indices: list = None,
         batches.append(numbered_pairs[i:i + batch_size])
 
     total_batches = len(batches)
+    start_batch = resume_batch if resume_batch < total_batches else total_batches
+
+    all_translations = existing_translations or {}
+    if start_batch > 0:
+        print(f"[Step2b] 从批次 {start_batch + 1}/{total_batches} 续跑 "
+              f"(已跳过前 {start_batch} 批，已有 {len(all_translations)} 个翻译)")
+
     print(f"[Step2b] 开始逐批翻译，共 {len(numbered_pairs)} 个句子，"
           f"每批 {batch_size} 句，分为 {total_batches} 批")
 
-    all_translations = {}
     # 跨 batch 上下文：记录上一批末尾 2 句的 (英文原文, 中文翻译)
     prev_context = []
     prompt_logged = 0  # 只打印前 10 个 prompt 方便调试
 
     for batch_idx, batch in enumerate(batches):
+        if batch_idx < start_batch:
+            continue  # 跳过已完成的批次
         if cancel_check and cancel_check():
             raise InterruptedError("任务已被用户终止")
 
@@ -493,6 +505,10 @@ def translate_sentences(segments: list, indices: list = None,
         # 更新跨 batch 上下文：取本批最后 2 条翻译
         if batch_english_chi:
             prev_context = batch_english_chi[-2:]
+
+        # 每批完成后保存断点
+        if checkpoint_cb:
+            checkpoint_cb(batch_idx + 1, dict(all_translations))
 
     print(f"[Step2b] 翻译完成: {len(all_translations)}/{len(sentence_pairs)} 句")
     return all_translations

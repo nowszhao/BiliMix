@@ -378,23 +378,16 @@ def parse_llm_response(response_text: str) -> list:
 
 
 def identify_difficult_words_by_segments(segments: list, difficulty: str = None,
-                                         cancel_check=None, progress_cb=None) -> list:
+                                         cancel_check=None, progress_cb=None,
+                                         resume_batch: int = 0,
+                                         existing_results: dict = None,
+                                         checkpoint_cb=None) -> list:
     """
     批量分析 WhisperX segments，识别生词/短语。
 
-    将多个句子合并为一批发给 LLM，大幅减少 API 调用次数。
-    例如 100 个句子按 batch_size=8 分组，只需 ~13 次 LLM 调用（而非 100 次）。
-
-    Args:
-        segments: WhisperX 输出的 segments 列表，每项包含 text, words, start, end
-        difficulty: 难度等级
-        cancel_check: 可选的终止检查回调函数，返回 True 表示应终止
-        progress_cb: 可选的进度回调函数 progress_cb(batch_index, total_batches)
-
-    Returns:
-        list[dict]: 去重后的难词列表，每项包含 english, chinese, type
+    支持断点续跑：resume_batch 跳过已完成批次，existing_results 预填充。
     """
-    all_words = {}  # 用 english 小写作为 key 去重
+    all_words = existing_results or {}  # 用 english 小写作为 key 去重
 
     # 过滤有效句子
     valid_sentences = []
@@ -414,10 +407,18 @@ def identify_difficult_words_by_segments(segments: list, difficulty: str = None,
         batches.append(valid_sentences[i:i + BATCH_SIZE])
 
     total_batches = len(batches)
+    start_batch = resume_batch if resume_batch < total_batches else total_batches
+    if start_batch > 0:
+        print(f"[Step2] 从批次 {start_batch + 1}/{total_batches} 续跑 "
+              f"(已跳过前 {start_batch} 批，已有 {len(all_words)} 个生词)")
+
     print(f"[Step2] 开始批量分析，共 {total_sentences} 个句子，"
           f"分为 {total_batches} 批（每批最多 {BATCH_SIZE} 句）")
 
     for batch_idx, batch_sentences in enumerate(batches):
+        if batch_idx < start_batch:
+            continue  # 跳过已完成的批次
+
         # --- 终止检查点 ---
         if cancel_check and cancel_check():
             raise InterruptedError("任务已被用户终止")
@@ -455,6 +456,10 @@ def identify_difficult_words_by_segments(segments: list, difficulty: str = None,
                 }
                 tag = type_tags.get(w["type"], "📝单词")
                 print(f"  ✓ {tag} {w['english']} -> {w['chinese']}")
+
+        # 每批完成后保存断点
+        if checkpoint_cb:
+            checkpoint_cb(batch_idx + 1, dict(all_words))
 
     result = list(all_words.values())
     print(f"\n[Step2] LLM 共识别 {len(result)} 个不重复的难词/短语"

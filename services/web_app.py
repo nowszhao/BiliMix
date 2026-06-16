@@ -363,10 +363,23 @@ def process_audio(task_id: str, audio_path: str):
         def _cancel_check():
             return is_cancelled(task_id)
 
+        def _identify_checkpoint(batch_idx, words):
+            update_task(task_id, _checkpoint_identify_batch=batch_idx,
+                        _checkpoint_identify_words=words)
+
+        _task = get_task(task_id)
+        resume_identify_batch = int(_task.get("_checkpoint_identify_batch", 0))
+        resume_identify_words = _task.get("_checkpoint_identify_words", None)
+
         difficult_words = _run_with_retry(
             identify_difficult_words_by_segments,
             segments, cancel_check=_cancel_check, progress_cb=_progress_cb,
+            resume_batch=resume_identify_batch,
+            existing_results=resume_identify_words,
+            checkpoint_cb=_identify_checkpoint,
             name="识别生词")
+
+        update_task(task_id, _checkpoint_identify_batch=0, _checkpoint_identify_words=None)
 
         llm_result_path = os.path.join(result_dir, "difficult_words.json")
         with open(llm_result_path, "w", encoding="utf-8") as f:
@@ -678,10 +691,25 @@ def process_audio_smart_mode(task_id: str, audio_path: str):
         def _cancel_check():
             return is_cancelled(task_id)
 
+        def _identify_checkpoint(batch_idx, words):
+            update_task(task_id, _checkpoint_identify_batch=batch_idx,
+                        _checkpoint_identify_words=words)
+
+        # 断点续跑：从任务的 checkpoint 恢复
+        _task = get_task(task_id)
+        resume_identify_batch = int(_task.get("_checkpoint_identify_batch", 0))
+        resume_identify_words = _task.get("_checkpoint_identify_words", None)
+
         difficult_words = _run_with_retry(
             identify_difficult_words_by_segments,
             segments, cancel_check=_cancel_check, progress_cb=_identify_progress,
+            resume_batch=resume_identify_batch,
+            existing_results=resume_identify_words,
+            checkpoint_cb=_identify_checkpoint,
             name="识别生词")
+
+        # 清除 checkpoint（识别完成）
+        update_task(task_id, _checkpoint_identify_batch=0, _checkpoint_identify_words=None)
 
         llm_result_path = os.path.join(result_dir, "difficult_words.json")
         with open(llm_result_path, "w", encoding="utf-8") as f:
@@ -716,11 +744,27 @@ def process_audio_smart_mode(task_id: str, audio_path: str):
             update_task(task_id, progress=pct,
                         message=f"Step 3/5: 翻译批次 ({batch_idx+1}/{total_batches})")
 
+        def _translate_checkpoint(batch_idx, trans):
+            update_task(task_id, _checkpoint_translate_batch=batch_idx,
+                        _checkpoint_translations=trans)
+
+        # 断点续跑：从任务的 checkpoint 恢复
+        _task = get_task(task_id)
+        resume_tl_batch = int(_task.get("_checkpoint_translate_batch", 0))
+        resume_tl_trans = _task.get("_checkpoint_translations", None)
+        if resume_tl_trans:
+            resume_tl_trans = {int(k): v for k, v in resume_tl_trans.items()}
+
         translations = _run_with_retry(
             translate_sentences,
             serialized_segments, translated_indices,
             cancel_check=_cancel_check, progress_cb=_translate_progress,
+            resume_batch=resume_tl_batch,
+            existing_translations=resume_tl_trans,
+            checkpoint_cb=_translate_checkpoint,
             name="句子翻译")
+
+        update_task(task_id, _checkpoint_translate_batch=0, _checkpoint_translations=None)
 
         if is_cancelled(task_id):
             raise InterruptedError("任务已被用户终止")
@@ -828,11 +872,26 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
         def _cancel_check():
             return is_cancelled(task_id)
 
+        def _translate_checkpoint(batch_idx, trans):
+            update_task(task_id, _checkpoint_translate_batch=batch_idx,
+                        _checkpoint_translations=trans)
+
+        _task = get_task(task_id)
+        resume_tl_batch = int(_task.get("_checkpoint_translate_batch", 0))
+        resume_tl_trans = _task.get("_checkpoint_translations", None)
+        if resume_tl_trans:
+            resume_tl_trans = {int(k): v for k, v in resume_tl_trans.items()}
+
         translations = _run_with_retry(
             translate_sentences,
             serialized_segments, translated_indices,
             cancel_check=_cancel_check, progress_cb=_translate_progress,
+            resume_batch=resume_tl_batch,
+            existing_translations=resume_tl_trans,
+            checkpoint_cb=_translate_checkpoint,
             name="句子翻译")
+
+        update_task(task_id, _checkpoint_translate_batch=0, _checkpoint_translations=None)
 
         if is_cancelled(task_id):
             raise InterruptedError("任务已被用户终止")
