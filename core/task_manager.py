@@ -80,6 +80,11 @@ def update_task(task_id: str, **kwargs):
         "awaiting_tts_review",
     ):
         _persist_task(task_id)
+    # basename / audio_path 首次设置时也更新 SQLite（保证中断后历史记录完整）
+    elif "_basename" in kwargs and kwargs.get("_basename"):
+        _persist_task(task_id)
+    elif "_audio_path" in kwargs and kwargs.get("_audio_path"):
+        _persist_task(task_id)
 
 
 def _persist_task(task_id: str):
@@ -143,7 +148,34 @@ def restore_task_from_disk(task_id: str) -> dict:
 
     basename = summary.get("basename", "")
     if not basename:
-        return {}
+        # 任务可能在中途被中断（如转录中 kill 进程），没有 basename
+        # 仍然返回基本信息，让前端至少能看到这条任务
+        task = {
+            "task_id": task_id,
+            "url": summary.get("url", ""),
+            "title": summary.get("title", ""),
+            "difficulty": summary.get("difficulty", ""),
+            "process_mode": summary.get("process_mode", "word_replace"),
+            "status": summary.get("status", "error"),
+            "step": "done",
+            "progress": summary.get("progress", 0),
+            "message": summary.get("message", "处理中断，任务未完成"),
+            "created_at": summary.get("created_at", ""),
+            "transcription_text": "",
+            "segments": [],
+            "difficult_words": [],
+            "replacements": [],
+            "translations": {},
+            "translated_indices": [],
+            "result": None,
+            "time_mapping": [],
+            "_basename": "",
+            "_audio_path": "",
+        }
+        with tasks_lock:
+            tasks[task_id] = task
+        print(f"[恢复] 任务 {task_id[:8]}... 无 basename，恢复为已中断状态")
+        return task
 
     result_dir = os.path.join(config.RESULT_DIR, basename)
 

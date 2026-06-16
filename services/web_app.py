@@ -36,7 +36,7 @@ from core.task_manager import (
     update_task, get_task, is_cancelled,
 )
 from core.database import (
-    setup_database, delete_task_from_index,
+    setup_database, delete_task_from_index, save_task_to_index,
     add_favorite, remove_favorite, get_favorites, is_favorite,
     add_subscription, remove_subscription, get_subscriptions,
     add_search_keyword, get_search_suggestions, clear_search_history,
@@ -1647,6 +1647,7 @@ def submit_task():
 
     cancel_flags[task_id] = threading.Event()
 
+    created_at = time.strftime("%Y-%m-%d %H:%M:%S")
     with tasks_lock:
         tasks[task_id] = {
             "task_id": task_id,
@@ -1659,7 +1660,7 @@ def submit_task():
             "step": "download",
             "progress": 0,
             "message": "任务已创建，准备下载...",
-            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "created_at": created_at,
             "transcription_text": "",
             "segments": [],
             "difficult_words": [],
@@ -1670,6 +1671,27 @@ def submit_task():
             "_basename": "",
             "_audio_path": "",
         }
+
+    # 任务创建后立即持久化到 SQLite，避免进程中途退出后历史记录丢失
+    try:
+        save_task_to_index(task_id, {
+            "task_id": task_id,
+            "url": audio_url,
+            "title": title,
+            "difficulty": difficulty,
+            "process_mode": process_mode,
+            "status": "downloading",
+            "progress": 0,
+            "message": "任务已创建",
+            "created_at": created_at,
+            "basename": "",
+            "total_words": 0,
+            "total_replacements": 0,
+            "original_duration": 0,
+            "mixed_duration": 0,
+        })
+    except Exception as e:
+        print(f"[WARN] 任务创建时持久化失败: {e}")
 
     def worker():
         # 排队等待：同一时间只允许一个任务运行
