@@ -928,8 +928,26 @@ def continue_after_sentence_confirmation(task_id: str):
         tts_engine = getattr(config, "TTS_ENGINE", "edge-tts")
         voice_clone = getattr(config, "SENTENCE_TTS_VOICE_CLONE", True)
 
+        # ---- 审查页实时数据：TTS 开始前先存储初始 segment 列表 ----
+        tts_review_segments = []
+        for seg_idx in translated_indices:
+            seg = segments[seg_idx] if seg_idx < len(segments) else {}
+            tts_review_segments.append({
+                "seg_idx": seg_idx,
+                "english_text": seg.get("text", "").strip() if seg else "",
+                "chinese_text": translations.get(seg_idx, ""),
+                "tts_status": "pending",
+                "tts_path": "",
+                "ref_audio_path": "",
+                "start_s": seg.get("start", 0) if seg else 0,
+                "end_s": seg.get("end", 0) if seg else 0,
+            })
         update_task(task_id, status="processing", step="synthesize", progress=60,
-                    message="Step 3/4: 合成中文语音...")
+                    message="Step 3/4: 合成中文语音...",
+                    tts_review_segments=tts_review_segments,
+                    _tts_review_active=True,
+                    _tts_completed_count=0,
+                    _tts_total_count=len(tts_review_segments))
 
         tts_audio_map = {}
         fish_ref_map = {}
@@ -957,7 +975,8 @@ def continue_after_sentence_confirmation(task_id: str):
                 pct = 60 + int((current / max(total, 1)) * 20)
                 engine_label = "Fish Speech"
                 update_task(task_id, progress=pct,
-                            message=f"Step 3/4: {engine_label} 句子合成 ({current}/{total})")
+                            message=f"Step 3/4: {engine_label} 句子合成 ({current}/{total})",
+                            _tts_completed_count=current)
 
             def _fish_cancel():
                 return is_cancelled(task_id)
@@ -1007,35 +1026,24 @@ def continue_after_sentence_confirmation(task_id: str):
         update_task(task_id, progress=80,
                     message=f"语音合成完成: {len(tts_audio_map)} 条中文语音")
 
-        # ---- TTS 审查：存储审查数据，暂停等待用户试听确认 ----
-        # 构建 segment 审查列表
-        tts_review_segments = []
-        for seg_idx in translated_indices:
-            seg = segments[seg_idx] if seg_idx < len(segments) else {}
+        # ---- TTS 完成：用实际路径更新审查数据，等待用户试听确认 ----
+        for seg in tts_review_segments:
+            seg_idx = seg["seg_idx"]
             tts_path = tts_audio_map.get(seg_idx, "")
-            ref_path = ""
+            seg["tts_path"] = tts_path
+            seg["tts_status"] = "completed" if tts_path and os.path.exists(tts_path) else "missing"
             if voice_clone and fish_ref_map:
-                ref_path = fish_ref_map.get(seg_idx, "")
-
-            tts_review_segments.append({
-                "seg_idx": seg_idx,
-                "english_text": seg.get("text", "").strip() if seg else "",
-                "chinese_text": translations.get(seg_idx, ""),
-                "tts_status": "completed" if tts_path and os.path.exists(tts_path) else "missing",
-                "tts_path": tts_path,
-                "ref_audio_path": ref_path,
-                "start_s": seg.get("start", 0) if seg else 0,
-                "end_s": seg.get("end", 0) if seg else 0,
-            })
+                seg["ref_audio_path"] = fish_ref_map.get(seg_idx, "")
 
         update_task(task_id, step="review", progress=80,
                     status="awaiting_tts_review",
                     message=f"🎧 TTS 合成完成 ({len(tts_audio_map)} 句)，请试听确认",
                     tts_review_segments=tts_review_segments,
                     _tts_audio_map=tts_audio_map,
-                    _fish_ref_map=fish_ref_map if voice_clone else {})
+                    _fish_ref_map=fish_ref_map if voice_clone else {},
+                    _tts_completed_count=len(tts_audio_map))
 
-        # 直接返回，不继续 Step 4；用户确认后由 confirm_tts 端点触发
+        # 持久化以便重启后断点续跑
         save_task_result_to_disk(result_dir, {
             "task_id": task_id,
             "status": "awaiting_tts_review",
@@ -1045,6 +1053,8 @@ def continue_after_sentence_confirmation(task_id: str):
             "translations": translations,
             "translated_indices": translated_indices,
             "tts_review_segments": tts_review_segments,
+            "tts_audio_map": tts_audio_map,
+            "fish_ref_map": fish_ref_map if voice_clone else {},
         })
         return
 
@@ -1175,16 +1185,34 @@ def finish_sentence_task(task_id: str):
 
 @app.route("/api/task/<task_id>/tts-review", methods=["GET"])
 def get_tts_review(task_id):
-    """获取 TTS 审查数据：segment 列表及合成状态"""
+    """获取 TTS 审查数据：segment 列表及合成状态（支持合成中实时查询）"""
     task = get_task(task_id)
     if not task:
         return jsonify({"error": "任务不存在"}), 404
 
     segments = task.get("tts_review_segments", [])
+    tts_audio_map = task.get("_tts_audio_map", {})
     total = len(segments)
+    completed_count = task.get("_tts_completed_count", 0)
+
+    # 从 tts_audio_map 批量更新 segment 状态（避免逐文件检查）
+    if tts_audio_map:
+        for seg in segments:
+            seg_idx = seg.get("seg_idx")
+            tts_path = tts_audio_map.get(seg_idx, "")
+            if tts_path and os.path.exists(tts_path):
+                seg["tts_path"] = tts_path
+                seg["tts_status"] = "completed"
+    else:
+        # 合成进行中：根据 completed_count 估算前 N 个完成
+        for i, seg in enumerate(segments):
+            if i < completed_count:
+                seg["tts_status"] = "completed"  # 可能在磁盘上，待确认
+            else:
+                seg["tts_status"] = "pending"
+
     completed = sum(1 for s in segments if s.get("tts_status") == "completed")
 
-    # 为每个 segment 补充音频信息
     review_items = []
     for seg in segments:
         item = dict(seg)
@@ -1220,6 +1248,8 @@ def get_tts_review(task_id):
         "segments": review_items,
         "status": task.get("status", ""),
         "message": task.get("message", ""),
+        "task_status": task.get("status", ""),
+        "task_step": task.get("step", ""),
     })
 
 
@@ -1232,8 +1262,14 @@ def serve_tts_audio(task_id, seg_idx):
 
     tts_audio_map = task.get("_tts_audio_map", {})
     tts_path = tts_audio_map.get(seg_idx, "")
+    # 兜底：从 tts_review_segments 中查找路径
+    if not tts_path:
+        for seg in task.get("tts_review_segments", []):
+            if seg.get("seg_idx") == seg_idx:
+                tts_path = seg.get("tts_path", "")
+                break
     if not tts_path or not os.path.exists(tts_path):
-        return jsonify({"error": f"seg[{seg_idx}] TTS 音频不存在"}), 404
+        return jsonify({"error": f"seg[{seg_idx}] TTS 音频尚未合成或不存在"}), 404
 
     return send_file(tts_path, mimetype="audio/wav",
                      conditional=True, max_age=3600)

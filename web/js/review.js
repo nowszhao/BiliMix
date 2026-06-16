@@ -1,7 +1,12 @@
 /* ============================================================
    BiliMix — TTS 试听审查模块
    依赖: state.js, utils.js
+   支持两种模式：
+     - 实时模式：TTS 合成进行中，展示进度，禁播未完成段，持续轮询
+     - 审查模式：合成完成，全部可播放，显示确认按钮
    ============================================================ */
+
+let ttsReviewPollTimer = null;
 
 // ============================================================
 // 加载审查 UI
@@ -15,9 +20,13 @@ async function loadTtsReviewUI() {
         const data = await resp.json();
         ttsReviewSegments = data.segments || [];
 
+        const isComplete = data.task_status === 'awaiting_tts_review';
+        const isLive = data.task_status === 'processing' && data.task_step === 'synthesize';
+
         showSection('tts-review');
-        renderTtsReviewList();
-        updateTtsReviewInfo();
+        renderTtsReviewList(isComplete);
+        updateTtsReviewInfo(data);
+        updateTtsReviewControls(isComplete);
 
         // 初始化音频元素
         ttsReviewAudio = document.getElementById('tts-review-audio');
@@ -25,9 +34,58 @@ async function loadTtsReviewUI() {
             ttsReviewAudio.removeEventListener('ended', onTtsReviewSegmentEnded);
             ttsReviewAudio.addEventListener('ended', onTtsReviewSegmentEnded);
         }
+
+        // 实时模式：继续轮询刷新
+        if (isLive) {
+            startTtsReviewPolling();
+        } else if (isComplete) {
+            stopTtsReviewPolling();
+        }
     } catch (err) {
         console.error('加载 TTS 审查数据失败:', err);
         showToast('❌ 加载审查数据失败: ' + err.message);
+    }
+}
+
+function startTtsReviewPolling() {
+    stopTtsReviewPolling();
+    ttsReviewPollTimer = setInterval(refreshTtsReviewData, 2000);
+}
+
+function stopTtsReviewPolling() {
+    if (ttsReviewPollTimer) {
+        clearInterval(ttsReviewPollTimer);
+        ttsReviewPollTimer = null;
+    }
+}
+
+async function refreshTtsReviewData() {
+    if (!currentTaskId) {
+        stopTtsReviewPolling();
+        return;
+    }
+    try {
+        const resp = await fetch(`/api/task/${currentTaskId}/tts-review`);
+        const data = await resp.json();
+        ttsReviewSegments = data.segments || [];
+
+        const isComplete = data.task_status === 'awaiting_tts_review';
+        renderTtsReviewList(isComplete);
+        updateTtsReviewInfo(data);
+        updateTtsReviewControls(isComplete);
+
+        // 合成完成时恢复播放按钮高亮（如果正在顺序播放）
+        if (isComplete) {
+            stopTtsReviewPolling();
+            if (ttsReviewPlayAllActive) {
+                // 重新构建播放队列（可能有新完成的 segment）
+                ttsReviewPlayQueue = ttsReviewSegments.filter(
+                    s => s.tts_url && s.tts_status === 'completed'
+                );
+            }
+        }
+    } catch (err) {
+        console.error('刷新 TTS 审查数据失败:', err);
     }
 }
 
@@ -35,7 +93,7 @@ async function loadTtsReviewUI() {
 // 渲染 Segment 列表
 // ============================================================
 
-function renderTtsReviewList() {
+function renderTtsReviewList(isComplete) {
     const list = document.getElementById('tts-review-list');
     if (!list) return;
 
@@ -44,18 +102,27 @@ function renderTtsReviewList() {
         const idx = seg.seg_idx;
         const english = escapeHtml(seg.english_text || '').substring(0, 80);
         const chinese = escapeHtml(seg.chinese_text || '').substring(0, 60);
-        const hasTts = seg.tts_url && seg.tts_status === 'completed';
+        const status = seg.tts_status;
+        const isDone = status === 'completed';
+        const hasTts = isDone && seg.tts_url;
         const hasRef = seg.ref_audio_url;
         const duration = seg.tts_duration_s ? `${seg.tts_duration_s}s` : '';
         const size = seg.tts_size_kb ? `${seg.tts_size_kb}KB` : '';
 
+        let statusHtml = '';
+        if (isDone) {
+            statusHtml = `<span class="tts-review-item-status status-ok">✅ ${duration} ${size}</span>`;
+        } else if (status === 'missing') {
+            statusHtml = `<span class="tts-review-item-status status-err">❌ 缺失</span>`;
+        } else {
+            statusHtml = `<span class="tts-review-item-status status-pending">⏳ 合成中...</span>`;
+        }
+
         html += `
-        <div class="tts-review-item" id="tts-review-item-${idx}" data-seg-idx="${idx}">
+        <div class="tts-review-item ${isDone ? '' : 'tts-pending'}" id="tts-review-item-${idx}" data-seg-idx="${idx}">
             <div class="tts-review-item-header">
                 <span class="tts-review-item-num">#${idx + 1}</span>
-                <span class="tts-review-item-status ${hasTts ? 'status-ok' : 'status-err'}">
-                    ${hasTts ? `✅ ${duration} ${size}` : '❌ 缺失'}
-                </span>
+                ${statusHtml}
             </div>
             <div class="tts-review-item-english">${english}</div>
             <div class="tts-review-item-chinese">${chinese}</div>
@@ -64,7 +131,7 @@ function renderTtsReviewList() {
                 <button class="tts-play-btn tts-btn-tts" onclick="ttsReviewPlaySeg(${idx}, 'tts')"
                         id="tts-play-btn-${idx}" title="播放中文 TTS">
                     🎧 听合成
-                </button>` : `<span class="tts-no-audio">无合成音频</span>`}
+                </button>` : `<span class="tts-no-audio">${isComplete ? '无合成音频' : '等待合成...'}</span>`}
                 ${hasRef ? `
                 <button class="tts-play-btn tts-btn-ref" onclick="ttsReviewPlaySeg(${idx}, 'ref')"
                         id="tts-ref-btn-${idx}" title="播放英文原声（参考音频）">
@@ -78,6 +145,37 @@ function renderTtsReviewList() {
 }
 
 // ============================================================
+// 控制按钮
+// ============================================================
+
+function updateTtsReviewControls(isComplete) {
+    const playAllBtn = document.getElementById('tts-review-play-all');
+    const confirmBtn = document.getElementById('tts-review-confirm-btn');
+
+    if (isComplete) {
+        if (playAllBtn) playAllBtn.style.display = '';
+        if (confirmBtn) {
+            confirmBtn.style.display = '';
+            confirmBtn.disabled = false;
+            confirmBtn.querySelector('.btn-text').textContent = '确认无误，继续混音';
+        }
+    } else {
+        // 合成中：隐藏确认按钮，隐藏播放按钮（或变灰）
+        if (confirmBtn) {
+            confirmBtn.style.display = 'none';
+        }
+        if (playAllBtn) {
+            const completed = ttsReviewSegments.filter(s => s.tts_status === 'completed').length;
+            if (completed > 0) {
+                playAllBtn.style.display = '';
+            } else {
+                playAllBtn.style.display = 'none';
+            }
+        }
+    }
+}
+
+// ============================================================
 // 单句播放
 // ============================================================
 
@@ -87,7 +185,7 @@ function ttsReviewPlaySeg(segIdx, mode) {
 
     const url = mode === 'tts' ? seg.tts_url : seg.ref_audio_url;
     if (!url) {
-        showToast('❌ 该音频不可用');
+        showToast('❌ 该音频尚未合成或不可用');
         return;
     }
 
@@ -129,13 +227,10 @@ function ttsReviewPlayAll() {
         return;
     }
 
-    // 构建播放队列（只包含有 TTS 音频的 segment，按顺序）
-    ttsReviewPlayQueue = [];
-    for (const seg of ttsReviewSegments) {
-        if (seg.tts_url && seg.tts_status === 'completed') {
-            ttsReviewPlayQueue.push(seg);
-        }
-    }
+    // 构建播放队列（只包含已完成的 segment）
+    ttsReviewPlayQueue = ttsReviewSegments.filter(
+        s => s.tts_url && s.tts_status === 'completed'
+    );
 
     if (ttsReviewPlayQueue.length === 0) {
         showToast('❌ 没有可播放的 TTS 音频');
@@ -250,17 +345,23 @@ function scrollToTtsReviewItem(segIdx) {
     }
 }
 
-function updateTtsReviewInfo() {
+function updateTtsReviewInfo(data) {
     const info = document.getElementById('tts-review-info');
     if (!info) return;
 
     const total = ttsReviewSegments.length;
     const completed = ttsReviewSegments.filter(s => s.tts_status === 'completed').length;
 
+    if (data) {
+        if (data.task_status === 'processing') {
+            info.textContent = `⏳ 合成中: ${completed} / ${total} 句已完成`;
+            return;
+        }
+    }
+
     if (ttsReviewPlayAllActive) {
         info.textContent = `顺序播放: ${ttsReviewPlayQueueIdx + 1} / ${ttsReviewPlayQueue.length}`;
     } else if (ttsReviewPlayingIdx >= 0) {
-        const seg = ttsReviewSegments.find(s => s.seg_idx === ttsReviewPlayingIdx);
         const modeLabel = ttsReviewPlayMode === 'ref' ? '原声' : 'TTS';
         info.textContent = `正在播放 #${ttsReviewPlayingIdx + 1} (${modeLabel})`;
     } else {
@@ -277,8 +378,9 @@ async function confirmTtsReview() {
     btn.disabled = true;
     btn.querySelector('.btn-text').textContent = '提交中...';
 
-    // 停止播放
+    // 停止播放和轮询
     ttsReviewStop();
+    stopTtsReviewPolling();
 
     try {
         const resp = await fetch(`/api/task/${currentTaskId}/confirm_tts`, {
@@ -305,5 +407,6 @@ async function confirmTtsReview() {
 
 function cancelFromTtsReview() {
     ttsReviewStop();
+    stopTtsReviewPolling();
     resetAll();
 }

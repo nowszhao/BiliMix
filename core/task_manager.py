@@ -73,7 +73,8 @@ def update_task(task_id: str, **kwargs):
     # 持久化关键状态变更
     if "status" in kwargs and kwargs["status"] in (
         "completed", "error", "cancelled",
-        "awaiting_confirmation", "awaiting_sentence_confirmation"
+        "awaiting_confirmation", "awaiting_sentence_confirmation",
+        "awaiting_tts_review",
     ):
         _persist_task(task_id)
 
@@ -152,6 +153,7 @@ def restore_task_from_disk(task_id: str) -> dict:
             saved_status = saved.get("status", summary.get("status", "completed"))
             is_confirm = saved_status == "awaiting_confirmation"
             is_sentence_confirm = saved_status == "awaiting_sentence_confirmation"
+            is_tts_review = saved_status == "awaiting_tts_review"
             process_mode = saved.get("process_mode",
                                      summary.get("process_mode", "word_replace"))
             task = {
@@ -161,10 +163,12 @@ def restore_task_from_disk(task_id: str) -> dict:
                 "difficulty": summary.get("difficulty", ""),
                 "process_mode": process_mode,
                 "status": saved_status,
-                "step": ("confirm_sentence" if is_sentence_confirm
-                         else ("confirm" if is_confirm else "done")),
-                "progress": (55 if is_sentence_confirm
-                             else (60 if is_confirm else 100)),
+                "step": ("review" if is_tts_review
+                         else ("confirm_sentence" if is_sentence_confirm
+                               else ("confirm" if is_confirm else "done"))),
+                "progress": (80 if is_tts_review
+                             else (55 if is_sentence_confirm
+                                   else (60 if is_confirm else 100))),
                 "message": summary.get("message", "全部完成！"),
                 "created_at": summary.get("created_at", ""),
                 "transcription_text": saved.get("transcription_text", ""),
@@ -180,8 +184,13 @@ def restore_task_from_disk(task_id: str) -> dict:
                 "_audio_path": (saved.get("result", {}).get("original_audio", "")
                                 if saved.get("result") else ""),
             }
-            # 对于 awaiting_confirmation 状态，需要查找音频路径
-            if (is_confirm or is_sentence_confirm) and not task["_audio_path"]:
+            # 恢复 TTS 审查数据（用于断点续跑）
+            if is_tts_review:
+                task["tts_review_segments"] = saved.get("tts_review_segments", [])
+                task["_tts_audio_map"] = saved.get("tts_audio_map", {})
+                task["_fish_ref_map"] = saved.get("fish_ref_map", {})
+            # 对于 awaiting 状态，需要查找音频路径
+            if (is_confirm or is_sentence_confirm or is_tts_review) and not task["_audio_path"]:
                 for ext in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"):
                     p = os.path.join(config.DOWNLOAD_DIR, f"{basename}{ext}")
                     if os.path.exists(p):

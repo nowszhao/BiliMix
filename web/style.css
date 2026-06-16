@@ -2329,6 +2329,15 @@ body {
     color: #FF3B30;
 }
 
+.tts-review-item-status.status-pending {
+    color: #FF9500;
+}
+
+.tts-review-item.tts-pending {
+    opacity: 0.65;
+    background: var(--bg-hover);
+}
+
 .tts-review-item-english {
     font-size: 13px;
     color: var(--text-secondary);

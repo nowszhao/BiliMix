@@ -306,6 +306,9 @@ async function pollStatus() {
         } else if (data.status === 'awaiting_tts_review') {
             stopPolling();
             await loadTtsReviewUI();
+        } else if (data.status === 'processing' && data.step === 'synthesize' && data._tts_review_active) {
+            // TTS 合成进行中：进入审查页实时跟踪进度，继续轮询
+            await loadTtsReviewUI();
         } else if (data.status === 'error') {
             stopPolling();
             showError(data.message);
