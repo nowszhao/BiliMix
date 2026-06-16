@@ -149,17 +149,17 @@ def restore_task_from_disk(task_id: str) -> dict:
     basename = summary.get("basename", "")
     if not basename:
         # 任务可能在中途被中断（如转录中 kill 进程），没有 basename
-        # 仍然返回基本信息，让前端至少能看到这条任务
+        # 统一标记为 error 状态，SQLite 里的旧 status 不可信
         task = {
             "task_id": task_id,
             "url": summary.get("url", ""),
             "title": summary.get("title", ""),
             "difficulty": summary.get("difficulty", ""),
             "process_mode": summary.get("process_mode", "word_replace"),
-            "status": summary.get("status", "error"),
-            "step": "done",
-            "progress": summary.get("progress", 0),
-            "message": summary.get("message", "处理中断，任务未完成"),
+            "status": "error",
+            "step": "download",
+            "progress": 0,
+            "message": "任务因服务重启而中断，请重新提交",
             "created_at": summary.get("created_at", ""),
             "transcription_text": "",
             "segments": [],
@@ -240,15 +240,19 @@ def restore_task_from_disk(task_id: str) -> dict:
             print(f"[WARN] 读取 task_result.json 失败: {e}")
 
     # 回退方案：从散落文件拼装（适配旧数据）
+    # 保留 completed / cancelled / error 三种终态，其余标记为中断
+    sqlite_status = summary.get("status", "completed")
+    is_terminal = sqlite_status in ("completed", "cancelled", "error")
     task = {
         "task_id": task_id,
         "url": summary.get("url", ""),
         "title": summary.get("title", ""),
         "difficulty": summary.get("difficulty", ""),
-        "status": summary.get("status", "completed"),
-        "step": "done",
-        "progress": summary.get("progress", 100),
-        "message": summary.get("message", "全部完成！"),
+        "status": sqlite_status if is_terminal else "error",
+        "step": "done" if sqlite_status == "completed" else "download",
+        "progress": summary.get("progress", 100) if sqlite_status == "completed" else summary.get("progress", 0),
+        "message": summary.get("message", "全部完成！") if is_terminal
+                   else "任务因服务重启而中断，请重新提交",
         "created_at": summary.get("created_at", ""),
         "transcription_text": "",
         "segments": [],
