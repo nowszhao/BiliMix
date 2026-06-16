@@ -36,7 +36,10 @@ def load_tasks_index() -> dict:
     """从 SQLite 加载历史任务索引"""
     try:
         return db_load_tasks_index()
-    except Exception:
+    except Exception as e:
+        import traceback
+        print(f"[ERROR] 从 SQLite 加载任务索引失败: {e}")
+        traceback.print_exc()
         return {}
 
 
