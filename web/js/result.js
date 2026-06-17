@@ -204,7 +204,7 @@ function renderTranscriptSentenceMode(segments, sentencePairs, difficultWords) {
         return;
     }
 
-    segmentsData = segments;
+    segmentsData = segments.map(s => ({ ...s }));  // 浅拷贝避免覆盖原文
 
     const translationMap = {};
     if (sentencePairs) {
@@ -227,6 +227,7 @@ function renderTranscriptSentenceMode(segments, sentencePairs, difficultWords) {
         const time = formatTime(seg.start);
         let text = seg.text || '';
         const chinese = translationMap[idx];
+        segmentsData[idx]._chinese = chinese;  // 供 copyTranscript 使用
 
         if (hasDW) {
             const escaped = escapeHtml(text);
@@ -347,4 +348,32 @@ function renderSentencePairs(sentencePairs, targetContainerId) {
 
     if (containerId === 'replacements-list') html += '</div>';
     container.innerHTML = html;
+}
+
+// ============================================================
+// Copy Transcript
+// ============================================================
+
+function copyTranscript() {
+    if (!segmentsData || segmentsData.length === 0) {
+        showToast('⚠️ 暂无字幕可复制');
+        return;
+    }
+    // 提取纯文本：时间戳 + 英文 + 中文翻译（如有）
+    const lines = segmentsData.map((seg, i) => {
+        const time = formatTime(seg.start);
+        const english = (seg.text || '').trim();
+        const chinese = seg._chinese || '';  // renderTranscriptSentenceMode 可注入
+        if (chinese) {
+            return `[${time}] ${english}\n       ${chinese}`;
+        }
+        return `[${time}] ${english}`;
+    });
+    const text = lines.join('\n');
+
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('✅ 已复制 ' + lines.length + ' 行字幕');
+    }).catch(() => {
+        showToast('❌ 复制失败，请手动选择文本');
+    });
 }

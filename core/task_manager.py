@@ -56,6 +56,19 @@ def save_tasks_index(index: dict):
 def save_task_result_to_disk(result_dir: str, data: dict):
     """将完整任务结果持久化到磁盘（供重启后恢复）"""
     try:
+        # 自动注入 skip_confirmation（如果 data 中没有，从内存 tasks 中获取）
+        if "skip_confirmation" not in data:
+            task_id = data.get("task_id", "")
+            if task_id and task_id in tasks:
+                data["skip_confirmation"] = tasks[task_id].get(
+                    "skip_confirmation",
+                    getattr(config, "SKIP_CONFIRMATION", True))
+            else:
+                data["skip_confirmation"] = getattr(config, "SKIP_CONFIRMATION", True)
+        # 确保 key 字段存在
+        data.setdefault("process_mode", "word_replace")
+        data.setdefault("difficulty", getattr(config, "DIFFICULTY_LEVEL", "CET-4"))
+
         path = os.path.join(result_dir, "task_result.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -73,11 +86,12 @@ def update_task(task_id: str, **kwargs):
     with tasks_lock:
         if task_id in tasks:
             tasks[task_id].update(kwargs)
-    # 持久化关键状态变更
+    # 持久化关键状态变更（包含 queued/processing 防止重启丢失）
     if "status" in kwargs and kwargs["status"] in (
         "completed", "error", "cancelled",
         "awaiting_confirmation", "awaiting_sentence_confirmation",
         "awaiting_tts_review",
+        "queued", "processing",
     ):
         _persist_task(task_id)
     # basename / audio_path 首次设置时也更新 SQLite（保证中断后历史记录完整）
@@ -156,6 +170,8 @@ def restore_task_from_disk(task_id: str) -> dict:
             "title": summary.get("title", ""),
             "difficulty": summary.get("difficulty", ""),
             "process_mode": summary.get("process_mode", "word_replace"),
+            "skip_confirmation": summary.get("skip_confirmation",
+                               getattr(config, "SKIP_CONFIRMATION", True)),
             "status": "error",
             "step": "download",
             "progress": 0,
@@ -195,8 +211,11 @@ def restore_task_from_disk(task_id: str) -> dict:
                 "task_id": task_id,
                 "url": summary.get("url", ""),
                 "title": summary.get("title", ""),
-                "difficulty": summary.get("difficulty", ""),
+                "difficulty": saved.get("difficulty", summary.get("difficulty", "")),
                 "process_mode": process_mode,
+                "skip_confirmation": saved.get("skip_confirmation",
+                                   summary.get("skip_confirmation",
+                                   getattr(config, "SKIP_CONFIRMATION", True))),
                 "status": saved_status,
                 "step": ("review" if is_tts_review
                          else ("confirm_sentence" if is_sentence_confirm
@@ -248,6 +267,9 @@ def restore_task_from_disk(task_id: str) -> dict:
         "url": summary.get("url", ""),
         "title": summary.get("title", ""),
         "difficulty": summary.get("difficulty", ""),
+        "process_mode": summary.get("process_mode", "word_replace"),
+        "skip_confirmation": summary.get("skip_confirmation",
+                           getattr(config, "SKIP_CONFIRMATION", True)),
         "status": sqlite_status if is_terminal else "error",
         "step": "done" if sqlite_status == "completed" else "download",
         "progress": summary.get("progress", 100) if sqlite_status == "completed" else summary.get("progress", 0),
@@ -258,6 +280,9 @@ def restore_task_from_disk(task_id: str) -> dict:
         "segments": [],
         "difficult_words": [],
         "replacements": [],
+        "translations": {},
+        "translated_indices": [],
+        "sentence_pairs": [],
         "result": None,
         "time_mapping": [],
         "_basename": basename,

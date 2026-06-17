@@ -703,6 +703,10 @@
                                 <span class="toolbar-btn-icon">⛶</span>
                                 <span class="toolbar-btn-text">全屏</span>
                             </button>
+                            <button class="toolbar-btn" onclick="copyTranscript()" title="复制字幕到剪贴板">
+                                <span class="toolbar-btn-icon">📋</span>
+                                <span class="toolbar-btn-text">复制</span>
+                            </button>
                         </div>
                     </div>
                     <div class="transcript-container" id="transcript-container">
@@ -865,6 +869,10 @@
                 <button class="toolbar-btn active" id="fs-auto-scroll-btn" onclick="toggleAutoScroll()" title="自动跟随">
                     <span class="toolbar-btn-icon">📍</span>
                     <span class="toolbar-btn-text">自动跟随</span>
+                </button>
+                <button class="toolbar-btn" onclick="copyTranscript()" title="复制字幕到剪贴板">
+                    <span class="toolbar-btn-icon">📋</span>
+                    <span class="toolbar-btn-text">复制</span>
                 </button>
                 <button class="fullscreen-close-btn" onclick="toggleTranscriptFullscreen()" title="退出全屏">✕</button>
             </div>
