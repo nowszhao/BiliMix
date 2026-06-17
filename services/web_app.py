@@ -473,6 +473,17 @@ def continue_after_confirmation(task_id: str):
         update_task(task_id, status="processing", step="synthesize", progress=62,
                     message="Step 3/5: 定位时间戳并合成中文语音...")
 
+        # 生词已就绪，落盘以便 kill 后断点续传跳过识词步骤
+        seg_save = [{"text": s.get("text", "").strip(),
+                      "start": s.get("start", 0),
+                      "end": s.get("end", 0)} for s in segments]
+        save_task_result_to_disk(result_dir, {
+            "task_id": task_id, "status": "processing",
+            "transcription_text": full_text,
+            "segments": seg_save,
+            "difficult_words": difficult_words,
+        })
+
         replacements = locate_words_in_segments(difficult_words, segments)
 
         tts_engine = getattr(config, "TTS_ENGINE", "edge-tts")
@@ -971,6 +982,18 @@ def continue_after_sentence_confirmation(task_id: str):
         translations = {int(k): v for k, v in translations.items()}
         translated_indices = sorted([idx for idx in translated_indices
                                      if idx in translations])
+
+        # 翻译已就绪，落盘以便 kill 后断点续传跳过翻译步骤
+        actual_mode = task.get("process_mode", "sentence_translate")
+        save_task_result_to_disk(result_dir, {
+            "task_id": task_id, "status": "processing",
+            "process_mode": actual_mode,
+            "transcription_text": full_text,
+            "segments": segments,
+            "difficult_words": task.get("difficult_words", []),
+            "translations": translations,
+            "translated_indices": translated_indices,
+        })
 
         if not translations:
             update_task(task_id, status="completed", progress=100,
@@ -1757,10 +1780,28 @@ def submit_task():
         update_task(task_id, status="queued",
                     message="排队中，请稍候…")
         print(f"[Queue] 任务 {task_id[:8]}... 排队等待")
-        with task_queue_lock:
+
+        # 轮询等待锁，同时响应取消信号
+        # 直接 with task_queue_lock: 会无限阻塞，被取消/删除的任务也会抢锁
+        while True:
+            if is_cancelled(task_id) or not get_task(task_id):
+                print(f"[Queue] 任务 {task_id[:8]}... 排队中被取消，退出")
+                return
+            acquired = task_queue_lock.acquire(blocking=False)
+            if acquired:
+                break
+            time.sleep(1)  # 每秒检查一次取消状态
+
+        try:
+            # 抢到锁后再次确认任务未被取消/删除
+            if is_cancelled(task_id) or not get_task(task_id):
+                print(f"[Queue] 任务 {task_id[:8]}... 获取锁后检测到已取消，释放")
+                return
             update_task(task_id, status="processing",
                         message="开始处理…")
             _run_worker(task_id, audio_url)
+        finally:
+            task_queue_lock.release()
 
     def _run_worker(task_id, audio_url):
         # 处理 file:// 协议（用户上传的本地文件）
@@ -1901,7 +1942,7 @@ def confirm_sentences(task_id):
 
 @app.route("/api/task/<task_id>/retry", methods=["POST"])
 def retry_task(task_id):
-    """通用断点续传：从出错步骤重新处理"""
+    """通用断点续传：检查已有数据，跳过已完成的步骤"""
     task = get_task(task_id)
     if not task:
         return jsonify({"error": "任务不存在"}), 404
@@ -1909,30 +1950,75 @@ def retry_task(task_id):
     if task.get("status") != "error":
         return jsonify({"error": f"任务状态为 {task.get('status')}，仅 error 状态可重试"}), 400
 
-    failed_step = task.get("_failed_step", "transcribe")
     process_mode = task.get("process_mode", "word_replace")
     audio_path = task.get("_audio_path", "")
 
     if not audio_path:
         return jsonify({"error": "任务缺少音频路径，无法重试"}), 400
 
-    # 将任务状态重置为 processing，触发前端进度轮询
-    update_task(task_id, status="processing", step="retry",
-                _failed_step="", progress=0,
-                message=f"断点续传 — 从 {failed_step} 步骤恢复...")
+    # 判断已有数据，确定从哪步恢复
+    segments = task.get("segments", [])
+    translations = task.get("translations", {})
+    translated_indices = task.get("translated_indices", [])
+    difficult_words = task.get("difficult_words", [])
 
-    if process_mode == "word_replace":
-        # 重新走完整流程（转录有缓存，LLM/TTS 按磁盘缓存跳过）
-        thread = threading.Thread(target=process_audio,
-                                  args=(task_id, audio_path), daemon=True)
-    elif process_mode == "smart_translate":
-        thread = threading.Thread(target=process_audio_smart_mode,
-                                  args=(task_id, audio_path), daemon=True)
+    if process_mode in ("sentence_translate", "smart_translate"):
+        if translations and translated_indices and segments:
+            # 翻译已完成，直接从 TTS 合成恢复
+            msg = f"断点续传 — 跳过转录+翻译，直接从 TTS 恢复 ({len(translated_indices)} 句)"
+            print(f"[Retry] {msg}")
+            update_task(task_id, status="processing", step="synthesize",
+                        _failed_step="", progress=58,
+                        message=msg)
+            thread = threading.Thread(target=continue_after_sentence_confirmation,
+                                      args=(task_id,), daemon=True)
+        elif segments:
+            # 转录已完成，从翻译步骤恢复
+            msg = f"断点续传 — 跳过转录，从翻译恢复 ({len(segments)} 句)"
+            print(f"[Retry] {msg}")
+            update_task(task_id, status="processing", step="translate",
+                        _failed_step="", progress=20,
+                        message=msg)
+            thread = threading.Thread(target=process_audio_sentence_mode,
+                                      args=(task_id, audio_path), daemon=True)
+        else:
+            # 从头开始
+            update_task(task_id, status="processing", step="transcribe",
+                        _failed_step="", progress=0,
+                        message="断点续传 — 从头开始…")
+            thread = threading.Thread(target=process_audio_sentence_mode,
+                                      args=(task_id, audio_path), daemon=True)
+    elif process_mode == "word_replace":
+        if difficult_words and segments:
+            # 识词已完成，直接从确认/TTS 恢复
+            msg = f"断点续传 — 跳过转录+识词，直接从 TTS 恢复 ({len(difficult_words)} 个生词)"
+            print(f"[Retry] {msg}")
+            update_task(task_id, status="processing", step="synthesize",
+                        _failed_step="", progress=61,
+                        message=msg)
+            thread = threading.Thread(target=continue_after_confirmation,
+                                      args=(task_id,), daemon=True)
+        elif segments:
+            update_task(task_id, status="processing", step="identify",
+                        _failed_step="", progress=20,
+                        message="断点续传 — 跳过转录，从识词恢复")
+            thread = threading.Thread(target=process_audio,
+                                      args=(task_id, audio_path), daemon=True)
+        else:
+            update_task(task_id, status="processing", step="transcribe",
+                        _failed_step="", progress=0,
+                        message="断点续传 — 从头开始…")
+            thread = threading.Thread(target=process_audio,
+                                      args=(task_id, audio_path), daemon=True)
     else:
+        update_task(task_id, status="processing", step="transcribe",
+                    _failed_step="", progress=0,
+                    message="断点续传 — 从头开始…")
         thread = threading.Thread(target=process_audio_sentence_mode,
                                   args=(task_id, audio_path), daemon=True)
+
     thread.start()
-    return jsonify({"message": f"已开始断点续传，从 {failed_step} 步骤恢复"})
+    return jsonify({"message": "已开始断点续传"})
 
 
 @app.route("/api/task/<task_id>/retry-synthesis", methods=["POST"])
@@ -2168,7 +2254,7 @@ def delete_task(task_id):
         return jsonify({"error": "任务不存在"}), 404
 
     # 如果任务还在运行，先终止
-    if task and task.get("status") in ("downloading", "processing"):
+    if task and task.get("status") in ("downloading", "processing", "queued"):
         event = cancel_flags.get(task_id)
         if event:
             event.set()
