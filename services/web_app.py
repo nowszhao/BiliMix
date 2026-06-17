@@ -756,8 +756,15 @@ def process_audio_smart_mode(task_id: str, audio_path: str):
                         message=f"Step 3/5: 翻译批次 ({batch_idx+1}/{total_batches})")
 
         def _translate_checkpoint(batch_idx, trans):
+            """每批翻译完成后更新内存断点 + 落盘到 task_result.json"""
             update_task(task_id, _checkpoint_translate_batch=batch_idx,
                         _checkpoint_translations=trans)
+            save_task_result_to_disk(result_dir, {
+                "task_id": task_id, "status": "processing",
+                "process_mode": "smart_translate",
+                "_checkpoint_translate_batch": batch_idx,
+                "_checkpoint_translations": trans,
+            })
 
         # 断点续跑：从任务的 checkpoint 恢复
         _task = get_task(task_id)
@@ -895,8 +902,15 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
             return is_cancelled(task_id)
 
         def _translate_checkpoint(batch_idx, trans):
+            """每批翻译完成后更新内存断点 + 落盘到 task_result.json"""
             update_task(task_id, _checkpoint_translate_batch=batch_idx,
                         _checkpoint_translations=trans)
+            save_task_result_to_disk(result_dir, {
+                "task_id": task_id, "status": "processing",
+                "process_mode": "sentence_translate",
+                "_checkpoint_translate_batch": batch_idx,
+                "_checkpoint_translations": trans,
+            })
 
         _task = get_task(task_id)
         resume_tl_batch = int(_task.get("_checkpoint_translate_batch", 0))

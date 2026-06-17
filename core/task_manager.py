@@ -238,6 +238,16 @@ def restore_task_from_disk(task_id: str) -> dict:
                 "_audio_path": (saved.get("result", {}).get("original_audio", "")
                                 if saved.get("result") else ""),
             }
+            # 恢复翻译/识词批次的断点数据
+            if saved.get("_checkpoint_translate_batch"):
+                task["_checkpoint_translate_batch"] = saved["_checkpoint_translate_batch"]
+            if saved.get("_checkpoint_translations"):
+                task["_checkpoint_translations"] = {
+                    int(k): v for k, v in saved["_checkpoint_translations"].items()
+                }
+            if saved.get("_checkpoint_tts_idx"):
+                task["_checkpoint_tts_idx"] = saved["_checkpoint_tts_idx"]
+
             # 恢复 TTS 审查数据（用于断点续跑）
             if is_tts_review:
                 task["tts_review_segments"] = saved.get("tts_review_segments", [])
