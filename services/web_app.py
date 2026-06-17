@@ -2004,6 +2004,31 @@ def retry_task(task_id):
     if not audio_path:
         return jsonify({"error": "任务缺少音频路径，无法重试"}), 400
 
+    # 尝试从 task_result.json 加载断点数据（内存恢复可能缺失）
+    basename = task.get("_basename", "")
+    if basename:
+        result_dir = os.path.join(config.RESULT_DIR, basename)
+        checkpoint_path = os.path.join(result_dir, "task_result.json")
+        if os.path.exists(checkpoint_path):
+            try:
+                with open(checkpoint_path, "r", encoding="utf-8") as f:
+                    saved = json.load(f)
+                # 注入断点数据到内存 task
+                for key in ("_checkpoint_translate_batch",
+                            "_checkpoint_translations",
+                            "_checkpoint_tts_idx"):
+                    if saved.get(key) is not None:
+                        task[key] = saved[key]
+                if saved.get("_checkpoint_translations"):
+                    task["_checkpoint_translations"] = {
+                        int(k): v for k, v
+                        in saved["_checkpoint_translations"].items()
+                    }
+                update_task(task_id, **{k: task[k] for k in task
+                                        if k.startswith("_checkpoint_")})
+            except Exception as e:
+                print(f"[Retry] 加载断点数据失败: {e}")
+
     # 判断已有数据，确定从哪步恢复
     segments = task.get("segments", [])
     translations = task.get("translations", {})
