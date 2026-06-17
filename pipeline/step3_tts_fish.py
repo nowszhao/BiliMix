@@ -60,6 +60,8 @@ def synthesize_sentences_with_fish_tts(
     cancel_check=None,
     progress_cb=None,
     task_id: str = None,
+    resume_idx: int = 0,
+    checkpoint_cb=None,
 ) -> dict:
     """
     使用 Fish Speech S2 Pro 为句子翻译模式合成中文 TTS 音频。
@@ -69,6 +71,8 @@ def synthesize_sentences_with_fish_tts(
 
     Args:
         segments: WhisperX segments 列表
+        resume_idx: 断点续跑起始索引（跳过已完成的 segment）
+        checkpoint_cb: 进度落盘回调 (completed_index, total)
         translated_indices: 需要翻译的 segment 索引列表
         translations: {segment_index: chinese_text} 翻译结果
         audio_path: 原始音频文件路径（备用，Fish Speech 不加载整文件）
@@ -95,11 +99,15 @@ def synthesize_sentences_with_fish_tts(
         print(f"[Step3-Fish] ❌ {msg}")
         raise RuntimeError(msg)
 
-    print(f"[Step3-Fish] 准备为 {len(translated_indices)} 个句子合成中文 TTS")
+    total = len(translated_indices)
+    if resume_idx > 0:
+        print(f"[Step3-Fish] 从第 {resume_idx + 1}/{total} 句续跑 "
+              f"(前面的已有缓存自动跳过)")
+    else:
+        print(f"[Step3-Fish] 准备为 {total} 个句子合成中文 TTS")
 
     fish_url = f"{_get_fish_url()}/generate"
     timeout = getattr(config, "FISH_SPEECH_TIMEOUT", 300)
-    total = len(translated_indices)
 
     tts_audio_map = {}
 
@@ -189,6 +197,9 @@ def synthesize_sentences_with_fish_tts(
                           f"({len(resp.content)/1024:.0f}KB, {elapsed:.1f}s)"
                           f"{retry_note}")
                     tts_audio_map[seg_idx] = output_path
+                    # 每完成一句就落盘进度，kill 后从此位置续跑
+                    if checkpoint_cb:
+                        checkpoint_cb(i + 1)
                     break
 
                 # 503 或超时后可能出现的其他状态 → 等一会重试

@@ -782,6 +782,17 @@ def process_audio_smart_mode(task_id: str, audio_path: str):
         update_task(task_id, progress=55,
                     message=f"翻译完成: {len(translations)}/{len(translated_indices)} 个句子")
 
+        # 翻译结果立刻落盘，kill 后断点续传能跳过翻译步骤
+        save_task_result_to_disk(result_dir, {
+            "task_id": task_id, "status": "processing",
+            "process_mode": "smart_translate",
+            "transcription_text": full_text,
+            "segments": serialized_segments,
+            "difficult_words": difficult_words,
+            "translations": translations,
+            "translated_indices": translated_indices,
+        })
+
         # ---- 确认翻译环节 ----
         task = get_task(task_id)
         skip_confirm = task.get("skip_confirmation",
@@ -908,6 +919,16 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
             raise InterruptedError("任务已被用户终止")
         update_task(task_id, progress=55,
                     message=f"翻译完成: {len(translations)}/{len(translated_indices)} 个句子")
+
+        # 翻译结果立刻落盘，kill 后断点续传能跳过翻译步骤
+        save_task_result_to_disk(result_dir, {
+            "task_id": task_id, "status": "processing",
+            "process_mode": "sentence_translate",
+            "transcription_text": full_text,
+            "segments": serialized_segments,
+            "translations": translations,
+            "translated_indices": translated_indices,
+        })
 
         # ---- 确认翻译环节 ----
         task = get_task(task_id)
@@ -1063,13 +1084,26 @@ def continue_after_sentence_confirmation(task_id: str):
             def _fish_cancel():
                 return is_cancelled(task_id)
 
+            def _fish_checkpoint(completed_idx):
+                """每完成一句 TTS 就落盘进度"""
+                update_task(task_id, _checkpoint_tts_idx=completed_idx)
+
+            # 断点续跑：从上次 kill 的位置继续
+            _task = get_task(task_id)
+            resume_tts_idx = int(_task.get("_checkpoint_tts_idx", 0))
+
             tts_audio_map = synthesize_sentences_with_fish_tts(
                 segments, translated_indices, translations,
                 audio_path, fish_cache_dir,
                 ref_audio_map=fish_ref_map if voice_clone else {},
                 ref_source_map=fish_ref_source_map,
                 cancel_check=_fish_cancel, progress_cb=_fish_progress,
-                task_id=task_id)
+                task_id=task_id,
+                resume_idx=resume_tts_idx,
+                checkpoint_cb=_fish_checkpoint)
+
+            # TTS 完成后清除断点标记
+            update_task(task_id, _checkpoint_tts_idx=0)
 
         elif tts_engine == "qwen3-tts" and voice_clone:
             qwen_cache_dir = os.path.join(result_dir, "tts_sent_cache")
