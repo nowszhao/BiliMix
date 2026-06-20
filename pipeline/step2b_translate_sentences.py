@@ -245,15 +245,12 @@ def build_translation_prompt(sentences: list, prev_context: list = None) -> str:
 
     if is_dialogue:
         # ---- 多句（对话/段落）模式 ----
+        # 注意：不使用「你是...」等角色扮演开头，translategemma 容易将其理解为元指令并回复确认语
         return (
-            f"你是专业英译中翻译。以下 {len(sentences)} 行英文来自播客口语，行与行之间构成连续的对话或叙述。\n\n"
+            f"将以下 {len(sentences)} 行英文播客口语翻译为自然中文口语。直接输出，不要确认语。\n\n"
             f"{context_section}"
-            f"## 要求\n"
-            f"先通读所有句子理解语境和前后文关系，再逐行翻译：\n"
-            f"1. 口语化：用自然中文口语，适当加入\"吧、呢、嘛、啊\"等语气词。\n"
-            f"2. 习语意译：口语习语翻译实际含义，不要字面直译。\n"
-            f"3. 应答短句保持简短（如\"A hundred percent.\" → \"百分之百确定。\"），"
-            f"但叙述长句要完整翻译，不要截断。\n\n"
+            f"要求：口语化（可加\"吧、呢、嘛、啊\"等语气词）、习语意译、"
+            f"应答短句简短（如\"A hundred percent.\"→\"百分之百确定。\"）、叙述长句完整。\n\n"
             f"{_DIALOGUE_FEWSHOT}"
             f"按 [N] 中文翻译 格式输出：\n\n"
             f"{numbered}"
@@ -261,13 +258,69 @@ def build_translation_prompt(sentences: list, prev_context: list = None) -> str:
     else:
         # ---- 单句模式 ----
         return (
-            f"你是专业英译中翻译，将以下英文播客口语翻译为自然中文口语。\n\n"
-            f"要求：口语化（可加语气词）、习语意译、应答短句简短、叙述长句完整。\n"
-            f"只输出中文翻译，不要解释。\n\n"
+            f"将以下英文翻译为自然中文口语。只输出中文翻译，不要确认语。\n\n"
             f"{_SINGLE_FEWSHOT}"
             f"英文：{sentences[0][1]}\n"
             f"中文："
         )
+
+
+# ============================================================
+# 元响应检测 — 拦截模型返回的提示语而非翻译
+# ============================================================
+# translategemma:12b 有时会返回「请提供需要翻译的英文...」等确认语，
+# 而非实际翻译内容。此检测器用于识别并触发降级重试。
+_META_RESPONSE_PATTERNS = [
+    r'请提供需要翻译的',
+    r'请您提供需要翻译',
+    r'请提供您需要翻译',
+    r'请提供.*翻译.*内容',
+    r'我会尽力.*翻译',
+    r'翻译成自然流畅',
+    r'^好的[，,]',
+    r'^好的[。.]',
+    r'^可以[，,]',
+    r'^可以[。.]',
+    r'请告诉我',
+    r'请输入',
+    r'请发送',
+]
+
+
+def _is_meta_response(text: str) -> bool:
+    """
+    检测模型是否返回了元指令/确认语，而非实际翻译内容。
+
+    Args:
+        text: LLM 回复文本
+
+    Returns:
+        bool: True 表示这是元响应（需要降级重试）
+    """
+    if not text or not text.strip():
+        return False
+    for pattern in _META_RESPONSE_PATTERNS:
+        if re.search(pattern, text):
+            return True
+    return False
+
+
+def _build_direct_prompt(sentences: list) -> str:
+    """
+    构建极简直接的降级翻译 prompt，用于元响应重试。
+
+    特点：去掉所有角色扮演和复杂指令，只用一句祈使句 + 编号内容。
+    translategemma 对这种格式的依从性更高。
+
+    Args:
+        sentences: 待翻译的句子列表 [(seq_id, text), ...]
+    """
+    numbered = "\n".join(f"[{seq_id}] {text}" for seq_id, text in sentences)
+    return (
+        f"翻译以下英文为中文口语，直接输出结果，不要任何确认语。\n\n"
+        f"{numbered}\n\n"
+        f"输出格式：\n"
+    )
 
 
 def _clean_pinyin(text: str) -> str:
@@ -427,15 +480,22 @@ def translate_sentences(segments: list, indices: list = None,
             prompt_logged += 1
             print(f"  [Prompt #{prompt_logged}] 长度 {len(prompt)} 字符:")
             # 只打印 prompt 的句子部分（跳过系统指令），最多 500 字符
-            lines = prompt.split("\n")
-            sentence_start = next((i for i, ln in enumerate(lines) if ln.startswith("[")), 0)
-            snippet = "\n".join(lines[sentence_start:])
+            prompt_lines = prompt.split("\n")
+            sentence_start = next((i for i, ln in enumerate(prompt_lines) if ln.startswith("[")), 0)
+            snippet = "\n".join(prompt_lines[sentence_start:])
             if len(snippet) > 500:
                 snippet = snippet[:500] + "..."
             print(f"  {snippet}")
             print(f"  ---")
         response = call_ollama(prompt)
         batch_translations = parse_translation_response(response, expected_ids)
+
+        # 检测元响应：若模型返回了确认语而非翻译，用极简 prompt 重试批次
+        if not batch_translations and _is_meta_response(response):
+            print(f"  [元响应检测] 模型返回了确认语而非翻译，使用极简 prompt 重试")
+            direct_prompt = _build_direct_prompt(batch)
+            response = call_ollama(direct_prompt)
+            batch_translations = parse_translation_response(response, expected_ids)
 
         elapsed = time.time() - t0
         print(f"         耗时 {elapsed:.1f}s，翻译到 {len(batch_translations)} 句")
@@ -456,6 +516,10 @@ def translate_sentences(segments: list, indices: list = None,
                 print(f"  [重试] 句子 {actual_idx} 单句重试...")
                 retry_prompt = build_translation_prompt([(1, text)], prev_context)
                 retry_resp = call_ollama(retry_prompt)
+                # 检测元响应：若返回确认语，用极简 prompt 重试
+                if _is_meta_response(retry_resp):
+                    print(f"    [元响应] 单句也返回了确认语，使用极简 prompt")
+                    retry_resp = call_ollama(_build_direct_prompt([(1, text)]))
                 retry_text = _clean_pinyin(retry_resp.strip()) if retry_resp else ""
                 if retry_text:
                     retry_text = _apply_colloquial_fixup(text, retry_text)
