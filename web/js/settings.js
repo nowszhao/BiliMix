@@ -12,20 +12,17 @@ function showSection(section) {
     const progress = document.getElementById('progress-section');
     const confirm = document.getElementById('confirm-section');
     const sentenceConfirm = document.getElementById('sentence-confirm-section');
-    const ttsReview = document.getElementById('tts-review-section');
     const result = document.getElementById('result-section');
 
     hero.style.display = 'none';
     progress.classList.add('hidden');
     confirm.classList.add('hidden');
     sentenceConfirm.classList.add('hidden');
-    if (ttsReview) ttsReview.classList.add('hidden');
     result.classList.add('hidden');
 
     if (section === 'progress') progress.classList.remove('hidden');
     else if (section === 'confirm') confirm.classList.remove('hidden');
     else if (section === 'sentence-confirm') sentenceConfirm.classList.remove('hidden');
-    else if (section === 'tts-review' && ttsReview) ttsReview.classList.remove('hidden');
     else if (section === 'result') result.classList.remove('hidden');
     else hero.style.display = '';
 
@@ -135,12 +132,6 @@ function resetAll() {
     sentenceTranslations = {};
     sentenceTranslatedIndices = [];
     sentenceSegments = [];
-
-    ttsReviewSegments = [];
-    ttsReviewStop();
-    ttsReviewPlayingIdx = -1;
-    ttsReviewPlayAllActive = false;
-    ttsReviewPlayMode = 'tts';
 
     ['auto-scroll-btn', 'fs-auto-scroll-btn'].forEach(id => {
         const btn = document.getElementById(id);
@@ -465,7 +456,6 @@ async function loadHistory() {
                 'completed': '已完成', 'processing': '处理中', 'downloading': '下载中',
                 'queued': '排队中',
                 'awaiting_confirmation': '待确认', 'awaiting_sentence_confirmation': '待确认翻译',
-                'awaiting_tts_review': '待试听审查',
                 'error': '出错', 'cancelled': '已终止',
             };
             const statusLabel = statusMap[t.status] || t.status;
@@ -548,8 +538,6 @@ async function viewHistoryTask(taskId, url) {
             await loadConfirmationUI();
         } else if (data.status === 'awaiting_sentence_confirmation') {
             await loadSentenceConfirmationUI();
-        } else if (data.status === 'awaiting_tts_review') {
-            await loadTtsReviewUI();
         } else if (data.status === 'processing' || data.status === 'downloading') {
             showSection('progress');
             resetProgressUI();

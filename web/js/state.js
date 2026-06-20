@@ -38,11 +38,7 @@ let sentenceTranslatedIndices = [];
 let sentenceSegments = [];
 
 // TTS 审查状态
-let ttsReviewSegments = [];
-let ttsReviewAudio = null;
-let ttsReviewPlayingIdx = -1;
-let ttsReviewPlayAllActive = false;
-let ttsReviewPlayMode = 'tts'; // 'tts' | 'ref'
+
 
 // 历史音频状态
 let historyPlayingTaskId = null;
