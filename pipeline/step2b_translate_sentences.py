@@ -305,7 +305,7 @@ def _is_meta_response(text: str) -> bool:
     return False
 
 
-def _build_direct_prompt(sentences: list) -> str:
+def _build_direct_prompt(sentences: list, prev_context: list = None) -> str:
     """
     构建极简直接的降级翻译 prompt，用于元响应重试。
 
@@ -314,12 +314,23 @@ def _build_direct_prompt(sentences: list) -> str:
 
     Args:
         sentences: 待翻译的句子列表 [(seq_id, text), ...]
+        prev_context: 上一批末尾的上下文 [(english原文, 中文翻译), ...]
     """
     numbered = "\n".join(f"[{seq_id}] {text}" for seq_id, text in sentences)
+
+    context_section = ""
+    if prev_context:
+        ctx_lines = "\n".join(
+            f"  {eng} → {chi}" for eng, chi in prev_context
+        )
+        context_section = (
+            f"前文参考（当前句子紧接着前文，保持连贯）：\n{ctx_lines}\n\n"
+        )
+
     return (
         f"翻译以下英文为中文口语，直接输出结果，不要任何确认语。\n\n"
-        f"{numbered}\n\n"
-        f"输出格式：\n"
+        f"{context_section}"
+        f"{numbered}\n"
     )
 
 
@@ -493,7 +504,7 @@ def translate_sentences(segments: list, indices: list = None,
         # 检测元响应：若模型返回了确认语而非翻译，用极简 prompt 重试批次
         if not batch_translations and _is_meta_response(response):
             print(f"  [元响应检测] 模型返回了确认语而非翻译，使用极简 prompt 重试")
-            direct_prompt = _build_direct_prompt(batch)
+            direct_prompt = _build_direct_prompt(batch, prev_context)
             response = call_ollama(direct_prompt)
             batch_translations = parse_translation_response(response, expected_ids)
 
@@ -519,7 +530,7 @@ def translate_sentences(segments: list, indices: list = None,
                 # 检测元响应：若返回确认语，用极简 prompt 重试
                 if _is_meta_response(retry_resp):
                     print(f"    [元响应] 单句也返回了确认语，使用极简 prompt")
-                    retry_resp = call_ollama(_build_direct_prompt([(1, text)]))
+                    retry_resp = call_ollama(_build_direct_prompt([(1, text)], prev_context))
                 retry_text = _clean_pinyin(retry_resp.strip()) if retry_resp else ""
                 if retry_text:
                     retry_text = _apply_colloquial_fixup(text, retry_text)
