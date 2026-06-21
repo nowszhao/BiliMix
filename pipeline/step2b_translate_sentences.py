@@ -190,26 +190,32 @@ def _apply_colloquial_fixup(english: str, chinese: str) -> str:
 
 
 # ============================================================
-# 口语翻译 Few-shot 示例（精简为 2 组）
+# 口语翻译 Few-shot 示例 — 展示地道翻译 + ASR 纠错
 # ============================================================
+# 原始英文来自 WhisperX 语音识别，可能含转录错误（发音相近词、漏词等）。
+# few-shot 示范：理解真实语义后翻译为地道中文，而非直译错误。
 _DIALOGUE_FEWSHOT = (
-    "示例：\n"
-    "[1] Really?\n"
-    "[2] A hundred percent.\n"
-    "→ [1] 真的吗？\n"
-    "→ [2] 百分之百确定。\n\n"
-    "[3] Are you coming tonight?\n"
-    "[4] You bet.\n"
-    "→ [3] 你今晚来吗？\n"
-    "→ [4] 当然。\n"
+    "示例（原文可能有转录错误，翻译时修正）：\n"
+    "[1] I was like wait are you serious right now.\n"
+    "[2] Yeah a hundred percent I'm not joking.\n"
+    "[3] I new there was something off about that.\n"
+    "→ [1] 我当时心想，等等，你说真的吗。\n"
+    "→ [2] 对，百分之百没跟你开玩笑。\n"
+    "→ [3] 我就知道这事儿有蹊跷。\n\n"
+    "[4] They was saying its gonna be huge.\n"
+    "[5] But to be honest I don't buy it.\n"
+    "[6] Fair enough I get your point.\n"
+    "→ [4] 他们说这事儿会很大的。\n"
+    "→ [5] 不过说实话，我不太信。\n"
+    "→ [6] 也是，我理解你的意思。\n"
 )
 
 _SINGLE_FEWSHOT = (
-    "示例：\n"
-    "英文：A hundred percent.\n"
-    "中文：百分之百确定。\n"
-    "英文：I had no idea what I wanted to do with my life.\n"
-    "中文：我完全不知道这辈子想干什么。\n"
+    "示例（原文可能有转录错误，翻译时修正）：\n"
+    "英文：I new there was something off about that.\n"
+    "中文：我就知道这事儿有蹊跷。\n"
+    "英文：They was saying its gonna be huge but I don't buy it.\n"
+    "中文：他们说这事儿会很大的，但我不太信。\n"
 )
 
 
@@ -245,12 +251,16 @@ def build_translation_prompt(sentences: list, prev_context: list = None) -> str:
 
     if is_dialogue:
         # ---- 多句（对话/段落）模式 ----
-        # 注意：不使用「你是...」等角色扮演开头，translategemma 容易将其理解为元指令并回复确认语
+        # 不使用「你是...」等角色扮演开头，translategemma 容易将其理解为元指令并回复确认语
         return (
-            f"将以下 {len(sentences)} 行英文播客口语翻译为自然中文口语。直接输出，不要确认语。\n\n"
+            f"将以下 {len(sentences)} 行英文播客口语翻译为地道中文口语。直接输出，不要确认语。\n\n"
+            f"提示：原文来自语音识别，可能含转录错误。理解真实语义后再翻译。\n\n"
             f"{context_section}"
-            f"要求：口语化（可加\"吧、呢、嘛、啊\"等语气词）、习语意译、"
-            f"应答短句简短（如\"A hundred percent.\"→\"百分之百确定。\"）、叙述长句完整。\n\n"
+            f"要求：\n"
+            f"1. 地道中文：用母语者日常聊天的表达方式，不要书面语或翻译腔\n"
+            f"2. 习语意译：口语习语翻实际含义，不字面直译\n"
+            f"3. 纠错润色：识别转录错误（如发音相近词、漏词），按正确意思翻译，不要直译错误\n"
+            f"4. 应答短句简短（如\"A hundred percent.\"→\"百分之百确定。\"），叙述长句完整自然\n\n"
             f"{_DIALOGUE_FEWSHOT}"
             f"按 [N] 中文翻译 格式输出：\n\n"
             f"{numbered}"
@@ -258,7 +268,8 @@ def build_translation_prompt(sentences: list, prev_context: list = None) -> str:
     else:
         # ---- 单句模式 ----
         return (
-            f"将以下英文翻译为自然中文口语。只输出中文翻译，不要确认语。\n\n"
+            f"将以下英文翻译为地道中文口语。只输出中文翻译，不要确认语。\n\n"
+            f"提示：原文可能有转录错误，理解真实语义后翻译。\n\n"
             f"{_SINGLE_FEWSHOT}"
             f"英文：{sentences[0][1]}\n"
             f"中文："
@@ -328,7 +339,7 @@ def _build_direct_prompt(sentences: list, prev_context: list = None) -> str:
         )
 
     return (
-        f"翻译以下英文为中文口语，直接输出结果，不要任何确认语。\n\n"
+        f"将以下英文翻译为地道中文口语。原文可能有转录错误，理解真实语义后翻译，直接输出结果，不要确认语。\n\n"
         f"{context_section}"
         f"{numbered}\n"
     )
