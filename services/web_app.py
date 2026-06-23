@@ -870,7 +870,8 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
 
         serialized_segments = [{"text": s.get("text", "").strip(),
                                 "start": s.get("start", 0),
-                                "end": s.get("end", 0)} for s in segments]
+                                "end": s.get("end", 0),
+                                "speaker": s.get("speaker", "")} for s in segments]
         update_task(task_id, progress=20,
                     message=f"转录完成: {len(segments)} 个句子",
                     transcription_text=full_text, segments=serialized_segments)
@@ -1001,14 +1002,9 @@ def continue_after_sentence_confirmation(task_id: str):
         basename = task.get("_basename", "")
         translations = task.get("translations", {})
         translated_indices = task.get("translated_indices", [])
-        segments = task.get("segments", [])
-
-        if not segments:
-            raw_segs = task.get("_raw_segments", [])
-            if raw_segs:
-                segments = [{"text": s.get("text", "").strip(),
-                             "start": s.get("start", 0),
-                             "end": s.get("end", 0)} for s in raw_segs]
+        # 优先使用完整 _raw_segments（含 speaker 等字段，声音克隆需 speaker 做说话人匹配）；
+        # _raw_segments 缺失时（如断点续传从磁盘恢复）回退到精简 segments
+        segments = task.get("_raw_segments") or task.get("segments", [])
 
         full_text = task.get("transcription_text", "")
         result_dir = os.path.join(config.RESULT_DIR, basename)
