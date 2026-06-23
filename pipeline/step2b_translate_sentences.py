@@ -9,13 +9,28 @@ Step 2b: 句子翻译模块 (sentence_translate / smart_translate 模式)
 """
 import re
 import time
+from typing import Any, Callable, Optional
 
 from core import config
 from pipeline.step2_identify_difficult_words import call_ollama
 
+# ============================================================
+# 常量配置
+# ============================================================
+_MAX_PROMPT_LOG = 10          # 调试时最多打印的 prompt 数量
+_PROMPT_SNIPPET_LEN = 500     # 打印 prompt 片段的最大长度
+_CONTEXT_WINDOW = 4           # 跨 batch 上下文保留的句子数
+_MAX_RETRIES = 3              # LLM 调用失败最大重试次数
+_RETRY_BACKOFF = 2.0          # 重试退避基数（秒）
+_META_MAX_LEN = 100           # 元响应判定的最大文本长度
+# 拉丁字母（含拼音声调符号），用于识别括号内的拼音注释
+_LATIN_RE = r'[A-Za-zÀ-ÖØ-öø-ÿĀ-ž]'
 
-def select_sentences_by_difficulty(segments: list, difficult_words: list,
-                                   max_ratio: float = None) -> list:
+
+def select_sentences_by_difficulty(
+        segments: list[dict[str, Any]],
+        difficult_words: list[dict[str, Any]],
+        max_ratio: Optional[float] = None) -> list[int]:
     """
     根据生词识别结果，选出包含生词的句子索引（smart_translate 模式专用）。
 
@@ -28,26 +43,42 @@ def select_sentences_by_difficulty(segments: list, difficult_words: list,
         list[int]: 需要翻译的 segment 索引列表（按生词密度降序截断后再排序）
     """
     if max_ratio is None:
-        max_ratio = getattr(config, "SMART_MAX_TRANSLATE_RATIO", 0.7)
+        max_ratio = float(getattr(config, "SMART_MAX_TRANSLATE_RATIO", 0.7))
 
     total = len(segments)
     if total == 0 or not difficult_words:
         return []
 
-    # 构建生词集合（小写），包括多词短语
-    word_set = set()
+    # 构建生词集合（小写），区分单词与多词短语
+    # 单词必须用词边界匹配，否则 cat 会命中 category / location
+    single_words: set[str] = set()
+    phrases: set[str] = set()
     for w in difficult_words:
-        word_lower = w.get("english", "").lower().strip()
-        if word_lower:
-            word_set.add(word_lower)
+        word_lower = str(w.get("english", "")).lower().strip()
+        if not word_lower:
+            continue
+        if " " in word_lower:
+            phrases.add(word_lower)
+        else:
+            single_words.add(word_lower)
+
+    # 预编译词边界正则：单词需精确匹配
+    word_re = (
+        re.compile(r"\b(?:" + "|".join(re.escape(w) for w in single_words) + r")\b")
+        if single_words else None
+    )
+    phrase_patterns = [re.compile(re.escape(p)) for p in phrases]
 
     # 遍历每个 segment，统计包含的生词数量（密度）
-    seg_scores = []  # [(seg_index, word_count)]
+    seg_scores: list[tuple[int, int]] = []  # [(seg_index, word_count)]
     for i, seg in enumerate(segments):
-        text_lower = seg.get("text", "").lower()
+        text_lower = str(seg.get("text", "")).lower()
         count = 0
-        for word in word_set:
-            if word in text_lower:
+        if word_re:
+            # set 去重：同一生词在一句中多次出现只计一次
+            count += len(set(word_re.findall(text_lower)))
+        for pat in phrase_patterns:
+            if pat.search(text_lower):
                 count += 1
         if count > 0:
             seg_scores.append((i, count))
@@ -72,7 +103,9 @@ def select_sentences_by_difficulty(segments: list, difficult_words: list,
     return indices
 
 
-def select_sentences_to_translate(segments: list, ratio: float = None) -> list:
+def select_sentences_to_translate(
+        segments: list[dict[str, Any]],
+        ratio: Optional[float] = None) -> list[int]:
     """
     根据翻译占比，均匀间隔选择需要翻译的句子索引。
 
@@ -84,7 +117,7 @@ def select_sentences_to_translate(segments: list, ratio: float = None) -> list:
         list[int]: 需要翻译的 segment 索引列表
     """
     if ratio is None:
-        ratio = getattr(config, "SENTENCE_CN_RATIO", 1.0)
+        ratio = float(getattr(config, "SENTENCE_CN_RATIO", 1.0))
 
     total = len(segments)
     if total == 0 or ratio <= 0:
@@ -99,7 +132,7 @@ def select_sentences_to_translate(segments: list, ratio: float = None) -> list:
         return list(range(total))
 
     step = total / count
-    indices = []
+    indices: list[int] = []
     for i in range(count):
         idx = round(i * step)
         if idx < total:
@@ -170,11 +203,23 @@ _COLLOQUIAL_FIXUPS: dict[str, str] = {
     "off the top of my head": "凭印象说",
 }
 
+# 预编译口语短语匹配正则（词边界），(pattern, 短词数, 修正译文)
+# 仅保留有非空修正译文且为有效短语的条目
+_COLLOQUIAL_PATTERNS = [
+    (re.compile(r"\b" + re.escape(phrase) + r"\b"), len(phrase.split()), fixup)
+    for phrase, fixup in _COLLOQUIAL_FIXUPS.items()
+    if fixup and phrase.split()
+]
+
 
 def _apply_colloquial_fixup(english: str, chinese: str) -> str:
     """
     对翻译结果做口语习语兜底修正。
-    如果英语原文匹配已知口语短语，用字典值替换直译结果。
+
+    修正策略（按优先级）：
+    1. 整句完全匹配：原文去掉首尾标点后等于字典 key，直接替换。
+    2. 短语主导匹配：已知口语短语在原文中出现，且其词数占整句词数
+       比例 >= 0.6（短句应答），用字典值替换直译结果，避免字面翻译。
 
     Args:
         english: 英文原文（整句）
@@ -183,9 +228,25 @@ def _apply_colloquial_fixup(english: str, chinese: str) -> str:
     Returns:
         str: 修正后的中文（如无需修正则返回原值）
     """
+    if not english:
+        return chinese
     eng_lower = english.strip().rstrip(".!?。！？").lower()
+    if not eng_lower:
+        return chinese
+
+    # 1. 整句完全匹配
     if eng_lower in _COLLOQUIAL_FIXUPS:
         return _COLLOQUIAL_FIXUPS[eng_lower]
+
+    # 2. 短语在句中占主导时替换（避免对长句误替换）
+    eng_words = eng_lower.split()
+    eng_wc = len(eng_words)
+    if eng_wc == 0:
+        return chinese
+
+    for pat, phrase_wc, fixup in _COLLOQUIAL_PATTERNS:
+        if pat.search(eng_lower) and phrase_wc / eng_wc >= 0.6:
+            return fixup
     return chinese
 
 
@@ -205,7 +266,7 @@ _DIALOGUE_FEWSHOT = (
     "[4] They was saying its gonna be huge.\n"
     "[5] But to be honest I don't buy it.\n"
     "[6] Fair enough I get your point.\n"
-    "→ [4] 他们说这事儿会很大的。\n"
+    "→ [4] 他们说这事儿会搞得很大。\n"
     "→ [5] 不过说实话，我不太信。\n"
     "→ [6] 也是，我理解你的意思。\n"
 )
@@ -215,11 +276,38 @@ _SINGLE_FEWSHOT = (
     "英文：I new there was something off about that.\n"
     "中文：我就知道这事儿有蹊跷。\n"
     "英文：They was saying its gonna be huge but I don't buy it.\n"
-    "中文：他们说这事儿会很大的，但我不太信。\n"
+    "中文：他们说这事儿会搞得很大，但我不太信。\n"
 )
 
 
-def build_translation_prompt(sentences: list, prev_context: list = None) -> str:
+def _build_context_section(
+        prev_context: Optional[list[tuple[str, str]]] = None,
+        simple: bool = False) -> str:
+    """
+    构建跨 batch 前文上下文片段（供各 prompt 复用，避免重复代码）。
+
+    Args:
+        prev_context: 上一批末尾的上下文 [(english原文, 中文翻译), ...]
+        simple: True 用极简措辞（降级 prompt），False 用完整措辞
+
+    Returns:
+        str: 上下文片段（无上下文时返回空串）
+    """
+    if not prev_context:
+        return ""
+    ctx_lines = "\n".join(f"  {eng} → {chi}" for eng, chi in prev_context)
+    if simple:
+        return f"前文参考（承接前文语境，保持人称、术语与语气连贯）：\n{ctx_lines}\n\n"
+    return (
+        f"## 前文参考\n"
+        f"上一批已翻译（英文→中文）：\n{ctx_lines}\n"
+        f"当前句子承接前文语境，请保持人称、术语与语气连贯。\n\n"
+    )
+
+
+def build_translation_prompt(
+        sentences: list[tuple[int, str]],
+        prev_context: Optional[list[tuple[str, str]]] = None) -> str:
     """
     构建批量翻译 prompt，针对播客口语 + 叙事场景优化。
 
@@ -238,16 +326,7 @@ def build_translation_prompt(sentences: list, prev_context: list = None) -> str:
     is_dialogue = len(sentences) > 1
 
     # 构建前文上下文（跨 batch 连贯性保障）
-    context_section = ""
-    if prev_context:
-        ctx_lines = "\n".join(
-            f"  {eng} → {chi}" for eng, chi in prev_context
-        )
-        context_section = (
-            f"## 前文参考\n"
-            f"上一批已翻译（英文→中文）：\n{ctx_lines}\n"
-            f"当前句子紧接着前文，请保持连贯。\n\n"
-        )
+    context_section = _build_context_section(prev_context)
 
     if is_dialogue:
         # ---- 多句（对话/段落）模式 ----
@@ -270,6 +349,7 @@ def build_translation_prompt(sentences: list, prev_context: list = None) -> str:
         return (
             f"将以下英文翻译为地道中文口语。只输出中文翻译，不要确认语。\n\n"
             f"提示：原文可能有转录错误，理解真实语义后翻译。\n\n"
+            f"{context_section}"
             f"{_SINGLE_FEWSHOT}"
             f"英文：{sentences[0][1]}\n"
             f"中文："
@@ -302,6 +382,10 @@ def _is_meta_response(text: str) -> bool:
     """
     检测模型是否返回了元指令/确认语，而非实际翻译内容。
 
+    为降低误判：仅当文本较短（<= _META_MAX_LEN 字符）时才检测，
+    避免长篇正常翻译中恰好含「请告诉我」等短语被误判。
+    ^ 锚定模式启用 MULTILINE，使模型先输出空行时也能命中行首。
+
     Args:
         text: LLM 回复文本
 
@@ -310,13 +394,19 @@ def _is_meta_response(text: str) -> bool:
     """
     if not text or not text.strip():
         return False
+    stripped = text.strip()
+    # 元响应通常很短（确认语不会是长翻译），限制长度避免误判正常翻译
+    if len(stripped) > _META_MAX_LEN:
+        return False
     for pattern in _META_RESPONSE_PATTERNS:
-        if re.search(pattern, text):
+        if re.search(pattern, stripped, re.MULTILINE):
             return True
     return False
 
 
-def _build_direct_prompt(sentences: list, prev_context: list = None) -> str:
+def _build_direct_prompt(
+        sentences: list[tuple[int, str]],
+        prev_context: Optional[list[tuple[str, str]]] = None) -> str:
     """
     构建极简直接的降级翻译 prompt，用于元响应重试。
 
@@ -328,15 +418,7 @@ def _build_direct_prompt(sentences: list, prev_context: list = None) -> str:
         prev_context: 上一批末尾的上下文 [(english原文, 中文翻译), ...]
     """
     numbered = "\n".join(f"[{seq_id}] {text}" for seq_id, text in sentences)
-
-    context_section = ""
-    if prev_context:
-        ctx_lines = "\n".join(
-            f"  {eng} → {chi}" for eng, chi in prev_context
-        )
-        context_section = (
-            f"前文参考（当前句子紧接着前文，保持连贯）：\n{ctx_lines}\n\n"
-        )
+    context_section = _build_context_section(prev_context, simple=True)
 
     return (
         f"将以下英文翻译为地道中文口语。原文可能有转录错误，理解真实语义后翻译，直接输出结果，不要确认语。\n\n"
@@ -363,18 +445,20 @@ def _clean_pinyin(text: str) -> str:
         return text
 
     # 去除末尾括号中的拼音/英文注释
-    # 模式1: "中文 (Wǒ méiyǒu...)" → 去掉末尾括号及括号内内容
-    text = re.sub(r'\s*\([A-Za-zà-üā-ōǜěńňǵḿ][^)]*\)\s*$', '', text)
-    # 模式2: "中文 [Wǒ méiyǒu...]"
-    text = re.sub(r'\s*\[[A-Za-zà-üā-ōǜěńňǵḿ][^\]]*\]\s*$', '', text)
+    # 括号内以拉丁字母（含拼音声调符号）开头才视为拼音注释并移除
+    # 模式1: "中文 (Wǒ méiyǒu...)" → 去掉末尾圆括号及括号内内容
+    text = re.sub(r'\s*\(' + _LATIN_RE + r'[^)]*\)\s*$', '', text)
+    # 模式2: "中文 [Wǒ méiyǒu...]" → 去掉末尾方括号
+    text = re.sub(r'\s*\[' + _LATIN_RE + r'[^\]]*\]\s*$', '', text)
     return text.strip()
 
 
-def parse_translation_response(response_text: str, expected_ids: list) -> dict:
+def parse_translation_response(response_text: str, expected_ids: list[int]) -> dict[int, str]:
     """
     解析 TranslateGemma 的批量翻译纯文本响应。
 
-    优先按 [N] 前缀匹配；若前缀匹配失败，按行位置顺序匹配。
+    优先按 [N] 前缀匹配；对前缀匹配缺失的 id，用非前缀行按位置顺序补充，
+    避免部分带前缀、部分不带前缀时丢失句子。同一 [N] 多次出现只保留首次。
 
     Args:
         response_text: LLM 回复文本
@@ -387,11 +471,11 @@ def parse_translation_response(response_text: str, expected_ids: list) -> dict:
         return {}
 
     lines = response_text.strip().split("\n")
-    result = {}
+    result: dict[int, str] = {}
 
-    # 第一轮：按 [N] 前缀匹配
+    # 第一轮：按 [N] 前缀匹配（同一 id 只保留首次出现的翻译）
     id_prefix = re.compile(r'^\[(\d+)\]\s*(.*)')
-    found_by_prefix = {}
+    non_prefixed_lines: list[str] = []
     for line in lines:
         line = line.strip()
         if not line:
@@ -400,29 +484,66 @@ def parse_translation_response(response_text: str, expected_ids: list) -> dict:
         if m:
             sid = int(m.group(1))
             translation = _clean_pinyin(m.group(2).strip())
-            if translation:
-                found_by_prefix[sid] = translation
+            if translation and sid not in result:
+                result[sid] = translation
+        else:
+            cleaned = _clean_pinyin(line)
+            if cleaned:
+                non_prefixed_lines.append(cleaned)
 
-    # 第二轮：前缀匹配不到的部分，按位置顺序补充
-    if found_by_prefix:
-        result.update(found_by_prefix)
-        return result
-
-    # 无前缀匹配时，将非空行按顺序映射到 expected_ids
-    non_empty = [_clean_pinyin(l.strip()) for l in lines if l.strip()]
-    for i, sid in enumerate(expected_ids):
-        if i < len(non_empty) and non_empty[i]:
-            result[sid] = non_empty[i]
+    # 第二轮：前缀匹配缺失的 id，用非前缀行按位置顺序补充
+    missing_ids = [sid for sid in expected_ids if sid not in result]
+    for i, sid in enumerate(missing_ids):
+        if i < len(non_prefixed_lines):
+            result[sid] = non_prefixed_lines[i]
 
     return result
 
 
-def translate_sentences(segments: list, indices: list = None,
-                        batch_size: int = None,
-                        cancel_check=None, progress_cb=None,
-                        resume_batch: int = 0,
-                        existing_translations: dict = None,
-                        checkpoint_cb=None) -> dict:
+def _call_llm(prompt: str, max_retries: int = _MAX_RETRIES) -> str:
+    """
+    带重试退避的 LLM 调用封装。
+
+    call_ollama 在连接失败时会 sys.exit(1)，此处捕获 SystemExit 以避免
+    整个翻译流程被杀掉（已翻译的批次虽由 checkpoint 保存，但进程退出
+    体验差）。对超时/空响应做指数退避重试。
+
+    Args:
+        prompt: 提示词
+        max_retries: 最大重试次数
+
+    Returns:
+        str: 模型回复文本（全部失败时返回空串）
+    """
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = call_ollama(prompt)
+        except SystemExit:
+            # call_ollama 连接失败触发 sys.exit，阻止其杀掉整个进程
+            wait = _RETRY_BACKOFF * attempt
+            print(f"  [Step2b] LLM 连接失败（第 {attempt}/{max_retries} 次），"
+                  f"{wait:.0f}s 后重试")
+            time.sleep(wait)
+            continue
+        if resp and resp.strip():
+            return resp
+        wait = _RETRY_BACKOFF * attempt
+        print(f"  [Step2b] LLM 返回空响应（第 {attempt}/{max_retries} 次），"
+              f"{wait:.0f}s 后重试")
+        time.sleep(wait)
+    print(f"  [Step2b] LLM 调用重试 {max_retries} 次仍失败，放弃此批")
+    return ""
+
+
+def translate_sentences(
+        segments: list[dict[str, Any]],
+        indices: Optional[list[int]] = None,
+        batch_size: Optional[int] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
+        progress_cb: Optional[Callable[[int, int], None]] = None,
+        resume_batch: int = 0,
+        existing_translations: Optional[dict[int, str]] = None,
+        checkpoint_cb: Optional[Callable[[int, dict[int, str]], None]] = None) -> dict[int, str]:
     """
     批量翻译指定的句子，适配 TranslateGemma。
     支持断点续跑：resume_batch 跳过已完成批次，existing_translations 预填充。
@@ -431,8 +552,11 @@ def translate_sentences(segments: list, indices: list = None,
         segments: WhisperX segments 列表
         indices: 需要翻译的 segment 索引列表，None 则翻译全部
         batch_size: 每批翻译的句子数量
-        cancel_check: 终止检查回调
+        cancel_check: 终止检查回调，返回 True 则中断任务
         progress_cb: 进度回调 (batch_idx, total_batches)
+        resume_batch: 从第几个批次开始续跑（0-based），跳过之前的批次
+        existing_translations: 已有翻译 {segment_index: chinese}，用于断点续跑预填充
+        checkpoint_cb: 每批完成后的断点保存回调 (completed_batches, translations_copy)
 
     Returns:
         dict: {segment_index: chinese_translation}
@@ -441,13 +565,13 @@ def translate_sentences(segments: list, indices: list = None,
         indices = list(range(len(segments)))
 
     if batch_size is None:
-        batch_size = getattr(config, "LLM_BATCH_SIZE", 8)
+        batch_size = int(getattr(config, "LLM_BATCH_SIZE", 8))
 
     # 构建 (索引, 文本) 对
-    sentence_pairs = []
+    sentence_pairs: list[tuple[int, str]] = []
     for idx in indices:
         if idx < len(segments):
-            text = segments[idx].get("text", "").strip()
+            text = str(segments[idx].get("text", "")).strip()
             if text:
                 sentence_pairs.append((idx, text))
 
@@ -456,31 +580,43 @@ def translate_sentences(segments: list, indices: list = None,
         return {}
 
     # 用 1-based 顺序编号作为 prompt 中的标记，seq_to_idx 映射回实际 segment 索引
-    seq_to_idx = {}
-    numbered_pairs = []
+    seq_to_idx: dict[int, int] = {}
+    numbered_pairs: list[tuple[int, str]] = []
     for seq_id, (idx, text) in enumerate(sentence_pairs, start=1):
         seq_to_idx[seq_id] = idx
         numbered_pairs.append((seq_id, text))
 
     # 分批
-    batches = []
+    batches: list[list[tuple[int, str]]] = []
     for i in range(0, len(numbered_pairs), batch_size):
         batches.append(numbered_pairs[i:i + batch_size])
 
     total_batches = len(batches)
     start_batch = resume_batch if resume_batch < total_batches else total_batches
 
-    all_translations = existing_translations or {}
+    all_translations: dict[int, str] = dict(existing_translations) if existing_translations else {}
     if start_batch > 0:
         print(f"[Step2b] 从批次 {start_batch + 1}/{total_batches} 续跑 "
               f"(已跳过前 {start_batch} 批，已有 {len(all_translations)} 个翻译)")
+        # 续跑时先报告已完成的进度，避免进度条停滞
+        if progress_cb:
+            progress_cb(start_batch, total_batches)
 
     print(f"[Step2b] 开始逐批翻译，共 {len(numbered_pairs)} 个句子，"
           f"每批 {batch_size} 句，分为 {total_batches} 批")
 
-    # 跨 batch 上下文：记录上一批末尾 2 句的 (英文原文, 中文翻译)
-    prev_context = []
-    prompt_logged = 0  # 只打印前 10 个 prompt 方便调试
+    # 跨 batch 上下文：记录上一批末尾 N 句的 (英文原文, 中文翻译)
+    # 续跑时从已有翻译重建上下文，保持跨 batch 连贯性
+    prev_context: list[tuple[str, str]] = []
+    if start_batch > 0 and existing_translations:
+        tail_pairs = [
+            (idx, str(segments[idx].get("text", "")).strip())
+            for idx, _ in sentence_pairs
+            if idx in existing_translations
+        ][-_CONTEXT_WINDOW:]
+        prev_context = [(eng, str(existing_translations[idx])) for idx, eng in tail_pairs]
+
+    prompt_logged = 0  # 只打印前若干个 prompt 方便调试
 
     for batch_idx, batch in enumerate(batches):
         if batch_idx < start_batch:
@@ -498,25 +634,25 @@ def translate_sentences(segments: list, indices: list = None,
 
         t0 = time.time()
         prompt = build_translation_prompt(batch, prev_context)
-        if prompt_logged < 10:
+        if prompt_logged < _MAX_PROMPT_LOG:
             prompt_logged += 1
             print(f"  [Prompt #{prompt_logged}] 长度 {len(prompt)} 字符:")
-            # 只打印 prompt 的句子部分（跳过系统指令），最多 500 字符
+            # 只打印 prompt 的句子部分（跳过系统指令），最多 _PROMPT_SNIPPET_LEN 字符
             prompt_lines = prompt.split("\n")
             sentence_start = next((i for i, ln in enumerate(prompt_lines) if ln.startswith("[")), 0)
             snippet = "\n".join(prompt_lines[sentence_start:])
-            if len(snippet) > 500:
-                snippet = snippet[:500] + "..."
+            if len(snippet) > _PROMPT_SNIPPET_LEN:
+                snippet = snippet[:_PROMPT_SNIPPET_LEN] + "..."
             print(f"  {snippet}")
             print(f"  ---")
-        response = call_ollama(prompt)
+        response = _call_llm(prompt)
         batch_translations = parse_translation_response(response, expected_ids)
 
         # 检测元响应：若模型返回了确认语而非翻译，用极简 prompt 重试批次
         if not batch_translations and _is_meta_response(response):
             print(f"  [元响应检测] 模型返回了确认语而非翻译，使用极简 prompt 重试")
             direct_prompt = _build_direct_prompt(batch, prev_context)
-            response = call_ollama(direct_prompt)
+            response = _call_llm(direct_prompt)
             batch_translations = parse_translation_response(response, expected_ids)
 
         elapsed = time.time() - t0
@@ -524,24 +660,24 @@ def translate_sentences(segments: list, indices: list = None,
 
         # 合并结果：将 seq_id 映射回实际 segment 索引
         # 同时收集本批的英文→中文对，供下一批做上下文
-        batch_english_chi = []  # 本批所有翻译的结果
+        batch_english_chi: list[tuple[str, str]] = []  # 本批所有翻译的结果
         for seq_id, text in batch:
             actual_idx = seq_to_idx[seq_id]
             if seq_id in batch_translations and batch_translations[seq_id]:
-                # 口语习语兜底修正 + 拼音清洗
+                # 口语习语兜底修正（拼音已在 parse 阶段清洗）
                 translation = batch_translations[seq_id]
                 translation = _apply_colloquial_fixup(text, translation)
                 all_translations[actual_idx] = translation
                 batch_english_chi.append((text, translation))
             else:
-                # 单句重试（使用对话感知 prompt）
+                # 单句重试（使用单句 prompt）
                 print(f"  [重试] 句子 {actual_idx} 单句重试...")
                 retry_prompt = build_translation_prompt([(1, text)], prev_context)
-                retry_resp = call_ollama(retry_prompt)
+                retry_resp = _call_llm(retry_prompt)
                 # 检测元响应：若返回确认语，用极简 prompt 重试
                 if _is_meta_response(retry_resp):
                     print(f"    [元响应] 单句也返回了确认语，使用极简 prompt")
-                    retry_resp = call_ollama(_build_direct_prompt([(1, text)], prev_context))
+                    retry_resp = _call_llm(_build_direct_prompt([(1, text)], prev_context))
                 retry_text = _clean_pinyin(retry_resp.strip()) if retry_resp else ""
                 if retry_text:
                     retry_text = _apply_colloquial_fixup(text, retry_text)
@@ -550,9 +686,9 @@ def translate_sentences(segments: list, indices: list = None,
                 else:
                     print(f"  [失败] 句子 {actual_idx} 翻译失败，跳过")
 
-        # 更新跨 batch 上下文：取本批最后 2 条翻译
+        # 更新跨 batch 上下文：取本批最后 N 条翻译
         if batch_english_chi:
-            prev_context = batch_english_chi[-2:]
+            prev_context = batch_english_chi[-_CONTEXT_WINDOW:]
 
         # 每批完成后保存断点
         if checkpoint_cb:

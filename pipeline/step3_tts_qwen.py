@@ -253,6 +253,200 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
     return ref_map, ref_source_map
 
 
+def _assign_speaker_labels(segments: list) -> list:
+    """
+    为每个 segment 分配说话人标签。
+
+    优先使用 diarization 的 speaker 字段；缺失时按 inter-segment gap 估算
+    说话人轮次作为兜底（gap > SAME_SPEAKER_GAP 视为换人）。
+
+    Returns:
+        list: 每个 segment 的说话人标签（字符串）
+    """
+    has_real_speaker = any(seg.get("speaker") for seg in segments)
+    if has_real_speaker:
+        return [seg.get("speaker") or "spk_unknown" for seg in segments]
+
+    # 无 diarization：用 gap 分组作为伪说话人
+    same_speaker_gap = getattr(config, "SAME_SPEAKER_GAP", 0.8)
+    groups = _group_segments_into_turns(segments, same_speaker_gap)
+    seg_to_label = {}
+    for gi, group in enumerate(groups):
+        for idx in group:
+            seg_to_label[idx] = f"spk_auto_{gi}"
+    print("[Step3] ⚠️ 未检测到 speaker 标签，按 inter-segment gap 估算说话人。"
+          "建议开启 WhisperX diarization 以获得更稳定音色。")
+    return [seg_to_label.get(i, "spk_auto_0") for i in range(len(segments))]
+
+
+def _find_speaker_longest_segment(segments: list, speaker_labels: list,
+                                  target_speaker: str) -> "int | None":
+    """返回指定说话人全篇时长最长的 segment 索引，无则 None。"""
+    best_idx = None
+    best_dur = 0.0
+    for idx, seg in enumerate(segments):
+        if speaker_labels[idx] != target_speaker:
+            continue
+        dur = seg.get("end", 0) - seg.get("start", 0)
+        if dur > best_dur:
+            best_dur = dur
+            best_idx = idx
+    return best_idx
+
+
+def extract_ref_audio_speaker_local(audio_path: str, segments: list,
+                                    replacements: list, output_dir: str,
+                                    engine: str = "fish") -> tuple:
+    """
+    说话人感知的本地参考音频提取（音色一致 + 情绪保真）。
+
+    策略：
+    - 每句优先用自身原声做参考（情绪/节奏最贴合该句）。
+    - 自身过短（< min_ref_duration）时，向同说话人的相邻 segment 扩展边界，
+      单次 ffmpeg 提取覆盖 [首段.start, 末段.end]，inter-segment 静音自然保留，
+      直到达到 target_ref_duration 或无更多同说话人相邻段。
+    - 严格校验 speaker 一致 + gap ≤ SAME_SPEAKER_GAP，杜绝跨说话人污染。
+    - 扩展后仍不足时，回退到该说话人全篇最长的一段（牺牲情绪换音色稳定）。
+    - 极长段以目标句为中心截取到 max_ref_duration。
+
+    Args:
+        audio_path: 原始音频文件路径
+        segments: WhisperX segments 列表
+        replacements: 替换列表，每项含 segment_index
+        output_dir: 参考音频输出目录
+        engine: "fish" 或 "qwen"，决定参考时长默认值
+
+    Returns:
+        tuple: (ref_map, ref_source_map, ref_text_map)
+            ref_map: {seg_idx: ref_audio_path}
+            ref_source_map: {seg_idx: 主参考 segment 索引（即自身）}
+            ref_text_map: {seg_idx: 参考音频对应的英文转录（拼接段文本）}
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    if engine == "fish":
+        min_ref = getattr(config, "FISH_SPEECH_MIN_REF_DURATION", 4)
+        target_ref = getattr(config, "FISH_SPEECH_REF_DURATION", 12)
+    else:
+        min_ref = getattr(config, "SEGMENT_REF_MIN_DURATION", 0.3)
+        target_ref = getattr(config, "REF_TARGET_DURATION", 5)
+    max_ref = getattr(config, "REF_MAX_DURATION", 30)
+
+    min_ref_ms = int(min_ref * 1000)
+    target_ref_ms = int(target_ref * 1000)
+    max_ref_ms = int(max_ref * 1000)
+    same_speaker_gap = getattr(config, "SAME_SPEAKER_GAP", 0.8)
+
+    seg_indices = sorted(set(r["segment_index"] for r in replacements
+                             if r["segment_index"] < len(segments)))
+    if not seg_indices:
+        return {}, {}, {}
+
+    speaker_labels = _assign_speaker_labels(segments)
+    audio_duration_ms = _get_audio_duration_ms(audio_path)
+
+    ref_map = {}
+    ref_source_map = {}
+    ref_text_map = {}
+
+    print(f"[Step3-{engine}] 说话人感知参考提取: {len(seg_indices)} 个 segment, "
+          f"min={min_ref}s target={target_ref}s max={max_ref}s")
+
+    for seg_idx in seg_indices:
+        seg = segments[seg_idx]
+        spk = speaker_labels[seg_idx]
+        seg_start_ms = int(seg.get("start", 0) * 1000)
+        seg_end_ms = int(seg.get("end", 0) * 1000)
+        if seg_end_ms <= seg_start_ms:
+            print(f"  seg[{seg_idx}] 无效时间范围，跳过")
+            continue
+
+        self_dur_ms = seg_end_ms - seg_start_ms
+        clip_start = seg_start_ms
+        clip_end = seg_end_ms
+        included_indices = [seg_idx]
+
+        # 自身过短 → 向同说话人相邻段扩展
+        if self_dur_ms < min_ref_ms:
+            # 向前扩展
+            j = seg_idx - 1
+            while j >= 0 and (clip_end - clip_start) < target_ref_ms:
+                if speaker_labels[j] != spk:
+                    break
+                j_end_ms = int(segments[j].get("end", 0) * 1000)
+                j_start_ms = int(segments[j].get("start", 0) * 1000)
+                gap_s = (clip_start - j_end_ms) / 1000.0
+                if gap_s > same_speaker_gap:
+                    break
+                clip_start = min(clip_start, j_start_ms)
+                included_indices.insert(0, j)
+                j -= 1
+            # 向后扩展
+            j = seg_idx + 1
+            while j < len(segments) and (clip_end - clip_start) < target_ref_ms:
+                if speaker_labels[j] != spk:
+                    break
+                j_start_ms = int(segments[j].get("start", 0) * 1000)
+                j_end_ms = int(segments[j].get("end", 0) * 1000)
+                gap_s = (j_start_ms - clip_end) / 1000.0
+                if gap_s > same_speaker_gap:
+                    break
+                clip_end = max(clip_end, j_end_ms)
+                included_indices.append(j)
+                j += 1
+
+            # 扩展后仍不足 → 回退到该说话人全篇最长段
+            if (clip_end - clip_start) < min_ref_ms:
+                longest = _find_speaker_longest_segment(segments, speaker_labels, spk)
+                if longest is not None and longest != seg_idx:
+                    lseg = segments[longest]
+                    lstart = int(lseg.get("start", 0) * 1000)
+                    lend = int(lseg.get("end", 0) * 1000)
+                    if (lend - lstart) > (clip_end - clip_start):
+                        clip_start = lstart
+                        clip_end = lend
+                        included_indices = [longest]
+
+        # 极长 → 以目标句为中心截取到 max_ref
+        if (clip_end - clip_start) > max_ref_ms:
+            mid_ms = (seg_start_ms + seg_end_ms) // 2
+            clip_start = max(0, mid_ms - max_ref_ms // 2)
+            clip_end = min(audio_duration_ms, clip_start + max_ref_ms)
+
+        # 提取参考音频
+        ref_filename = f"ref_seg_{seg_idx}.wav"
+        ref_path = os.path.join(output_dir, ref_filename)
+        _extract_audio_clip(audio_path, clip_start, clip_end, ref_path)
+
+        ref_map[seg_idx] = ref_path
+        ref_source_map[seg_idx] = seg_idx
+
+        # 参考文本：仅包含最终 clip 范围内的段文本（拼接）
+        parts = []
+        for idx in included_indices:
+            if idx >= len(segments):
+                continue
+            iseg = segments[idx]
+            istart = int(iseg.get("start", 0) * 1000)
+            iend = int(iseg.get("end", 0) * 1000)
+            if iend < clip_start or istart > clip_end:
+                continue
+            t = iseg.get("text", "").strip()
+            if t:
+                parts.append(t)
+        ref_text_map[seg_idx] = " ".join(parts)
+
+        clip_dur = (clip_end - clip_start) / 1000.0
+        extra = f", 含相邻 {len(included_indices)} 段" if len(included_indices) > 1 else ""
+        print(f"  seg[{seg_idx}] spk={spk} {seg.get('start', 0):.1f}s-"
+              f"{seg.get('end', 0):.1f}s -> {ref_filename} "
+              f"(clip {clip_start/1000:.1f}s-{clip_end/1000:.1f}s, "
+              f"{clip_dur:.1f}s{extra})")
+
+    print(f"[Step3-{engine}] 共 {len(ref_map)} 个参考音频")
+    return ref_map, ref_source_map, ref_text_map
+
+
 def group_adjacent_replacements(replacements: list) -> list:
     """
     检测并分组紧挨着的相邻替换点。

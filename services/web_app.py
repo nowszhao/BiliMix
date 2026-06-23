@@ -1057,18 +1057,27 @@ def continue_after_sentence_confirmation(task_id: str):
             fish_ref_dir = os.path.join(fish_cache_dir, "ref_audio")
             os.makedirs(fish_ref_dir, exist_ok=True)
 
-            # 提取参考音频（复用 Qwen3-TTS 的提取逻辑）
-            from pipeline.step3_tts_qwen import extract_ref_audio_for_segments
+            # 提取参考音频（说话人感知：自身原声 + 短句向同说话人相邻段扩展）
+            from pipeline.step3_tts_qwen import (
+                extract_ref_audio_for_segments, extract_ref_audio_speaker_local)
             pseudo_replacements = [
                 {"segment_index": idx}
                 for idx in translated_indices if idx < len(segments)
             ]
             fish_ref_map = {}
             fish_ref_source_map = {}
+            fish_ref_text_map = {}
             if voice_clone and pseudo_replacements:
-                fish_ref_map, fish_ref_source_map = extract_ref_audio_for_segments(
-                    audio_path, segments, pseudo_replacements, fish_ref_dir)
-                print(f"[Fish] 提取了 {len(fish_ref_map)} 个参考音频")
+                ref_mode = getattr(config, "REF_SELECT_MODE", "speaker_local")
+                if ref_mode == "speaker_local":
+                    (fish_ref_map, fish_ref_source_map,
+                     fish_ref_text_map) = extract_ref_audio_speaker_local(
+                        audio_path, segments, pseudo_replacements,
+                        fish_ref_dir, engine="fish")
+                else:
+                    fish_ref_map, fish_ref_source_map = extract_ref_audio_for_segments(
+                        audio_path, segments, pseudo_replacements, fish_ref_dir)
+                print(f"[Fish] 提取了 {len(fish_ref_map)} 个参考音频 (mode={ref_mode})")
 
             def _fish_progress(current, total):
                 pct = 60 + int((current / max(total, 1)) * 20)
@@ -1093,6 +1102,7 @@ def continue_after_sentence_confirmation(task_id: str):
                 audio_path, fish_cache_dir,
                 ref_audio_map=fish_ref_map if voice_clone else {},
                 ref_source_map=fish_ref_source_map,
+                ref_text_map=fish_ref_text_map,
                 cancel_check=_fish_cancel, progress_cb=_fish_progress,
                 task_id=task_id,
                 resume_idx=resume_tts_idx,

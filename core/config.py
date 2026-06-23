@@ -134,6 +134,21 @@ FISH_SPEECH_PORT = 3030
 # 长句可能需要 60-120s，设置 180s 留足余量
 FISH_SPEECH_TIMEOUT = 600
 
+# --- 参考音频选取配置（声音克隆） ---
+# 参考音频选取模式: "speaker_local" | "segment"
+#   speaker_local: 每句优先用自身原声；自身过短时向同说话人相邻 segment 扩展边界
+#                  （单次 ffmpeg 提取覆盖 [首段.start, 末段.end]），保证音色一致 +
+#                  情绪/节奏随原句自然变化（推荐）
+#   segment: 每句仅用自身原声，不扩展（旧行为，短句易音色漂移）
+REF_SELECT_MODE = "speaker_local"
+# Fish Speech 参考音频目标时长（秒）：短句扩展拼接的目标长度
+# s2.cpp 跨语言克隆，10~15s 参考更稳定
+FISH_SPEECH_REF_DURATION = 12
+# Fish Speech 参考音频最小时长（秒）：低于此值触发同说话人相邻段扩展
+FISH_SPEECH_MIN_REF_DURATION = 4
+# 参考音频最大硬上限（秒）：超过则以目标句为中心截取
+REF_MAX_DURATION = 30
+
 # ========================
 # 相邻词合并配置
 # ========================

@@ -57,6 +57,7 @@ def synthesize_sentences_with_fish_tts(
     cache_dir: str,
     ref_audio_map: dict = None,
     ref_source_map: dict = None,
+    ref_text_map: dict = None,
     cancel_check=None,
     progress_cb=None,
     task_id: str = None,
@@ -79,6 +80,7 @@ def synthesize_sentences_with_fish_tts(
         cache_dir: TTS 缓存目录
         ref_audio_map: {segment_index: ref_audio_path} 说话人参考音频映射
         ref_source_map: {segment_index: source_segment_index} ICL 来源
+        ref_text_map: {segment_index: ref_text} 参考音频对应英文转录（拼接段场景优先）
         cancel_check: 终止检查回调
         progress_cb: 进度回调 (current, total)
 
@@ -125,10 +127,14 @@ def synthesize_sentences_with_fish_tts(
         ref_text = ""
         if ref_audio_map:
             ref_audio = ref_audio_map.get(seg_idx, "")
-        if ref_audio and ref_source_map and seg_idx < len(segments):
-            source_seg = ref_source_map.get(seg_idx, seg_idx)
-            if source_seg < len(segments):
-                ref_text = segments[source_seg].get("text", "").strip()
+        if ref_audio:
+            # 优先使用预计算的参考文本（拼接段场景），否则回退到来源 segment 文本
+            if ref_text_map and seg_idx in ref_text_map:
+                ref_text = ref_text_map[seg_idx]
+            elif ref_source_map and seg_idx < len(segments):
+                source_seg = ref_source_map.get(seg_idx, seg_idx)
+                if source_seg < len(segments):
+                    ref_text = segments[source_seg].get("text", "").strip()
 
         if not ref_audio or not os.path.isfile(ref_audio):
             raise RuntimeError(
