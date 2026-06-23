@@ -51,6 +51,11 @@ def transcribe(audio_path: str, output_dir: str = None) -> dict:
         "--output_format", "json",
     ]
 
+    # CPU 多线程加速：whisperx 默认只用 4 线程，多核机器显式指定线程数
+    threads = getattr(config, "WHISPERX_THREADS", 0)
+    if threads and threads > 0:
+        cmd += ["--threads", str(threads)]
+
     # 说话人分离（Diarization）
     if getattr(config, "WHISPERX_DIARIZE", False):
         hf_token = getattr(config, "WHISPERX_HF_TOKEN", "")
@@ -73,7 +78,18 @@ def transcribe(audio_path: str, output_dir: str = None) -> dict:
             cmd += ["--max_speakers", str(max_s)]
 
     print(f"[Step1] 执行命令: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    # 设置线程数相关的环境变量
+    # OMP_NUM_THREADS / MKL_NUM_THREADS 控制 PyTorch 与 CTranslate2 底层 OpenMP 线程
+    # 与 --threads 参数互补，避免底层只用默认 4 线程
+    env = os.environ.copy()
+    threads = getattr(config, "WHISPERX_THREADS", 0)
+    if threads and threads > 0:
+        for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+                     "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+            env[var] = str(threads)
+
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
 
     if result.returncode != 0:
         print(f"[Step1] WhisperX 转录失败:\n{result.stderr}")

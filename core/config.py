@@ -36,6 +36,10 @@ WHISPERX_DEVICE = "cpu"
 WHISPERX_COMPUTE_TYPE = "int8"
 WHISPERX_BATCH_SIZE = 10
 WHISPERX_LANGUAGE = "en"
+# CPU 推理线程数：whisperx 默认只用 4 个线程，多核机器应调大
+# 建议设为物理核数或略少（留 1-2 核给系统），0 表示用 whisperx 默认值(4)
+# 注意：超过物理核数收益递减，且会增加内存占用
+WHISPERX_THREADS = 12
 
 # --- WhisperX 说话人分离（Diarization）---
 # 启用后每个 segment 会带 speaker 标签，用于精确匹配克隆音色

@@ -25,6 +25,7 @@ UPDATABLE_CONFIGS = {
     "whisperx_model": ("WHISPERX_MODEL", str),
     "whisperx_device": ("WHISPERX_DEVICE", str),
     "whisperx_language": ("WHISPERX_LANGUAGE", str),
+    "whisperx_threads": ("WHISPERX_THREADS", int),
     "ollama_base_url": ("OLLAMA_BASE_URL", str),
     "ollama_model": ("OLLAMA_MODEL", str),
     "llm_batch_size": ("LLM_BATCH_SIZE", int),
@@ -70,6 +71,7 @@ def get_all_config() -> dict:
         "whisperx_model": getattr(config, "WHISPERX_MODEL", "base"),
         "whisperx_device": getattr(config, "WHISPERX_DEVICE", "cpu"),
         "whisperx_language": getattr(config, "WHISPERX_LANGUAGE", "en"),
+        "whisperx_threads": getattr(config, "WHISPERX_THREADS", 4),
         # Ollama
         "ollama_base_url": getattr(config, "OLLAMA_BASE_URL", "http://localhost:11434"),
         "ollama_model": getattr(config, "OLLAMA_MODEL", "qwen3:8b"),

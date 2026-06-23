@@ -961,6 +961,16 @@ function renderSettingsForm(cfg) {
                     </select>
                 </div>
             </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">CPU 线程数</span>
+                    <span class="settings-item-desc">CPU 推理线程，默认 4，多核机器调大可显著加速</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-whisperx_threads"
+                        value="${cfg.whisperx_threads ?? 4}" min="0" max="64" step="1">
+                </div>
+            </div>
         </div>
 
         <!-- Ollama -->
@@ -1128,6 +1138,7 @@ async function saveSettings() {
         whisperx_model: getValue('cfg-whisperx_model'),
         whisperx_device: getValue('cfg-whisperx_device'),
         whisperx_language: getValue('cfg-whisperx_language'),
+        whisperx_threads: getValue('cfg-whisperx_threads'),
         ollama_base_url: getValue('cfg-ollama_base_url'),
         ollama_model: getValue('cfg-ollama_model'),
         llm_batch_size: getValue('cfg-llm_batch_size'),
