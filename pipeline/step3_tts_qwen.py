@@ -294,6 +294,25 @@ def _find_speaker_longest_segment(segments: list, speaker_labels: list,
     return best_idx
 
 
+def _find_global_longest_segment(segments: list,
+                                 exclude_idx: int = None) -> "int | None":
+    """返回全篇时长最长的 segment 索引（可排除指定索引），无则 None。
+
+    用于同 speaker 无可用长段时的最终兜底，会跨 speaker 取最长段，
+    音色匹配度较差但保证参考音频时长足够（避免极短碎片直接做参考）。
+    """
+    best_idx = None
+    best_dur = 0.0
+    for idx, seg in enumerate(segments):
+        if exclude_idx is not None and idx == exclude_idx:
+            continue
+        dur = seg.get("end", 0) - seg.get("start", 0)
+        if dur > best_dur:
+            best_dur = dur
+            best_idx = idx
+    return best_idx
+
+
 def extract_ref_audio_speaker_local(audio_path: str, segments: list,
                                     replacements: list, output_dir: str,
                                     engine: str = "fish") -> tuple:
@@ -306,7 +325,9 @@ def extract_ref_audio_speaker_local(audio_path: str, segments: list,
       单次 ffmpeg 提取覆盖 [首段.start, 末段.end]，inter-segment 静音自然保留，
       直到达到 target_ref_duration 或无更多同说话人相邻段。
     - 严格校验 speaker 一致 + gap ≤ SAME_SPEAKER_GAP，杜绝跨说话人污染。
-    - 扩展后仍不足时，回退到该说话人全篇最长的一段（牺牲情绪换音色稳定）。
+    - 扩展后仍不足时，回退到该说话人全篇最长的一段（牺牲情绪换音色稳定）；
+      若同 speaker 无更长段（如该 speaker 全篇仅此一短句），进一步放宽到
+      全篇任意 speaker 最长段（牺牲音色匹配换可用性，避免极短碎片直接做参考）。
     - 极长段以目标句为中心截取到 max_ref_duration。
 
     Args:
@@ -319,7 +340,7 @@ def extract_ref_audio_speaker_local(audio_path: str, segments: list,
     Returns:
         tuple: (ref_map, ref_source_map, ref_text_map)
             ref_map: {seg_idx: ref_audio_path}
-            ref_source_map: {seg_idx: 主参考 segment 索引（即自身）}
+            ref_source_map: {seg_idx: 主参考 segment 索引（扩展时为自身，fallback 时为实际源段）}
             ref_text_map: {seg_idx: 参考音频对应的英文转录（拼接段文本）}
     """
     os.makedirs(output_dir, exist_ok=True)
@@ -365,6 +386,7 @@ def extract_ref_audio_speaker_local(audio_path: str, segments: list,
         clip_start = seg_start_ms
         clip_end = seg_end_ms
         included_indices = [seg_idx]
+        ref_source_seg = seg_idx  # 主参考 segment（扩展时为自身，fallback 时为 longest）
 
         # 自身过短 → 向同说话人相邻段扩展
         if self_dur_ms < min_ref_ms:
@@ -398,6 +420,15 @@ def extract_ref_audio_speaker_local(audio_path: str, segments: list,
             # 扩展后仍不足 → 回退到该说话人全篇最长段
             if (clip_end - clip_start) < min_ref_ms:
                 longest = _find_speaker_longest_segment(segments, speaker_labels, spk)
+                # 同 speaker 无更长段（== 自身或不存在）→ 放宽到全篇任意 speaker 最长段
+                if longest is None or longest == seg_idx:
+                    longest = _find_global_longest_segment(segments, exclude_idx=seg_idx)
+                    if longest is not None:
+                        lseg_tmp = segments[longest]
+                        print(f"  ⚠️ seg[{seg_idx}] spk={spk} 同 speaker 无更长段，"
+                              f"回退到全篇最长段 seg[{longest}] "
+                              f"({lseg_tmp.get('end', 0) - lseg_tmp.get('start', 0):.1f}s, "
+                              f"跨 speaker, 音色可能不匹配)")
                 if longest is not None and longest != seg_idx:
                     lseg = segments[longest]
                     lstart = int(lseg.get("start", 0) * 1000)
@@ -406,6 +437,7 @@ def extract_ref_audio_speaker_local(audio_path: str, segments: list,
                         clip_start = lstart
                         clip_end = lend
                         included_indices = [longest]
+                        ref_source_seg = longest
 
         # 极长 → 以目标句为中心截取到 max_ref
         if (clip_end - clip_start) > max_ref_ms:
@@ -419,7 +451,7 @@ def extract_ref_audio_speaker_local(audio_path: str, segments: list,
         _extract_audio_clip(audio_path, clip_start, clip_end, ref_path)
 
         ref_map[seg_idx] = ref_path
-        ref_source_map[seg_idx] = seg_idx
+        ref_source_map[seg_idx] = ref_source_seg
 
         # 参考文本：仅包含最终 clip 范围内的段文本（拼接）
         parts = []
