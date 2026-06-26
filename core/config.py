@@ -66,6 +66,11 @@ LLM_BATCH_SIZE = 5
 # qwen3.5 是推理模型，即使 think=False 仍可能输出大量推理 token
 # 批量翻译多句时需更大额度，调小可降低单次响应时间但可能导致输出截断
 LLM_NUM_PREDICT = 8192
+# LLM 推理温度（0.0~1.0）
+# 生词识别任务（JSON 输出）: 偏低更稳定，避免输出格式错误
+# 翻译任务（口语地道性）: 偏高让译文更自然灵活，但过高会引入幻觉
+LLM_IDENTIFY_TEMPERATURE = 0.3   # 生词识别用
+LLM_TRANSLATE_TEMPERATURE = 0.6  # 翻译用（提高口语自然度）
 
 # ========================
 # 难度等级配置

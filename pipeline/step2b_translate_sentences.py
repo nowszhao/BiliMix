@@ -256,27 +256,41 @@ def _apply_colloquial_fixup(english: str, chinese: str) -> str:
 # 原始英文来自 WhisperX 语音识别，可能含转录错误（发音相近词、漏词等）。
 # few-shot 示范：理解真实语义后翻译为地道中文，而非直译错误。
 _DIALOGUE_FEWSHOT = (
-    "示例（原文可能有转录错误，翻译时修正）：\n"
+    "示例（原文可能有转录错误，翻译时修正；展示地道中文口语 vs 错误直译）：\n"
     "[1] I was like wait are you serious right now.\n"
     "[2] Yeah a hundred percent I'm not joking.\n"
     "[3] I new there was something off about that.\n"
     "→ [1] 我当时心想，等等，你说真的吗。\n"
-    "→ [2] 对，百分之百没跟你开玩笑。\n"
+    "  ✗ 直译错误示范：「我就像等等你现在是认真的吗」\n"
+    "→ [2] 对，百分之百，我没跟你开玩笑。\n"
     "→ [3] 我就知道这事儿有蹊跷。\n\n"
     "[4] They was saying its gonna be huge.\n"
     "[5] But to be honest I don't buy it.\n"
     "[6] Fair enough I get your point.\n"
     "→ [4] 他们说这事儿会搞得很大。\n"
-    "→ [5] 不过说实话，我不太信。\n"
-    "→ [6] 也是，我理解你的意思。\n"
+    "  ✗ 直译错误示范：「他们说它将会是巨大的」\n"
+    "→ [5] 但说实话，我不太信。\n"
+    "  ✗ 直译错误示范：「但是说实话我不买它」\n"
+    "→ [6] 也是，我明白你的意思。\n\n"
+    "[7] That's literally insane how much they charge for this.\n"
+    "[8] Right like at the end of the day it's not worth it.\n"
+    "[9] I mean if you're on a budget you gotta cut corners somewhere.\n"
+    "→ [7] 他们收这个价也太离谱了吧，真的。\n"
+    "  ✗ 直译错误示范：「那从字面上是疯狂的他们收多少钱」\n"
+    "→ [8] 对，说到底就不值那个价。\n"
+    "→ [9] 我是说，手头紧的话，总得在哪儿省一省。\n"
 )
 
 _SINGLE_FEWSHOT = (
-    "示例（原文可能有转录错误，翻译时修正）：\n"
+    "示例（原文可能有转录错误，翻译时修正；地道口语翻译）：\n"
     "英文：I new there was something off about that.\n"
     "中文：我就知道这事儿有蹊跷。\n"
     "英文：They was saying its gonna be huge but I don't buy it.\n"
     "中文：他们说这事儿会搞得很大，但我不太信。\n"
+    "英文：That's literally insane how much they charge for this.\n"
+    "中文：他们收这个价也太离谱了吧，真的。\n"
+    "英文：I mean at the end of the day you gotta do what you gotta do.\n"
+    "中文：我是说，说到底，该做的还是得做。\n"
 )
 
 
@@ -502,7 +516,7 @@ def parse_translation_response(response_text: str, expected_ids: list[int]) -> d
 
 def _call_llm(prompt: str, max_retries: int = _MAX_RETRIES) -> str:
     """
-    带重试退避的 LLM 调用封装。
+    带重试退避的 LLM 调用封装（使用翻译专用 temperature）。
 
     call_ollama 在连接失败时会 sys.exit(1)，此处捕获 SystemExit 以避免
     整个翻译流程被杀掉（已翻译的批次虽由 checkpoint 保存，但进程退出
@@ -515,9 +529,10 @@ def _call_llm(prompt: str, max_retries: int = _MAX_RETRIES) -> str:
     Returns:
         str: 模型回复文本（全部失败时返回空串）
     """
+    translate_temp = float(getattr(config, "LLM_TRANSLATE_TEMPERATURE", 0.6))
     for attempt in range(1, max_retries + 1):
         try:
-            resp = call_ollama(prompt)
+            resp = call_ollama(prompt, temperature=translate_temp)
         except SystemExit:
             # call_ollama 连接失败触发 sys.exit，阻止其杀掉整个进程
             wait = _RETRY_BACKOFF * attempt

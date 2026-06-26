@@ -257,12 +257,13 @@ def build_batch_prompt(sentences: list, difficulty: str = None) -> str:
 {numbered}"""
 
 
-def call_ollama(prompt: str) -> str:
+def call_ollama(prompt: str, temperature: float = None) -> str:
     """
     调用 Ollama API 获取大模型回复（关闭思考模式）。
 
     Args:
         prompt: 提示词
+        temperature: 推理温度，None 则使用 config.LLM_IDENTIFY_TEMPERATURE（默认 0.3）
 
     Returns:
         str: 模型回复文本
@@ -272,13 +273,15 @@ def call_ollama(prompt: str) -> str:
     # 同时 qwen3.5 是推理模型，即使 think=False 仍可能输出大量推理 token
     # 增大 num_predict 可避免响应被截断导致 JSON 解析失败后逐句重试
     num_predict = getattr(config, "LLM_NUM_PREDICT", 8192)
+    if temperature is None:
+        temperature = float(getattr(config, "LLM_IDENTIFY_TEMPERATURE", 0.3))
     payload = {
         "model": config.OLLAMA_MODEL,
         "prompt": prompt,
         "think": False,
         "stream": False,
         "options": {
-            "temperature": 0.3,
+            "temperature": temperature,
             "num_predict": num_predict,
         }
     }
