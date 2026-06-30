@@ -33,6 +33,7 @@ function setupAudioSync() {
 }
 
 function onOriginalAudioTimeUpdate(e) {
+    if (mixedSegmentsMode) return;
     const currentTime = e.target.currentTime;
     const newIndex = findSegmentByOriginalTime(currentTime);
     if (newIndex !== activeSegmentIndex && newIndex >= 0) {
@@ -43,8 +44,9 @@ function onOriginalAudioTimeUpdate(e) {
 
 function onMixedAudioTimeUpdate(e) {
     const mixedTime = e.target.currentTime;
-    const originalTime = mixedTimeToOriginalTime(mixedTime);
-    const newIndex = findSegmentByOriginalTime(originalTime);
+    const newIndex = mixedSegmentsMode
+        ? findSegmentByOriginalTime(mixedTime)
+        : findSegmentByOriginalTime(mixedTimeToOriginalTime(mixedTime));
     if (newIndex !== activeSegmentIndex && newIndex >= 0) {
         activeSegmentIndex = newIndex;
         highlightSegment(newIndex);
@@ -175,11 +177,12 @@ function updateSegmentHighlight(container, index) {
 }
 
 function seekToSegment(startTime) {
+    const mixedTime = mixedSegmentsMode ? startTime : originalTimeToMixedTime(startTime);
     if (isFullscreen) {
         const fsAudio = document.getElementById('fullscreen-audio');
         if (fsAudio) {
             if (fullscreenAudioSource === 'mixed') {
-                fsAudio.currentTime = originalTimeToMixedTime(startTime);
+                fsAudio.currentTime = mixedTime;
             } else {
                 fsAudio.currentTime = startTime;
             }
@@ -189,7 +192,7 @@ function seekToSegment(startTime) {
         const originalAudio = document.getElementById('original-audio');
         const mixedAudio = document.getElementById('mixed-audio');
         if (mixedAudio && !mixedAudio.paused) {
-            mixedAudio.currentTime = originalTimeToMixedTime(startTime);
+            mixedAudio.currentTime = mixedTime;
         } else if (originalAudio) {
             originalAudio.currentTime = startTime;
             if (originalAudio.paused) originalAudio.play().catch(() => {});

@@ -48,7 +48,7 @@ from core.word_frequency import get_word_to_level, get_level_to_num_map
 from services.podcast_service import search_podcasts_itunes, parse_rss_feed
 from core.config_manager import get_all_config, update_config
 
-from pipeline.step1_transcribe import transcribe, extract_full_text, extract_word_timestamps
+from pipeline.step1_transcribe import transcribe, extract_full_text, extract_word_timestamps, transcribe_mixed_audio
 from pipeline.step2_identify_difficult_words import (
     identify_difficult_words_by_segments, locate_words_in_segments,
 )
@@ -1161,6 +1161,18 @@ def continue_after_sentence_confirmation(task_id: str):
         if is_cancelled(task_id):
             raise InterruptedError("任务已被用户终止")
 
+        # ---- 100% 全翻译模式：重新转录合成音频，生成同步字幕 ----
+        is_full_translation = len(translated_indices) >= len(serialized_segments)
+        mixed_segments = None
+        if is_full_translation:
+            update_task(task_id, step="retranscribe", progress=90,
+                        message="正在重新转录合成音频（Small 模型）...")
+            try:
+                mixed_segments = transcribe_mixed_audio(output_audio_path, result_dir)
+            except Exception as e:
+                print(f"[Step4b] 重新转录失败，回退到原始字幕: {e}")
+                mixed_segments = None
+
         # ---- 完成 ----
         result_data = {
             "basename": basename,
@@ -1189,7 +1201,8 @@ def continue_after_sentence_confirmation(task_id: str):
         update_task(task_id, status="completed", step="done", progress=100,
                     message="全部完成！", result=result_data,
                     sentence_pairs=sentence_pairs,
-                    time_mapping=mix_result["time_mapping"])
+                    time_mapping=mix_result["time_mapping"],
+                    mixed_segments=mixed_segments)
 
         save_task_result_to_disk(result_dir, {
             "task_id": task_id, "status": "completed",
@@ -1202,6 +1215,7 @@ def continue_after_sentence_confirmation(task_id: str):
             "sentence_pairs": sentence_pairs,
             "result": result_data,
             "time_mapping": mix_result["time_mapping"],
+            "mixed_segments": mixed_segments,
         })
 
         _cleanup_intermediate_files(result_dir)
@@ -1949,6 +1963,19 @@ def retry_sentence_synthesis(task_id):
         tts_audio_map=tts_audio_map,
         output_path=output_audio_path)
 
+    # ---- 100% 全翻译模式：重新转录合成音频，生成同步字幕 ----
+    is_full_translation = len(translated_indices) >= len(segments)
+    mixed_segments = None
+    if is_full_translation:
+        update_task(task_id, step="retranscribe", progress=90,
+                    message="正在重新转录合成音频（Small 模型）...")
+        try:
+            mixed_segments = transcribe_mixed_audio(
+                output_audio_path, os.path.dirname(output_audio_path))
+        except Exception as e:
+            print(f"[Step4b] 重新转录失败，回退到原始字幕: {e}")
+            mixed_segments = None
+
     # 构建完整结果
     full_text = task.get("transcription_text", "")
     result_data = {
@@ -1977,7 +2004,8 @@ def retry_sentence_synthesis(task_id):
                 message="全部完成！", result=result_data,
                 sentence_pairs=sentence_pairs,
                 time_mapping=mix_result["time_mapping"],
-                tts_audio_map=tts_audio_map)
+                tts_audio_map=tts_audio_map,
+                mixed_segments=mixed_segments)
 
     save_task_result_to_disk(result_dir, {
         "task_id": task_id, "status": "completed",
@@ -1989,6 +2017,7 @@ def retry_sentence_synthesis(task_id):
         "sentence_pairs": sentence_pairs,
         "result": result_data,
         "time_mapping": mix_result["time_mapping"],
+        "mixed_segments": mixed_segments,
     })
 
     _cleanup_intermediate_files(result_dir)
@@ -2200,6 +2229,7 @@ def get_task_result(task_id):
         "sentence_pairs": task.get("sentence_pairs", []),
         "result": task.get("result"),
         "time_mapping": task.get("time_mapping", []),
+        "mixed_segments": task.get("mixed_segments"),
     })
 
 
