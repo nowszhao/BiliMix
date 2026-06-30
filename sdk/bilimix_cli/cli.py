@@ -42,9 +42,10 @@ except ImportError:
 # 常量
 # ============================================================
 
-DEFAULT_SERVER = os.environ.get("BILIMIX_SERVER", "http://localhost:5000")
+DEFAULT_SERVER = "http://localhost:5000"
 SESSION_DIR = Path(os.environ.get("BILIMIX_HOME", str(Path.home() / ".bilimix")))
 SESSION_FILE = SESSION_DIR / "session.json"
+CONFIG_FILE = SESSION_DIR / "config.json"
 
 EXIT_OK = 0
 EXIT_API_ERROR = 1
@@ -74,6 +75,53 @@ class CLIError(Exception):
         super().__init__(message)
         self.message = message
         self.code = code
+
+
+# ---- server 地址持久化 ----
+# 优先级: 命令行 --server > 环境变量 BILIMIX_SERVER > 配置文件 > 默认值
+
+def _load_saved_server():
+    """从配置文件读取上次保存的 server 地址"""
+    try:
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            return cfg.get("server")
+    except Exception:
+        pass
+    return None
+
+
+def _save_server(server):
+    """将 server 地址保存到配置文件，后续命令自动复用"""
+    try:
+        SESSION_DIR.mkdir(parents=True, exist_ok=True)
+        cfg = {}
+        if CONFIG_FILE.exists():
+            try:
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+            except Exception:
+                cfg = {}
+        cfg["server"] = server.rstrip("/")
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass  # 保存失败不阻塞，仅下次需重新指定
+
+
+def _resolve_server(cli_server):
+    """按优先级解析 server 地址: 命令行 > 环境变量 > 配置文件 > 默认"""
+    if cli_server:
+        _save_server(cli_server)
+        return cli_server.rstrip("/")
+    env_server = os.environ.get("BILIMIX_SERVER")
+    if env_server:
+        return env_server.rstrip("/")
+    saved = _load_saved_server()
+    if saved:
+        return saved.rstrip("/")
+    return DEFAULT_SERVER
 
 
 class BiliMixClient:
@@ -732,7 +780,8 @@ def build_parser():
     # 使用 SUPPRESS 默认值：子命令 parser 不会覆盖主 parser 已设的值。
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--server", default=argparse.SUPPRESS,
-                        help=f"服务地址 (默认 {DEFAULT_SERVER} 或 $BILIMIX_SERVER)")
+                        help="服务地址 (首次指定后会自动记住; "
+                             "也支持 $BILIMIX_SERVER 环境变量)")
     common.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS,
                         help="美化 JSON 输出")
     common.add_argument("-q", "--quiet", action="store_true",
@@ -1028,7 +1077,10 @@ def main():
     args.quiet = getattr(args, "quiet", False)
     args.field = getattr(args, "field", None)
 
-    server = args.server or DEFAULT_SERVER
+    # server 解析优先级: 命令行 > 环境变量 > 配置文件 > 默认
+    # 首次通过 --server 指定后，地址自动保存到 ~/.bilimix/config.json，
+    # 后续命令无需再传 --server
+    server = _resolve_server(args.server)
     client = BiliMixClient(server, quiet=args.quiet)
 
     try:

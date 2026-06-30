@@ -1,0 +1,35 @@
+# Python 编译产物
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+
+# 虚拟环境
+venv/
+env/
+.venv/
+
+# pip 构建产物
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 数据目录（运行时生成）
+data/downloads/
+data/results/
+data/transcripts/
+data/tts_cache/
+
+# bilimix 本地配置
+~/.bilimix/
