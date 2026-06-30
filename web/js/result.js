@@ -371,9 +371,71 @@ function copyTranscript() {
     });
     const text = lines.join('\n');
 
-    navigator.clipboard.writeText(text).then(() => {
-        showToast('✅ 已复制 ' + lines.length + ' 行字幕');
-    }).catch(() => {
-        showToast('❌ 复制失败，请手动选择文本');
+    copyTextToClipboard(text).then(ok => {
+        if (ok) {
+            showToast('✅ 已复制 ' + lines.length + ' 行字幕');
+        } else {
+            showToast('❌ 复制失败，请手动选择文本');
+        }
     });
+}
+
+/**
+ * 兼容性复制文本到剪贴板：
+ * - 优先使用 Clipboard API（需安全上下文 HTTPS / localhost）
+ * - 回退到 document.execCommand('copy')（HTTP 局域网访问时使用）
+ * 返回 Promise<boolean>，true 表示复制成功。
+ */
+function copyTextToClipboard(text) {
+    // 路径1：Clipboard API（安全上下文可用）
+    if (navigator.clipboard && window.isSecureContext && typeof navigator.clipboard.writeText === 'function') {
+        return navigator.clipboard.writeText(text)
+            .then(() => true)
+            .catch(() => copyViaTextarea(text));
+    }
+    // 路径2：execCommand 回退（非安全上下文，如 http://192.168.x.x）
+    return Promise.resolve(copyViaTextarea(text));
+}
+
+function copyViaTextarea(text) {
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        // 避免页面滚动跳动
+        ta.style.position = 'fixed';
+        ta.style.top = '0';
+        ta.style.left = '0';
+        ta.style.width = '2em';
+        ta.style.height = '2em';
+        ta.style.padding = '0';
+        ta.style.border = 'none';
+        ta.style.outline = 'none';
+        ta.style.boxShadow = 'none';
+        ta.style.background = 'transparent';
+        ta.setAttribute('readonly', '');
+        document.body.appendChild(ta);
+
+        // iOS Safari 需要先创建 Range 选中
+        if (navigator.userAgent.match(/ipad|iphone/i)) {
+            const range = document.createRange();
+            range.selectNodeContents(ta);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            ta.setSelectionRange(0, text.length);
+        } else {
+            ta.select();
+        }
+
+        let ok = false;
+        try {
+            ok = document.execCommand('copy');
+        } catch (e) {
+            ok = false;
+        }
+        document.body.removeChild(ta);
+        return ok;
+    } catch (e) {
+        return false;
+    }
 }
