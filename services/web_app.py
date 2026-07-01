@@ -74,9 +74,11 @@ _web_dir = os.path.join(config.BASE_DIR, "web")
 app = Flask(__name__, static_folder=_web_dir, static_url_path="")
 app.secret_key = getattr(config, "SECRET_KEY", "bilimix-secret-key-change-me")
 
-# 全局任务队列锁：保证同一时间只有一个任务在运行，后续任务排队
-# Python threading.Lock 不支持优先级，但 FIFO 语义基本满足先提交先执行
-task_queue_lock = threading.Lock()
+# 全局任务队列：保证同一时间只有一个任务在运行，后续任务按提交顺序排队（FIFO）
+# 用 Condition + deque 实现公平排队，替代非公平的 threading.Lock 轮询
+import collections as _collections
+_queue_condition = threading.Condition()
+_queue_waiters = _collections.deque()  # 按提交顺序存储等待中的 task_id
 
 
 # ============================================================
@@ -1613,32 +1615,37 @@ def submit_task():
         print(f"[WARN] 任务创建时持久化失败: {e}")
 
     def worker():
-        # 排队等待：同一时间只允许一个任务运行
+        # 排队等待：同一时间只允许一个任务运行，按提交顺序 FIFO
         update_task(task_id, status="queued",
                     message="排队中，请稍候…")
         print(f"[Queue] 任务 {task_id[:8]}... 排队等待")
 
-        # 轮询等待锁，同时响应取消信号
-        # 直接 with task_queue_lock: 会无限阻塞，被取消/删除的任务也会抢锁
-        while True:
-            if is_cancelled(task_id) or not get_task(task_id):
-                print(f"[Queue] 任务 {task_id[:8]}... 排队中被取消，退出")
-                return
-            acquired = task_queue_lock.acquire(blocking=False)
-            if acquired:
-                break
-            time.sleep(1)  # 每秒检查一次取消状态
+        with _queue_condition:
+            _queue_waiters.append(task_id)
+
+            # 等待直到成为队首（FIFO 公平排队）
+            while _queue_waiters[0] != task_id:
+                if is_cancelled(task_id) or not get_task(task_id):
+                    print(f"[Queue] 任务 {task_id[:8]}... 排队中被取消，退出")
+                    _queue_waiters.remove(task_id)
+                    _queue_condition.notify_all()
+                    return
+                _queue_condition.wait(timeout=1.0)
 
         try:
-            # 抢到锁后再次确认任务未被取消/删除
+            # 成为队首后再次确认任务未被取消/删除
             if is_cancelled(task_id) or not get_task(task_id):
-                print(f"[Queue] 任务 {task_id[:8]}... 获取锁后检测到已取消，释放")
+                print(f"[Queue] 任务 {task_id[:8]}... 获取执行权后检测到已取消，退出")
                 return
             update_task(task_id, status="processing",
                         message="开始处理…")
             _run_worker(task_id, audio_url)
         finally:
-            task_queue_lock.release()
+            # 执行完成（或异常退出），从队列移除并通知下一个等待者
+            with _queue_condition:
+                if task_id in _queue_waiters:
+                    _queue_waiters.remove(task_id)
+                _queue_condition.notify_all()
 
     def _run_worker(task_id, audio_url):
         # 处理 file:// 协议（用户上传的本地文件）
