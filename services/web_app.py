@@ -1164,7 +1164,7 @@ def continue_after_sentence_confirmation(task_id: str):
             raise InterruptedError("任务已被用户终止")
 
         # ---- 100% 全翻译模式：重新转录合成音频，生成同步字幕 ----
-        is_full_translation = len(translated_indices) >= len(serialized_segments)
+        is_full_translation = len(translated_indices) >= len(segments)
         mixed_segments = None
         if is_full_translation:
             update_task(task_id, step="retranscribe", progress=90,
