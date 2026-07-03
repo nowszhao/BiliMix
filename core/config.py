@@ -86,7 +86,7 @@ DIFFICULTY_LEVEL = "CET-4"
 #   qwen3-tts:       本地声音克隆（x-vector），需 GPU/CPU 推理
 #   fish-speech:     Fish Speech S2 Pro (s2.cpp HTTP 服务)，音色克隆最强，需先启动 s2.cpp
 #   confucius-tts:   Confucius4-TTS-CPU 零样本多语言 TTS（网易有道），纯 CPU 推理
-TTS_ENGINE = "qwen3-tts"
+TTS_ENGINE = "confucius-tts"
 
 # --- Edge-TTS 配置 ---
 # edge-tts 中文女声
@@ -208,7 +208,7 @@ TTS_TEXT_FORMAT = "chinese_only"
 #   "word_replace": 识别生词，在原音频中将生词替换为中文TTS
 #   "sentence_translate": 按比例均匀间隔选句，整句翻译，中英交替播放
 #   "smart_translate": （推荐）先识别生词，再将含生词的句子整句翻译替换
-PROCESS_MODE = "smart_translate"
+PROCESS_MODE = "sentence_translate"
 
 # ========================
 # 确认环节配置
@@ -235,7 +235,7 @@ SMART_MAX_TRANSLATE_RATIO = 0.7
 #   0.33 = 每三句替换一句为中文
 #   0.0 = 不替换（纯英文原声）
 # 效果：被选中的句子用中文TTS替换英文原声，形成中英交替讲述
-SENTENCE_CN_RATIO = 0.55
+SENTENCE_CN_RATIO = 1.0
 # 句子之间的静音间隔（毫秒），中英交替模式使用
 SENTENCE_GAP_MS = 400
 # 全翻译模式（100%）句间静音间隔（毫秒）
