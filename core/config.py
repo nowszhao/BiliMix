@@ -148,8 +148,9 @@ FISH_SPEECH_TIMEOUT = 600
 # Confucius4-TTS-CPU 项目根目录路径
 # 默认在 BiliMix 同级目录下: ../Confucius4-TTS-CPU
 CONFUCIUS4_TTS_ROOT = ""
-# Confucius4-TTS-CPU 使用的 Python 解释器
-CONFUCIUS4_TTS_PYTHON = "/Users/changhozhao/miniconda3/bin/python"
+# Confucius4-TTS-CPU 使用的 Python 解释器（需已安装 torch/transformers 等依赖）
+# 留空则使用当前 Python 解释器 (sys.executable)
+CONFUCIUS4_TTS_PYTHON = ""
 # 推理设备: "cpu" 或 "cuda"
 CONFUCIUS4_TTS_DEVICE = "cpu"
 # 单条 TTS 合成超时（秒），CPU 推理较慢，长句可能需要 60-120s

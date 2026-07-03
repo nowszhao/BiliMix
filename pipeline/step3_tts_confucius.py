@@ -27,6 +27,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 
@@ -162,8 +163,7 @@ def synthesize_sentences_with_confucius_tts(
 
     # 定位 worker 脚本和 Python 解释器
     worker_script = os.path.join(config.BASE_DIR, "workers", "confucius_tts_worker.py")
-    python_bin = getattr(config, "CONFUCIUS4_TTS_PYTHON",
-                         "/Users/changhozhao/miniconda3/bin/python")
+    python_bin = getattr(config, "CONFUCIUS4_TTS_PYTHON", "") or sys.executable
 
     # 设置环境变量 CONFUCIUS4_TTS_ROOT
     env = os.environ.copy()
