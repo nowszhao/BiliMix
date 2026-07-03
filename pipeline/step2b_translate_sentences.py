@@ -12,7 +12,7 @@ import time
 from typing import Any, Callable, Optional
 
 from core import config
-from pipeline.step2_identify_difficult_words import call_ollama
+from core.llm_utils import call_ollama
 
 # ============================================================
 # 常量配置
@@ -25,82 +25,6 @@ _RETRY_BACKOFF = 2.0          # 重试退避基数（秒）
 _META_MAX_LEN = 100           # 元响应判定的最大文本长度
 # 拉丁字母（含拼音声调符号），用于识别括号内的拼音注释
 _LATIN_RE = r'[A-Za-zÀ-ÖØ-öø-ÿĀ-ž]'
-
-
-def select_sentences_by_difficulty(
-        segments: list[dict[str, Any]],
-        difficult_words: list[dict[str, Any]],
-        max_ratio: Optional[float] = None) -> list[int]:
-    """
-    根据生词识别结果，选出包含生词的句子索引（smart_translate 模式专用）。
-
-    Args:
-        segments: WhisperX segments 列表（每项含 "text"）
-        difficult_words: 生词列表（每项含 "word"）
-        max_ratio: 最大翻译比例上限（安全阀），None 则用 config 配置
-
-    Returns:
-        list[int]: 需要翻译的 segment 索引列表（按生词密度降序截断后再排序）
-    """
-    if max_ratio is None:
-        max_ratio = float(getattr(config, "SMART_MAX_TRANSLATE_RATIO", 0.7))
-
-    total = len(segments)
-    if total == 0 or not difficult_words:
-        return []
-
-    # 构建生词集合（小写），区分单词与多词短语
-    # 单词必须用词边界匹配，否则 cat 会命中 category / location
-    single_words: set[str] = set()
-    phrases: set[str] = set()
-    for w in difficult_words:
-        word_lower = str(w.get("english", "")).lower().strip()
-        if not word_lower:
-            continue
-        if " " in word_lower:
-            phrases.add(word_lower)
-        else:
-            single_words.add(word_lower)
-
-    # 预编译词边界正则：单词需精确匹配
-    word_re = (
-        re.compile(r"\b(?:" + "|".join(re.escape(w) for w in single_words) + r")\b")
-        if single_words else None
-    )
-    phrase_patterns = [re.compile(re.escape(p)) for p in phrases]
-
-    # 遍历每个 segment，统计包含的生词数量（密度）
-    seg_scores: list[tuple[int, int]] = []  # [(seg_index, word_count)]
-    for i, seg in enumerate(segments):
-        text_lower = str(seg.get("text", "")).lower()
-        count = 0
-        if word_re:
-            # set 去重：同一生词在一句中多次出现只计一次
-            count += len(set(word_re.findall(text_lower)))
-        for pat in phrase_patterns:
-            if pat.search(text_lower):
-                count += 1
-        if count > 0:
-            seg_scores.append((i, count))
-
-    if not seg_scores:
-        return []
-
-    # 按生词密度降序排列
-    seg_scores.sort(key=lambda x: x[1], reverse=True)
-
-    # 应用最大比例上限
-    max_count = max(1, round(total * max_ratio))
-    selected = seg_scores[:max_count]
-
-    # 按原始顺序排列
-    indices = sorted([idx for idx, _ in selected])
-
-    print(f"[Smart] 共 {total} 句，含生词 {len(seg_scores)} 句，"
-          f"上限 {max_ratio*100:.0f}%={max_count} 句，"
-          f"最终选择 {len(indices)} 句")
-
-    return indices
 
 
 def select_sentences_to_translate(

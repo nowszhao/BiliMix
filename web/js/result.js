@@ -56,7 +56,7 @@ async function loadResult() {
 
 function renderResult(data) {
     const result = data.result;
-    const mode = data.process_mode || result?.process_mode || 'word_replace';
+    
 
     const streamPlayer = document.getElementById('stream-player');
     const mixedItem = document.getElementById('mixed-audio-item');
@@ -66,35 +66,9 @@ function renderResult(data) {
 
     timeMappingData = data.time_mapping || [];
 
-    if (mode === 'smart_translate') {
-        const sentencePairs = data.sentence_pairs || [];
-        const difficultWords = data.difficult_words || [];
+    const mode = currentProcessMode || data.process_mode;
 
-        document.getElementById('badge-words').textContent =
-            (difficultWords.length || 0) + ' 个生词';
-        document.getElementById('badge-duration').textContent =
-            (result?.mixed_duration || '--') + ' 秒';
-
-        if (result) {
-            const basename = result.basename;
-            const ext = getAudioExt();
-            setAudioSrcIfChanged('original-audio', `/api/audio/${basename}${ext}`);
-            setAudioSrcIfChanged('mixed-audio', `/api/audio/${basename}/${basename}_sentence.mp3`);
-        }
-
-        const mixedLabel = document.querySelector('.audio-item:last-child .audio-label');
-        if (mixedLabel) mixedLabel.innerHTML = '<span class="label-dot mixed"></span>中英交替音频';
-
-        renderTranscriptSentenceMode(data.segments, sentencePairs, difficultWords);
-        renderVocabulary(difficultWords);
-        renderSentencePairs(sentencePairs, 'replacements-list');
-
-        const vocabTabBtn = document.querySelector('[data-tab="vocabulary"]');
-        if (vocabTabBtn) vocabTabBtn.innerHTML = '📖 生词释义';
-        const replTabBtn = document.querySelector('[data-tab="replacements"]');
-        if (replTabBtn) replTabBtn.innerHTML = '🔄 中英对照';
-
-    } else if (mode === 'sentence_translate') {
+    if (mode === 'sentence_translate') {
         const sentencePairs = data.sentence_pairs || [];
 
         document.getElementById('badge-words').textContent =

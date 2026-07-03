@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BiliMix · 英语听力生词助手</title>
+    <title>BiliMix · 英语听力句子翻译助手</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -26,10 +26,6 @@
                     <span class="nav-btn-icon">📋</span>
                     <span class="nav-btn-text">历史任务</span>
                 </button>
-                <button class="nav-btn" onclick="toggleVocabulary()" title="我的生词库">
-                    <span class="nav-btn-icon">📚</span>
-                    <span class="nav-btn-text">生词库</span>
-                </button>
                 <button class="nav-btn nav-btn-logout" id="logout-btn" onclick="doLogout()" title="退出登录" style="display:none;">
                     <span class="nav-btn-icon">🚪</span>
                     <span class="nav-btn-text">退出</span>
@@ -46,7 +42,7 @@
             <div class="hero-content">
                 <h1 class="hero-title">
                     听英文播客，<br>
-                    <span class="gradient-text">自动学生词</span>
+                    <span class="gradient-text">自动练听力</span>
                 </h1>
                 <p class="hero-subtitle">
                     搜索英文播客、选择单集，AI 自动识别生僻词汇，<br>
@@ -258,11 +254,7 @@
                         </div>
                         <div class="option-group">
                             <label class="option-label">处理模式</label>
-                            <select id="mode-select" onchange="onModeChange()">
-                                <option value="word_replace">🔤 生词替换</option>
-                                <option value="smart_translate" selected>🧠 智能翻译</option>
-                                <option value="sentence_translate">🔄 句子翻译</option>
-                            </select>
+                            <input type="hidden" id="mode-select" value="sentence_translate">
                         </div>
                         <div class="option-group option-group-checkbox">
                             <label class="checkbox-label" title="跳过确认环节，直接使用 AI 识别/翻译结果">
@@ -585,7 +577,7 @@
                 <div class="player-header">
                     <h2 class="section-title">🎧 混合音频</h2>
                     <div class="player-badges">
-                        <span class="badge" id="badge-words">-- 个生词</span>
+                        <span class="badge" id="badge-words">-- 句翻译</span>
                         <span class="badge" id="badge-duration">-- 秒</span>
                     </div>
                 </div>

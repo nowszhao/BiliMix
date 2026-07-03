@@ -66,8 +66,7 @@ def save_task_result_to_disk(result_dir: str, data: dict):
             else:
                 data["skip_confirmation"] = getattr(config, "SKIP_CONFIRMATION", True)
         # 确保 key 字段存在
-        data.setdefault("process_mode", "word_replace")
-        data.setdefault("difficulty", getattr(config, "DIFFICULTY_LEVEL", "CET-4"))
+        pass
 
         path = os.path.join(result_dir, "task_result.json")
         with open(path, "w", encoding="utf-8") as f:
@@ -111,7 +110,6 @@ def _persist_task(task_id: str):
             "url": task.get("url", ""),
             "title": task.get("title", ""),
             "difficulty": task.get("difficulty", ""),
-            "process_mode": task.get("process_mode", "word_replace"),
             "status": task.get("status"),
             "progress": task.get("progress", 0),
             "message": task.get("message", ""),
@@ -167,9 +165,7 @@ def restore_task_from_disk(task_id: str) -> dict:
             "task_id": task_id,
             "url": summary.get("url", ""),
             "title": summary.get("title", ""),
-            "difficulty": summary.get("difficulty", ""),
-            "process_mode": summary.get("process_mode", "word_replace"),
-            "skip_confirmation": summary.get("skip_confirmation",
+                        "skip_confirmation": summary.get("skip_confirmation",
                                getattr(config, "SKIP_CONFIRMATION", True)),
             "status": "error",
             "step": "download",
@@ -203,8 +199,6 @@ def restore_task_from_disk(task_id: str) -> dict:
             saved_status = saved.get("status", summary.get("status", "completed"))
             is_confirm = saved_status == "awaiting_confirmation"
             is_sentence_confirm = saved_status == "awaiting_sentence_confirmation"
-            process_mode = saved.get("process_mode",
-                                     summary.get("process_mode", "word_replace"))
             task = {
                 "task_id": task_id,
                 "url": summary.get("url", ""),
@@ -267,9 +261,7 @@ def restore_task_from_disk(task_id: str) -> dict:
         "task_id": task_id,
         "url": summary.get("url", ""),
         "title": summary.get("title", ""),
-        "difficulty": summary.get("difficulty", ""),
-        "process_mode": summary.get("process_mode", "word_replace"),
-        "skip_confirmation": summary.get("skip_confirmation",
+                "skip_confirmation": summary.get("skip_confirmation",
                            getattr(config, "SKIP_CONFIRMATION", True)),
         "status": sqlite_status if is_terminal else "error",
         "step": "done" if sqlite_status == "completed" else "download",
@@ -357,8 +349,7 @@ def restore_task_from_disk(task_id: str) -> dict:
             "mixed_duration": summary.get("mixed_duration", 0),
             "total_words": summary.get("total_words", 0),
             "total_replacements": summary.get("total_replacements", 0),
-            "vocabulary_book": vocab_path if os.path.exists(vocab_path) else "",
-        }
+                    }
 
     with tasks_lock:
         tasks[task_id] = task

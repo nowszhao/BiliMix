@@ -20,7 +20,7 @@ BiliMix CLI — 面向 AI Agent 的命令行接口
 
 示例:
   bmx auth login --username admin --password xxx
-  bmx task submit --url https://x.com/ep.mp3 --mode smart_translate --wait
+  bmx task submit --url https://x.com/ep.mp3 --mode sentence_translate --wait
   bmx task result <task_id> --field result.mixed_audio
   bmx audio download --task-id <id> --type mixed -o out.mp3
 """
@@ -316,10 +316,8 @@ def cmd_task_submit(args, client):
     else:
         raise CLIError("必须提供 --url 或 --local-path")
 
-    if args.difficulty:
-        body["difficulty"] = args.difficulty
-    if args.mode:
-        body["process_mode"] = args.mode
+    # difficulty removed
+    pass  # process_mode fixed to sentence_translate
     if args.title:
         body["title"] = args.title
 
@@ -563,19 +561,6 @@ def cmd_translate_word(args, client):
     return EXIT_OK
 
 
-def cmd_translate_word_levels(args, client):
-    if args.words_file:
-        with open(args.words_file, "r", encoding="utf-8") as f:
-            words = json.load(f)
-    elif args.words:
-        words = [w.strip() for w in args.words.split(",") if w.strip()]
-    else:
-        raise CLIError("必须提供 --words 或 --words-file")
-    result = client.post_json("/api/word-levels", {"words": words})
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
 # ============================================================
 # podcast 命令
 # ============================================================
@@ -596,40 +581,6 @@ def cmd_podcast_rss(args, client):
 # vocab 命令
 # ============================================================
 
-def cmd_vocab_list(args, client):
-    params = {
-        "sort_by": args.sort_by,
-        "sort_order": args.sort_order,
-        "filter_mastered": args.filter_mastered,
-        "filter_type": args.filter_type,
-        "filter_freq": args.filter_freq,
-        "search": args.search,
-        "page": args.page,
-        "page_size": args.page_size,
-    }
-    result = client.get("/api/vocabulary", params=params)
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_vocab_stats(args, client):
-    result = client.get("/api/vocabulary/stats")
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_vocab_toggle_mastered(args, client):
-    result = client.post_json(f"/api/vocabulary/{args.id}/toggle_mastered")
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_vocab_delete(args, client):
-    result = client.delete_json(f"/api/vocabulary/{args.id}")
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
 # ============================================================
 # favorites 命令
 # ============================================================
@@ -643,30 +594,6 @@ def _build_podcast_body(args):
     if getattr(args, "image", None):
         body["image"] = args.image
     return body
-
-
-def cmd_favorites_list(args, client):
-    result = client.get("/api/favorites")
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_favorites_add(args, client):
-    result = client.post_json("/api/favorites", _build_podcast_body(args))
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_favorites_remove(args, client):
-    result = client.delete_json("/api/favorites", {"rss_url": args.rss_url})
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_favorites_check(args, client):
-    result = client.get("/api/favorites/check", params={"rss_url": args.rss_url})
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
 
 
 # ============================================================
@@ -828,9 +755,7 @@ def build_parser():
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--url", help="音频文件 URL")
     g.add_argument("--local-path", help="本地文件路径 (需先 audio upload)")
-    p.add_argument("--difficulty", help="难度等级 (CET-4/CET-6/IELTS-6/IELTS-7/ADVANCED)")
-    p.add_argument("--mode", choices=["word_replace", "smart_translate",
-                                      "sentence_translate"], help="处理模式")
+    p.add_argument("--mode", choices=["sentence_translate"], help="处理模式（固定为句子翻译）")
     g2 = p.add_mutually_exclusive_group()
     g2.add_argument("--skip-confirm", action="store_true",
                     help="跳过确认环节 (默认行为)")
@@ -982,8 +907,6 @@ def build_parser():
     p.set_defaults(func=cmd_vocab_delete)
 
     # ---- favorites ----
-    p_f = add_cmd(sub, "favorites", help="播客收藏")
-    f_sub = p_f.add_subparsers(dest="subcommand", required=True)
 
     p = add_cmd(f_sub, "list", help="收藏列表")
     p.set_defaults(func=cmd_favorites_list)

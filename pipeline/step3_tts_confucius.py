@@ -44,6 +44,180 @@ def _get_confucius_root() -> str:
     return os.path.abspath(default)
 
 
+def _synthesize_parallel(
+    pending_jobs: list,
+    num_workers: int,
+    config_path: str,
+    python_bin: str,
+    worker_script: str,
+    env: dict,
+    cache_dir: str,
+    cancel_check,
+    progress_cb,
+    task_id: str,
+    cached_results: dict,
+) -> dict:
+    """Split pending jobs into N chunks and run N workers in parallel."""
+    import select as _select
+
+    total = len(pending_jobs)
+    chunk_size = total // num_workers
+    chunks = []
+    for i in range(num_workers):
+        start = i * chunk_size
+        if i == num_workers - 1:
+            end = total
+        else:
+            end = start + chunk_size
+        chunks.append(pending_jobs[start:end])
+
+    print(f"[Step3-Confucius] 并行模式：{num_workers} 个 Worker，"
+          f"分片 {[len(c) for c in chunks]}")
+
+    # Write sub-task JSONs
+    sub_task_files = []
+    for i, chunk in enumerate(chunks):
+        sub_task = {
+            "config_path": config_path,
+            "device": env.get("CONFUCIUS4_TTS_DEVICE", "cpu"),
+            "jobs": [{"text": j["text"], "ref_audio": j["ref_audio"],
+                      "output_path": j["output_path"]} for j in chunk],
+            "temperature": getattr(config, "CONFUCIUS4_TTS_TEMPERATURE", 0.8),
+            "top_p": getattr(config, "CONFUCIUS4_TTS_TOP_P", 0.8),
+            "top_k": getattr(config, "CONFUCIUS4_TTS_TOP_K", 30),
+            "num_beams": getattr(config, "CONFUCIUS4_TTS_NUM_BEAMS", 3),
+            "repetition_penalty": getattr(config, "CONFUCIUS4_TTS_REPETITION_PENALTY", 10.0),
+            "n_timesteps": getattr(config, "CONFUCIUS4_TTS_N_TIMESTEPS", 25),
+            "inference_cfg_rate": getattr(config, "CONFUCIUS4_TTS_INFERENCE_CFG_RATE", 0.7),
+            "verbose": False,
+        }
+        sub_file = os.path.join(cache_dir, f"confucius_tts_task_w{i}.json")
+        with open(sub_file, "w", encoding="utf-8") as f:
+            json.dump(sub_task, f, ensure_ascii=False, indent=2)
+        sub_task_files.append(sub_file)
+
+    # Set per-process thread limits
+    env_parallel = env.copy()
+    threads_per = max(1, os.cpu_count() // (num_workers * 2))
+    env_parallel["OMP_NUM_THREADS"] = str(threads_per)
+    env_parallel["MKL_NUM_THREADS"] = str(threads_per)
+
+    # Launch all workers
+    procs = []
+    for i, stf in enumerate(sub_task_files):
+        cmd = [python_bin, worker_script, stf]
+        print(f"  [Worker-{i}] {' '.join(cmd)}")
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=False, env=env_parallel,
+        )
+        procs.append(proc)
+
+    # Drain stdout threads
+    all_stdout = [[] for _ in range(num_workers)]
+
+    def _drain(idx):
+        try:
+            while True:
+                chunk = procs[idx].stdout.read(4096)
+                if not chunk:
+                    break
+                all_stdout[idx].append(chunk)
+        except Exception:
+            pass
+
+    for i in range(num_workers):
+        threading.Thread(target=_drain, args=(i,), daemon=True).start()
+
+    # Register for cancellation
+    if task_id:
+        try:
+            from core.task_manager import task_subprocesses
+            task_subprocesses[task_id] = procs
+        except Exception:
+            pass
+
+    start_time = time.time()
+    stderr_bufs = [b"" for _ in range(num_workers)]
+    all_fds = [p.stderr for p in procs]
+    fd_to_idx = {p.stderr.fileno(): i for i, p in enumerate(procs)}
+    _last_progress_cb = 0  # throttle
+
+    def _count_disk_all():
+        return sum(1 for j in pending_jobs if os.path.exists(j["output_path"]))
+
+    try:
+        while True:
+            ready, _, _ = _select.select(all_fds, [], [], 5.0)
+            for fd in ready:
+                idx = fd_to_idx[fd.fileno()]
+                try:
+                    chunk = (procs[idx].stderr.read1(4096)
+                             if hasattr(procs[idx].stderr, 'read1')
+                             else procs[idx].stderr.read(4096))
+                except Exception:
+                    chunk = b""
+                if not chunk:
+                    continue
+                stderr_bufs[idx] += chunk
+                while b"\n" in stderr_bufs[idx]:
+                    line_b, stderr_bufs[idx] = stderr_bufs[idx].split(b"\n", 1)
+                    line = line_b.decode("utf-8", errors="replace").rstrip()
+                    # stderr for logging only, no progress parsing
+
+            # 进度上报：直接数磁盘文件
+            disk_count = _count_disk_all()
+            if progress_cb and disk_count != _last_progress_cb:
+                _last_progress_cb = disk_count
+                progress_cb(disk_count, total)
+
+            if cancel_check and cancel_check():
+                print("[Step3-Confucius] 用户取消，终止所有 worker")
+                for p in procs:
+                    if p.poll() is None:
+                        p.kill(); p.wait()
+                raise InterruptedError("任务已被用户终止")
+
+            # Check if all done
+            if all(p.poll() is not None for p in procs):
+                break
+
+    finally:
+        if task_id:
+            try:
+                from core.task_manager import task_subprocesses
+                task_subprocesses.pop(task_id, None)
+            except Exception:
+                pass
+
+    # Cleanup temp files
+    for stf in sub_task_files:
+        try:
+            os.remove(stf)
+        except OSError:
+            pass
+
+    # Check exit codes and collect results
+    tts_map = dict(cached_results)
+    failed_workers = []
+    for i, p in enumerate(procs):
+        if p.returncode != 0:
+            failed_workers.append(i)
+
+    for job in pending_jobs:
+        if job["segment_index"] not in tts_map and os.path.exists(job["output_path"]):
+            tts_map[job["segment_index"]] = job["output_path"]
+
+    if progress_cb:
+        progress_cb(total, total)
+
+    print(f"[Step3-Confucius] 并行合成完成: {len(tts_map) - len(cached_results)} 条新增")
+    if failed_workers:
+        print(f"  [警告] Worker {failed_workers} 异常退出，已从磁盘回收结果")
+
+    return tts_map
+
+
 def synthesize_sentences_with_confucius_tts(
     segments: list,
     translated_indices: list,
@@ -140,10 +314,26 @@ def synthesize_sentences_with_confucius_tts(
     if progress_cb:
         progress_cb(0, len(pending_jobs))
 
-    # 构建 worker 任务 JSON
+    # 定位 worker 脚本和 Python 解释器
     confucius_root = _get_confucius_root()
     config_path = os.path.join(confucius_root, "config", "inference_config.yaml")
+    worker_script = os.path.join(config.BASE_DIR, "workers", "confucius_tts_worker.py")
+    python_bin = getattr(config, "CONFUCIUS4_TTS_PYTHON", "") or sys.executable
+    env = os.environ.copy()
+    env["CONFUCIUS4_TTS_ROOT"] = confucius_root
 
+    num_workers = getattr(config, "CONFUCIUS4_TTS_NUM_WORKERS", 1)
+    num_workers = max(1, min(num_workers, len(pending_jobs)))
+    num_workers = int(num_workers)
+
+    if num_workers > 1:
+        tts_map_partial = _synthesize_parallel(
+            pending_jobs, num_workers, config_path, python_bin, worker_script,
+            env, cache_dir, cancel_check, progress_cb, task_id, cached_results,
+        )
+        return tts_map_partial
+
+    # ---- 单 Worker 模式 ----
     worker_task = {
         "config_path": config_path,
         "device": getattr(config, "CONFUCIUS4_TTS_DEVICE", "cpu"),
@@ -161,14 +351,6 @@ def synthesize_sentences_with_confucius_tts(
     with open(task_file, "w", encoding="utf-8") as f:
         json.dump(worker_task, f, ensure_ascii=False, indent=2)
 
-    # 定位 worker 脚本和 Python 解释器
-    worker_script = os.path.join(config.BASE_DIR, "workers", "confucius_tts_worker.py")
-    python_bin = getattr(config, "CONFUCIUS4_TTS_PYTHON", "") or sys.executable
-
-    # 设置环境变量 CONFUCIUS4_TTS_ROOT
-    env = os.environ.copy()
-    env["CONFUCIUS4_TTS_ROOT"] = confucius_root
-
     cmd = [python_bin, worker_script, task_file]
     print(f"[Step3-Confucius] 启动 worker: {' '.join(cmd)}")
 
@@ -183,7 +365,6 @@ def synthesize_sentences_with_confucius_tts(
     import select as _select
     start_time = time.time()
     last_output_time = start_time
-    done_count = 0
 
     proc = subprocess.Popen(
         cmd,
@@ -218,6 +399,11 @@ def synthesize_sentences_with_confucius_tts(
     stderr_lines = []
     stderr_buffer = b""
     worker_stall_but_done = False
+    _last_progress_cb = 0  # throttle progress callbacks
+
+    def _count_disk():
+        return sum(1 for j in pending_jobs if os.path.exists(j["output_path"]))
+
     try:
         while True:
             ready, _, _ = _select.select([proc.stderr], [], [], 5.0)
@@ -235,16 +421,11 @@ def synthesize_sentences_with_confucius_tts(
                     stderr_lines.append(line)
                     print(f"  {line}")
 
-                    # 解析进度: "[ConfuciusWorker] [3/10] ..."
-                    if "[ConfuciusWorker] [" in line and "/" in line:
-                        try:
-                            part = line.split("[ConfuciusWorker] [")[1].split("]")[0]
-                            current_str, total_str = part.split("/")
-                            done_count = int(current_str)
-                            if progress_cb:
-                                progress_cb(done_count, len(pending_jobs))
-                        except (ValueError, IndexError):
-                            pass
+            # 进度上报：直接数磁盘上的 WAV 文件数
+            disk_count = _count_disk()
+            if progress_cb and disk_count != _last_progress_cb:
+                _last_progress_cb = disk_count
+                progress_cb(disk_count, len(pending_jobs))
 
             if cancel_check and cancel_check():
                 print("[Step3-Confucius] 用户取消，终止 worker 进程")
@@ -259,11 +440,11 @@ def synthesize_sentences_with_confucius_tts(
                 proc.wait()
                 raise RuntimeError(
                     f"Confucius4-TTS worker 总超时 ({elapsed:.0f}s)，"
-                    f"已完成 {done_count}/{len(pending_jobs)} 条")
+                    f"已完成 {disk_count}/{len(pending_jobs)} 条")
 
             stall_elapsed = time.time() - last_output_time
             if stall_elapsed > stall_timeout:
-                disk_done = sum(1 for j in pending_jobs if os.path.exists(j["output_path"]))
+                disk_done = _count_disk()
                 if disk_done >= len(pending_jobs):
                     print(f"[Step3-Confucius] Worker 卡住 ({stall_elapsed:.0f}s 无输出)，"
                           f"但磁盘上已有 {disk_done}/{len(pending_jobs)} 个文件，强制终止并继续")

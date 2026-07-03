@@ -10,21 +10,15 @@
 function showSection(section) {
     const hero = document.getElementById('hero-section');
     const progress = document.getElementById('progress-section');
-    const confirm = document.getElementById('confirm-section');
-    const sentenceConfirm = document.getElementById('sentence-confirm-section');
     const result = document.getElementById('result-section');
 
-    hero.style.display = 'none';
-    progress.classList.add('hidden');
-    confirm.classList.add('hidden');
-    sentenceConfirm.classList.add('hidden');
-    result.classList.add('hidden');
+    if (hero) hero.style.display = 'none';
+    if (progress) progress.classList.add('hidden');
+    if (result) result.classList.add('hidden');
 
-    if (section === 'progress') progress.classList.remove('hidden');
-    else if (section === 'confirm') confirm.classList.remove('hidden');
-    else if (section === 'sentence-confirm') sentenceConfirm.classList.remove('hidden');
-    else if (section === 'result') result.classList.remove('hidden');
-    else hero.style.display = '';
+    if (section === 'progress' && progress) progress.classList.remove('hidden');
+    else if (section === 'result' && result) result.classList.remove('hidden');
+    else if (hero) hero.style.display = '';
 
     // 结果页显示"下一集"按钮
     if (section === 'result') {
@@ -92,7 +86,6 @@ function resetAll() {
     currentTaskId = null;
     currentTaskTitle = '';
     tasks_url = '';
-    currentProcessMode = 'word_replace';
     selectedEpisodeUrl = '';
     selectedEpisodeTitle = '';
     rssSelectedEpisodeUrl = '';
@@ -152,7 +145,6 @@ function resetAll() {
     showSection('hero');
 
     const modeSelect = document.getElementById('mode-select');
-    if (modeSelect) modeSelect.value = 'word_replace';
     const modeHint = document.getElementById('mode-hint');
     if (modeHint) modeHint.style.display = 'none';
     const diffGroup = document.querySelector('.input-options .option-group:first-child');
@@ -194,8 +186,7 @@ function toggleVocabulary() {
 }
 
 function closeVocabulary() {
-    document.getElementById('vocab-overlay').classList.remove('open');
-    document.getElementById('vocab-drawer').classList.remove('open');
+    // Vocabulary drawer removed - no-op
 }
 
 async function loadVocabularyStats() {
@@ -651,36 +642,14 @@ function renderSettingsForm(cfg) {
             <div class="settings-group-title">🎯 处理模式</div>
             <div class="settings-item">
                 <div class="settings-item-label">
-                    <span class="settings-item-name">默认模式</span>
-                    <span class="settings-item-desc">新任务默认使用的处理模式</span>
-                </div>
-                <div class="settings-item-control">
-                    <select class="settings-select" id="cfg-process_mode" onchange="onSettingsModeChange()">
-                        <option value="word_replace" ${cfg.process_mode === 'word_replace' ? 'selected' : ''}>🔤 生词替换</option>
-                        <option value="smart_translate" ${cfg.process_mode === 'smart_translate' ? 'selected' : ''}>🧠 智能翻译</option>
-                        <option value="sentence_translate" ${cfg.process_mode === 'sentence_translate' ? 'selected' : ''}>🔄 句子翻译</option>
-                    </select>
-                </div>
-            </div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">难度等级</span>
-                    <span class="settings-item-desc">生词识别的难度阈值</span>
-                </div>
-                <div class="settings-item-control">
-                    <select class="settings-select" id="cfg-difficulty">
-                        <option value="CET-4" ${cfg.difficulty === 'CET-4' ? 'selected' : ''}>CET-4 四级</option>
-                        <option value="CET-6" ${cfg.difficulty === 'CET-6' ? 'selected' : ''}>CET-6 六级</option>
-                        <option value="IELTS-6" ${cfg.difficulty === 'IELTS-6' ? 'selected' : ''}>雅思 6 分</option>
-                        <option value="IELTS-7" ${cfg.difficulty === 'IELTS-7' ? 'selected' : ''}>雅思 7 分</option>
-                        <option value="ADVANCED" ${cfg.difficulty === 'ADVANCED' ? 'selected' : ''}>高级</option>
-                    </select>
+                    <span class="settings-item-name">句子翻译</span>
+                    <span class="settings-item-desc">100% 全文翻译为中英交替音频</span>
                 </div>
             </div>
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">跳过确认</span>
-                    <span class="settings-item-desc">自动跳过生词/翻译确认环节</span>
+                    <span class="settings-item-desc">自动跳过翻译确认环节</span>
                 </div>
                 <div class="settings-item-control">
                     <label class="settings-toggle">
@@ -690,43 +659,9 @@ function renderSettingsForm(cfg) {
                 </div>
             </div>
         </div>
-
-        <!-- 智能翻译 -->
-        <div class="settings-group" id="settings-group-smart-translate">
-            <div class="settings-group-title">🧠 智能翻译</div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">最大翻译占比</span>
-                    <span class="settings-item-desc">含生词句子超此比例时按密度截断</span>
-                </div>
-                <div class="settings-item-control">
-                    <div class="settings-range-wrap">
-                        <input type="range" class="settings-range" id="cfg-smart_max_translate_ratio"
-                            min="0.1" max="1.0" step="0.05" value="${cfg.smart_max_translate_ratio}"
-                            oninput="document.getElementById('val-smart_ratio').textContent = Math.round(this.value*100)+'%'">
-                        <span class="settings-range-val" id="val-smart_ratio">${Math.round(cfg.smart_max_translate_ratio * 100)}%</span>
-                    </div>
-                </div>
-            </div>
+        <!-- Confucius4-TTS (CPU) --></div>
         </div>
-
-        <!-- 句子翻译 -->
-        <div class="settings-group" id="settings-group-sentence-translate">
-            <div class="settings-group-title">🔄 句子翻译</div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">翻译比例</span>
-                    <span class="settings-item-desc">均匀选句的替换比例</span>
-                </div>
-                <div class="settings-item-control">
-                    <div class="settings-range-wrap">
-                        <input type="range" class="settings-range" id="cfg-sentence_cn_ratio"
-                            min="0.1" max="1.0" step="0.05" value="${cfg.sentence_cn_ratio}"
-                            oninput="document.getElementById('val-cn_ratio').textContent = Math.round(this.value*100)+'%'">
-                        <span class="settings-range-val" id="val-cn_ratio">${Math.round(cfg.sentence_cn_ratio * 100)}%</span>
-                    </div>
-                </div>
-            </div>
+        <!-- Confucius4-TTS (CPU) --></div>
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">句间静音</span>
@@ -767,39 +702,12 @@ function renderSettingsForm(cfg) {
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">TTS 引擎</span>
-                    <span class="settings-item-desc">edge-tts 在线合成 / qwen3-tts 本地克隆</span>
+                    <span class="settings-item-desc">Confucius4-TTS CPU 本地合成</span>
                 </div>
                 <div class="settings-item-control">
                     <select class="settings-select" id="cfg-tts_engine" onchange="onTTSEngineChange()">
-                        <option value="edge-tts" ${cfg.tts_engine === 'edge-tts' ? 'selected' : ''}>Edge-TTS</option>
-                        <option value="qwen3-tts" ${cfg.tts_engine === 'qwen3-tts' ? 'selected' : ''}>Qwen3-TTS</option>
-                        <option value="fish-speech" ${cfg.tts_engine === 'fish-speech' ? 'selected' : ''}>Fish Speech (S2 Pro)</option>
                         <option value="confucius-tts" ${cfg.tts_engine === 'confucius-tts' ? 'selected' : ''}>Confucius4-TTS (CPU)</option>
                     </select>
-                </div>
-            </div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">Edge-TTS 声音</span>
-                    <span class="settings-item-desc">中文语音角色选择</span>
-                </div>
-                <div class="settings-item-control">
-                    <select class="settings-select" id="cfg-tts_voice">
-                        <option value="zh-CN-XiaoxiaoNeural" ${cfg.tts_voice === 'zh-CN-XiaoxiaoNeural' ? 'selected' : ''}>晓晓（活泼女声）</option>
-                        <option value="zh-CN-XiaoyiNeural" ${cfg.tts_voice === 'zh-CN-XiaoyiNeural' ? 'selected' : ''}>晓伊（温暖女声）</option>
-                        <option value="zh-CN-YunxiNeural" ${cfg.tts_voice === 'zh-CN-YunxiNeural' ? 'selected' : ''}>云希（阳光男声）</option>
-                        <option value="zh-CN-YunjianNeural" ${cfg.tts_voice === 'zh-CN-YunjianNeural' ? 'selected' : ''}>云健（沉稳男声）</option>
-                    </select>
-                </div>
-            </div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">语速调整</span>
-                    <span class="settings-item-desc">Edge-TTS 语速偏移量</span>
-                </div>
-                <div class="settings-item-control">
-                    <input type="text" class="settings-input" id="cfg-tts_rate"
-                        value="${cfg.tts_rate}" placeholder="+8%">
                 </div>
             </div>
             <div class="settings-item">
@@ -816,90 +724,12 @@ function renderSettingsForm(cfg) {
             </div>
             <div class="settings-item">
                 <div class="settings-item-label">
-                    <span class="settings-item-name">Qwen3-TTS 设备</span>
-                    <span class="settings-item-desc">本地 TTS 推理设备</span>
-                </div>
-                <div class="settings-item-control">
-                    <select class="settings-select" id="cfg-qwen3_tts_device">
-                        <option value="cpu" ${cfg.qwen3_tts_device === 'cpu' ? 'selected' : ''}>CPU</option>
-                        <option value="cuda:0" ${cfg.qwen3_tts_device === 'cuda:0' ? 'selected' : ''}>CUDA:0</option>
-                    </select>
-                </div>
-            </div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">参考音频时长</span>
-                    <span class="settings-item-desc">声音克隆参考片段长度（秒）</span>
-                </div>
-                <div class="settings-item-control">
-                    <input type="number" class="settings-input" id="cfg-qwen3_tts_ref_duration"
-                        value="${cfg.qwen3_tts_ref_duration}" min="3" max="30" step="1">
-                </div>
-            </div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">TTS 重试次数</span>
-                    <span class="settings-item-desc">语音合成失败自动重试次数</span>
-                </div>
-                <div class="settings-item-control">
-                    <input type="number" class="settings-input" id="cfg-qwen3_tts_retry_max"
-                        value="${cfg.qwen3_tts_retry_max}" min="0" max="10" step="1">
-                </div>
-            </div>
-            <div class="settings-item">
-                <div class="settings-item-label">
                     <span class="settings-item-name">说话人间隔阈值</span>
                     <span class="settings-item-desc">同说话人最大间隔（秒），单人演讲建议 0.8</span>
                 </div>
                 <div class="settings-item-control">
                     <input type="number" class="settings-input" id="cfg-same_speaker_gap"
                         value="${cfg.same_speaker_gap}" min="0.1" max="3.0" step="0.1">
-                </div>
-            </div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">自定义参考音频</span>
-                    <span class="settings-item-desc">手动指定参考 WAV 路径（留空则自动提取）</span>
-                </div>
-                <div class="settings-item-control">
-                    <input type="text" class="settings-input" id="cfg-qwen3_tts_custom_ref"
-                        value="${escapeAttr(cfg.qwen3_tts_custom_ref || '')}"
-                        placeholder="留空=自动提取" style="width:220px;">
-                </div>
-            </div>
-        </div>
-
-        <!-- Fish Speech S2 Pro -->
-        <div class="settings-group" id="settings-group-fish-speech">
-            <div class="settings-group-title">🐟 Fish Speech S2 Pro</div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">服务地址</span>
-                    <span class="settings-item-desc">s2.cpp HTTP 服务器地址</span>
-                </div>
-                <div class="settings-item-control">
-                    <input type="text" class="settings-input" id="cfg-fish_speech_host"
-                        value="${escapeAttr(cfg.fish_speech_host || '127.0.0.1')}" style="width:140px;">
-                </div>
-            </div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">服务端口</span>
-                    <span class="settings-item-desc">s2.cpp HTTP 服务器端口</span>
-                </div>
-                <div class="settings-item-control">
-                    <input type="number" class="settings-input" id="cfg-fish_speech_port"
-                        value="${cfg.fish_speech_port}" min="1024" max="65535" step="1">
-                </div>
-            </div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">请求超时</span>
-                    <span class="settings-item-desc">HTTP 请求超时时间（秒），CPU 推理较慢需更长时间</span>
-                </div>
-                <div class="settings-item-control">
-                    <input type="number" class="settings-input" id="cfg-fish_speech_timeout"
-                        value="${cfg.fish_speech_timeout}" min="30" max="600" step="10">
                 </div>
             </div>
         </div>
@@ -1182,37 +1012,14 @@ function renderSettingsForm(cfg) {
 }
 
 function onTTSEngineChange() {
-    const engine = document.getElementById('cfg-tts_engine')?.value || 'edge-tts';
-    const fishGroup = document.getElementById('settings-group-fish-speech');
-    if (fishGroup) {
-        fishGroup.classList.toggle('hidden', engine !== 'fish-speech');
-    }
+    // 当前仅支持 Confucius4-TTS，确保其配置组始终可见
     const confGroup = document.getElementById('settings-group-confucius-tts');
     if (confGroup) {
-        confGroup.classList.toggle('hidden', engine !== 'confucius-tts');
+        confGroup.classList.remove('hidden');
     }
 }
 
-function onSettingsModeChange() {
-    const mode = document.getElementById('cfg-process_mode')?.value || 'word_replace';
-    const smartGroup = document.getElementById('settings-group-smart-translate');
-    const sentGroup = document.getElementById('settings-group-sentence-translate');
-
-    if (mode === 'word_replace') {
-        // 生词替换模式：隐藏智能翻译和句子翻译的配置
-        if (smartGroup) smartGroup.classList.add('hidden');
-        if (sentGroup) sentGroup.classList.add('hidden');
-    } else if (mode === 'smart_translate') {
-        // 智能翻译模式：显示智能翻译配置，隐藏句子翻译配置
-        if (smartGroup) smartGroup.classList.remove('hidden');
-        if (sentGroup) sentGroup.classList.add('hidden');
-    } else if (mode === 'sentence_translate') {
-        // 句子翻译模式：隐藏智能翻译配置，显示句子翻译配置
-        if (smartGroup) smartGroup.classList.add('hidden');
-        if (sentGroup) sentGroup.classList.remove('hidden');
-    }
-}
-
+function onSettingsModeChange() { /* Always sentence_translate mode */ }
 async function saveSettings() {
     const btn = document.getElementById('settings-save-btn');
     btn.disabled = true;
@@ -1226,18 +1033,11 @@ async function saveSettings() {
         return el.value;
     };
 
-    const payload = {
-        process_mode: getValue('cfg-process_mode'),
-        difficulty: getValue('cfg-difficulty'),
-        skip_confirmation: getValue('cfg-skip_confirmation'),
-        smart_max_translate_ratio: getValue('cfg-smart_max_translate_ratio'),
-        sentence_cn_ratio: getValue('cfg-sentence_cn_ratio'),
+    const payload = {skip_confirmation: getValue('cfg-skip_confirmation'),
         sentence_gap_ms: getValue('cfg-sentence_gap_ms'),
         sentence_full_gap_ms: getValue('cfg-sentence_full_gap_ms'),
         sentence_tts_voice_clone: getValue('cfg-sentence_tts_voice_clone'),
         tts_engine: getValue('cfg-tts_engine'),
-        tts_voice: getValue('cfg-tts_voice'),
-        tts_rate: getValue('cfg-tts_rate'),
         tts_text_format: getValue('cfg-tts_text_format'),
         whisperx_model: getValue('cfg-whisperx_model'),
         whisperx_device: getValue('cfg-whisperx_device'),
@@ -1248,13 +1048,6 @@ async function saveSettings() {
         llm_batch_size: getValue('cfg-llm_batch_size'),
         output_format: getValue('cfg-output_format'),
         output_bitrate: getValue('cfg-output_bitrate'),
-        qwen3_tts_device: getValue('cfg-qwen3_tts_device'),
-        qwen3_tts_ref_duration: getValue('cfg-qwen3_tts_ref_duration'),
-        qwen3_tts_retry_max: getValue('cfg-qwen3_tts_retry_max'),
-        qwen3_tts_custom_ref: getValue('cfg-qwen3_tts_custom_ref'),
-        fish_speech_host: getValue('cfg-fish_speech_host'),
-        fish_speech_port: getValue('cfg-fish_speech_port'),
-        fish_speech_timeout: getValue('cfg-fish_speech_timeout'),
         confucius_tts_device: getValue('cfg-confucius_tts_device'),
         confucius_tts_temperature: getValue('cfg-confucius_tts_temperature'),
         confucius_tts_top_p: getValue('cfg-confucius_tts_top_p'),
@@ -1377,7 +1170,6 @@ async function initPageConfig() {
         const modeSelect = document.getElementById('mode-select');
         if (modeSelect && cfg.process_mode) {
             modeSelect.value = cfg.process_mode;
-            currentProcessMode = cfg.process_mode;
             onModeChange();
         }
 
@@ -1536,8 +1328,6 @@ async function miniPlayerGoBack() {
     // 恢复保存的状态
     currentTaskId = miniPlayerState.taskId;
     tasks_url = miniPlayerState.url;
-    currentProcessMode = miniPlayerState.savedProcessMode;
-
     // 隐藏 Mini Player
     document.getElementById('mini-player').style.display = 'none';
     document.body.classList.remove('mini-player-active');

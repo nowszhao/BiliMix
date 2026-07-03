@@ -37,37 +37,22 @@ from core.task_manager import (
 )
 from core.database import (
     setup_database, delete_task_from_index, save_task_to_index,
-    add_favorite, remove_favorite, get_favorites, is_favorite,
-    add_subscription, remove_subscription, get_subscriptions,
+    load_tasks_index, get_subscriptions, add_subscription, remove_subscription,
     add_search_keyword, get_search_suggestions, clear_search_history,
-    get_recent_podcasts,
-    add_or_update_vocabulary, get_vocabulary, toggle_vocabulary_mastered,
-    delete_vocabulary, get_vocabulary_stats,
+    get_recent_podcasts
 )
-from core.word_frequency import get_word_to_level, get_level_to_num_map
 from services.podcast_service import search_podcasts_itunes, parse_rss_feed
+
 from core.config_manager import get_all_config, update_config
 
 from pipeline.step1_transcribe import transcribe, extract_full_text, extract_word_timestamps
-from pipeline.step2_identify_difficult_words import (
-    identify_difficult_words_by_segments, locate_words_in_segments,
-)
-from pipeline.step3_tts_synthesize import synthesize_text, get_audio_duration
-from pipeline.step3_tts_qwen import (
-    extract_ref_audio_for_segments, synthesize_with_qwen_tts,
-    build_tts_audio_map_for_replacements, group_adjacent_replacements,
-    _build_tts_text, synthesize_sentences_with_qwen_tts,
-)
-from pipeline.step3_tts_fish import (
-    synthesize_sentences_with_fish_tts,
-)
-from pipeline.step4_audio_editor import load_audio, apply_replacements, export_audio
+# step2_identify_difficult_words removed (word_replace mode deleted)
+from pipeline.step3_tts_confucius import synthesize_sentences_with_confucius_tts
+# step4_audio_editor removed (word_replace mode deleted)
 from pipeline.step2b_translate_sentences import (
     select_sentences_to_translate,
-    select_sentences_by_difficulty,
     translate_sentences,
 )
-from pipeline.step3_tts_confucius import synthesize_sentences_with_confucius_tts
 from pipeline.step4b_sentence_mixer import mix_sentence_audio
 
 # Flask 静态文件目录使用绝对路径（web_app.py 已移至 services/ 子目录）
@@ -320,536 +305,6 @@ def _try_resolve_local_url(url: str) -> str:
 # 处理模式：word_replace（生词替换）
 # ============================================================
 
-def process_audio(task_id: str, audio_path: str):
-    """处理流程前半段：下载 → 转录 → 识词 → 暂停等待确认"""
-    try:
-        basename = os.path.splitext(os.path.basename(audio_path))[0]
-        result_dir = os.path.join(config.RESULT_DIR, basename)
-        os.makedirs(result_dir, exist_ok=True)
-
-        update_task(task_id, _basename=basename, _audio_path=audio_path)
-
-        # ---- Step 1: 转录 ----
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-
-        update_task(task_id, status="processing", step="transcribe",
-                    progress=5, message="Step 1/5: 正在转录音频...")
-
-        transcription = transcribe(audio_path)
-        full_text = extract_full_text(transcription)
-        word_timestamps = extract_word_timestamps(transcription)
-        segments = transcription.get("segments", [])
-
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-
-        update_task(task_id, progress=20,
-                    message=f"转录完成: {len(segments)} 个句子, {len(word_timestamps)} 个词",
-                    transcription_text=full_text,
-                    segments=[{"text": s.get("text", "").strip(),
-                               "start": s.get("start", 0),
-                               "end": s.get("end", 0)} for s in segments])
-
-        # ---- Step 2: 识别难词（批量模式） ----
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-
-        update_task(task_id, step="identify", progress=25,
-                    message="Step 2/5: 正在批量识别生词...")
-
-        def _progress_cb(batch_idx, total_batches):
-            pct = 25 + int((batch_idx / max(total_batches, 1)) * 35)
-            update_task(task_id, progress=pct,
-                        message=f"Step 2/5: 分析批次 ({batch_idx+1}/{total_batches})")
-
-        def _cancel_check():
-            return is_cancelled(task_id)
-
-        def _identify_checkpoint(batch_idx, words):
-            update_task(task_id, _checkpoint_identify_batch=batch_idx,
-                        _checkpoint_identify_words=words)
-
-        _task = get_task(task_id)
-        resume_identify_batch = int(_task.get("_checkpoint_identify_batch", 0))
-        resume_identify_words = _task.get("_checkpoint_identify_words", None)
-
-        difficult_words = _run_with_retry(
-            identify_difficult_words_by_segments,
-            segments, cancel_check=_cancel_check, progress_cb=_progress_cb,
-            resume_batch=resume_identify_batch,
-            existing_results=resume_identify_words,
-            checkpoint_cb=_identify_checkpoint,
-            name="识别生词")
-
-        update_task(task_id, _checkpoint_identify_batch=0, _checkpoint_identify_words=None)
-
-        llm_result_path = os.path.join(result_dir, "difficult_words.json")
-        with open(llm_result_path, "w", encoding="utf-8") as f:
-            json.dump(difficult_words, f, ensure_ascii=False, indent=2)
-
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-
-        update_task(task_id, progress=60,
-                    message=f"识别完成: 找到 {len(difficult_words)} 个生词/短语",
-                    difficult_words=difficult_words)
-
-        # ---- 确认生词环节 ----
-        task = get_task(task_id)
-        skip_confirm = task.get("skip_confirmation",
-                                getattr(config, "SKIP_CONFIRMATION", True))
-
-        if skip_confirm:
-            print(f"[Step2] 任务 {task_id[:8]}... 跳过确认，自动继续处理")
-            update_task(task_id, _raw_segments=segments,
-                        status="processing", step="synthesize", progress=61,
-                        message=f"自动确认 {len(difficult_words)} 个生词，继续处理...")
-            continue_after_confirmation(task_id)
-        else:
-            update_task(task_id, status="awaiting_confirmation",
-                        step="confirm", progress=60,
-                        message=f"已识别 {len(difficult_words)} 个生词/短语，请确认后继续",
-                        _raw_segments=segments)
-            save_task_result_to_disk(result_dir, {
-                "task_id": task_id,
-                "status": "awaiting_confirmation",
-                "transcription_text": full_text,
-                "segments": [{"text": s.get("text", "").strip(),
-                              "start": s.get("start", 0),
-                              "end": s.get("end", 0)} for s in segments],
-                "difficult_words": difficult_words,
-            })
-            print(f"[Step2] 任务 {task_id[:8]}... 暂停等待用户确认生词")
-
-    except InterruptedError:
-        update_task(task_id, status="cancelled", message="任务已被终止")
-    except Exception as e:
-        traceback.print_exc()
-        task = get_task(task_id) or {}
-        update_task(task_id, status="error", message=f"处理出错: {str(e)}",
-                    _failed_step=task.get("step", "transcribe"))
-    finally:
-        task_subprocesses.pop(task_id, None)
-
-
-def continue_after_confirmation(task_id: str):
-    """处理流程后半段：定位 + TTS → 音频拼接 → 生词本 → 完成"""
-    try:
-        task = get_task(task_id)
-        if not task:
-            return
-
-        audio_path = task.get("_audio_path", "")
-        basename = task.get("_basename", "")
-        difficult_words = task.get("difficult_words", [])
-
-        segments = task.get("_raw_segments", [])
-        if not segments:
-            transcription_cache = os.path.join(config.OUTPUT_DIR, f"{basename}.json")
-            if os.path.exists(transcription_cache):
-                with open(transcription_cache, "r", encoding="utf-8") as f:
-                    transcription = json.load(f)
-                segments = transcription.get("segments", [])
-
-        full_text = task.get("transcription_text", "")
-        result_dir = os.path.join(config.RESULT_DIR, basename)
-        os.makedirs(result_dir, exist_ok=True)
-
-        if not difficult_words:
-            update_task(task_id, status="completed", progress=100,
-                        step="done", message="分析完成，未发现生词。",
-                        difficult_words=[])
-            return
-
-        llm_result_path = os.path.join(result_dir, "difficult_words.json")
-        with open(llm_result_path, "w", encoding="utf-8") as f:
-            json.dump(difficult_words, f, ensure_ascii=False, indent=2)
-
-        if task_id not in cancel_flags:
-            cancel_flags[task_id] = threading.Event()
-
-        # ---- Step 3: 定位 + TTS ----
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-
-        update_task(task_id, status="processing", step="synthesize", progress=62,
-                    message="Step 3/5: 定位时间戳并合成中文语音...")
-
-        # 生词已就绪，落盘以便 kill 后断点续传跳过识词步骤
-        seg_save = [{"text": s.get("text", "").strip(),
-                      "start": s.get("start", 0),
-                      "end": s.get("end", 0)} for s in segments]
-        save_task_result_to_disk(result_dir, {
-            "task_id": task_id, "status": "processing",
-            "transcription_text": full_text,
-            "segments": seg_save,
-            "difficult_words": difficult_words,
-        })
-
-        replacements = locate_words_in_segments(difficult_words, segments)
-
-        tts_engine = getattr(config, "TTS_ENGINE", "edge-tts")
-        tts_audio_map = {}
-        tts_index_map = None
-
-        if tts_engine == "qwen3-tts":
-            update_task(task_id, progress=64,
-                        message="Step 3/5: 提取说话人参考音频...")
-            ref_dir = os.path.join(result_dir, "ref_audio")
-            ref_audio_map, ref_source_map = extract_ref_audio_for_segments(
-                audio_path, segments, replacements, ref_dir)
-
-            if is_cancelled(task_id):
-                raise InterruptedError("任务已被用户终止")
-
-            adjacent_groups = group_adjacent_replacements(replacements)
-
-            update_task(task_id, progress=66,
-                        message="Step 3/5: 正在用 Qwen3-TTS 合成语音（声音克隆）...")
-            qwen_cache_dir = os.path.join(result_dir, "tts_cache")
-
-            def _tts_progress(current, total):
-                pct = 66 + int((current / max(total, 1)) * 14)
-                update_task(task_id, progress=pct,
-                            message=f"Step 3/5: Qwen3-TTS 合成中 ({current}/{total})")
-
-            def _tts_cancel():
-                return is_cancelled(task_id)
-
-            tts_map = synthesize_with_qwen_tts(
-                replacements, ref_audio_map, segments, qwen_cache_dir,
-                adjacent_groups=adjacent_groups,
-                ref_source_map=ref_source_map,
-                cancel_check=_tts_cancel, progress_cb=_tts_progress,
-                task_id=task_id)
-
-            tts_index_map = build_tts_audio_map_for_replacements(
-                replacements, tts_map, adjacent_groups)
-        else:
-            adjacent_groups = group_adjacent_replacements(replacements)
-            tts_tasks = []
-            for group in adjacent_groups:
-                merged_text = _build_tts_text(group, replacements)
-                if len(group) == 1:
-                    group_key = f"single_{group[0]}"
-                else:
-                    group_key = f"merged_{group[0]}_{group[-1]}"
-                tts_tasks.append((group_key, merged_text, group))
-
-            unique_texts = {}
-            for gk, text, group in tts_tasks:
-                if text not in unique_texts:
-                    unique_texts[text] = gk
-
-            text_to_path = {}
-            for i, text in enumerate(unique_texts.keys()):
-                if is_cancelled(task_id):
-                    raise InterruptedError("任务已被用户终止")
-                pct = 62 + int((i / max(len(unique_texts), 1)) * 18)
-                update_task(task_id, progress=pct,
-                            message=f"Step 3/5: 合成语音 ({i+1}/{len(unique_texts)})")
-                path = synthesize_text(text)
-                text_to_path[text] = path
-
-            tts_index_map = {}
-            for gk, text, group in tts_tasks:
-                if text in text_to_path:
-                    tts_index_map[gk] = {"path": text_to_path[text], "indices": group}
-
-            for r in replacements:
-                if r["chinese"] in text_to_path:
-                    tts_audio_map[r["chinese"]] = text_to_path[r["chinese"]]
-                else:
-                    path = synthesize_text(r["chinese"])
-                    tts_audio_map[r["chinese"]] = path
-
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-
-        tts_count = len(tts_index_map) if tts_index_map else len(tts_audio_map)
-        update_task(task_id, progress=80,
-                    message=f"语音合成完成: {tts_count} 条中文语音 ({tts_engine})")
-
-        # ---- Step 4: 音频拼接 ----
-        update_task(task_id, step="merge", progress=82,
-                    message="Step 4/5: 正在拼接混合音频...")
-
-        original_audio = load_audio(audio_path)
-        mixed_audio, time_mapping = apply_replacements(
-            original_audio, replacements, tts_audio_map, tts_index_map)
-
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-
-        output_audio_path = os.path.join(
-            result_dir, f"{basename}_mixed.{config.OUTPUT_FORMAT}")
-        export_audio(mixed_audio, output_audio_path)
-
-        original_duration = len(original_audio) / 1000.0
-        mixed_duration = len(mixed_audio) / 1000.0
-
-        update_task(task_id, progress=92,
-                    message=f"音频生成完成: {original_duration:.1f}s → {mixed_duration:.1f}s")
-
-        # ---- Step 5: 生词本 ----
-        update_task(task_id, step="vocabulary", progress=95,
-                    message="Step 5/5: 生成生词本...")
-
-        from main import save_vocabulary_book
-        vocab_path = os.path.join(result_dir, "vocabulary_book.json")
-        save_vocabulary_book(difficult_words, replacements, vocab_path)
-
-        # ---- 完成 ----
-        serialized_replacements = [{
-            "english": r["english"], "chinese": r["chinese"],
-            "type": r["type"],
-            "start": round(r["start"], 2), "end": round(r["end"], 2),
-        } for r in replacements]
-
-        serialized_segments = [{"text": s.get("text", "").strip(),
-                                "start": s.get("start", 0),
-                                "end": s.get("end", 0)} for s in segments]
-
-        result_data = {
-            "basename": basename,
-            "original_audio": audio_path,
-            "mixed_audio": output_audio_path,
-            "original_duration": round(original_duration, 1),
-            "mixed_duration": round(mixed_duration, 1),
-            "total_words": len(difficult_words),
-            "total_replacements": len(replacements),
-            "vocabulary_book": vocab_path,
-        }
-
-        update_task(task_id, status="completed", step="done", progress=100,
-                    message="全部完成！", result=result_data,
-                    replacements=serialized_replacements,
-                    time_mapping=time_mapping)
-
-        save_task_result_to_disk(result_dir, {
-            "task_id": task_id, "status": "completed",
-            "transcription_text": full_text,
-            "segments": serialized_segments,
-            "difficult_words": difficult_words,
-            "replacements": serialized_replacements,
-            "result": result_data,
-            "time_mapping": time_mapping,
-        })
-
-        _cleanup_intermediate_files(result_dir)
-
-        # ---- 保存生词到全局生词库 ----
-        try:
-            task_title = task.get("title", "") or basename
-            add_or_update_vocabulary(difficult_words, task_id, task_title)
-            print(f"[Vocab] 已保存 {len(difficult_words)} 个生词到全局生词库 (任务 {task_id[:8]}...)")
-        except Exception as ve:
-            print(f"[Vocab] 保存生词库失败: {ve}")
-
-    except InterruptedError:
-        update_task(task_id, status="cancelled", message="任务已被终止")
-    except Exception as e:
-        traceback.print_exc()
-        task = get_task(task_id) or {}
-        update_task(task_id, status="error", message=f"处理出错: {str(e)}",
-                    _failed_step=task.get("step", "transcribe"))
-    finally:
-        cancel_flags.pop(task_id, None)
-        task_subprocesses.pop(task_id, None)
-
-
-# ============================================================
-# 处理模式：smart_translate（智能翻译）
-# ============================================================
-
-def process_audio_smart_mode(task_id: str, audio_path: str):
-    """智能翻译模式前半段：转录 → 识别生词 → 按生词选句 → 翻译 → [确认]"""
-    try:
-        basename = os.path.splitext(os.path.basename(audio_path))[0]
-        result_dir = os.path.join(config.RESULT_DIR, basename)
-        os.makedirs(result_dir, exist_ok=True)
-        update_task(task_id, _basename=basename, _audio_path=audio_path)
-
-        # ---- Step 1: 转录 ----
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-        update_task(task_id, status="processing", step="transcribe",
-                    progress=5, message="Step 1/5: 正在转录音频...")
-
-        transcription = transcribe(audio_path)
-        full_text = extract_full_text(transcription)
-        segments = transcription.get("segments", [])
-
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-
-        serialized_segments = [{"text": s.get("text", "").strip(),
-                                "start": s.get("start", 0),
-                                "end": s.get("end", 0)} for s in segments]
-        update_task(task_id, progress=20,
-                    message=f"转录完成: {len(segments)} 个句子",
-                    transcription_text=full_text, segments=serialized_segments)
-
-        # ---- Step 2: 识别生词 ----
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-        update_task(task_id, step="identify", progress=22,
-                    message="Step 2/5: 正在识别生词...")
-
-        def _identify_progress(batch_idx, total_batches):
-            pct = 22 + int((batch_idx / max(total_batches, 1)) * 18)
-            update_task(task_id, progress=pct,
-                        message=f"Step 2/5: 识别批次 ({batch_idx+1}/{total_batches})")
-
-        def _cancel_check():
-            return is_cancelled(task_id)
-
-        def _identify_checkpoint(batch_idx, words):
-            update_task(task_id, _checkpoint_identify_batch=batch_idx,
-                        _checkpoint_identify_words=words)
-
-        # 断点续跑：从任务的 checkpoint 恢复
-        _task = get_task(task_id)
-        resume_identify_batch = int(_task.get("_checkpoint_identify_batch", 0))
-        resume_identify_words = _task.get("_checkpoint_identify_words", None)
-
-        difficult_words = _run_with_retry(
-            identify_difficult_words_by_segments,
-            segments, cancel_check=_cancel_check, progress_cb=_identify_progress,
-            resume_batch=resume_identify_batch,
-            existing_results=resume_identify_words,
-            checkpoint_cb=_identify_checkpoint,
-            name="识别生词")
-
-        # 清除 checkpoint（识别完成）
-        update_task(task_id, _checkpoint_identify_batch=0, _checkpoint_identify_words=None)
-
-        llm_result_path = os.path.join(result_dir, "difficult_words.json")
-        with open(llm_result_path, "w", encoding="utf-8") as f:
-            json.dump(difficult_words, f, ensure_ascii=False, indent=2)
-
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-        update_task(task_id, progress=40,
-                    message=f"识别完成: {len(difficult_words)} 个生词/短语",
-                    difficult_words=difficult_words)
-
-        # ---- Step 3: 按生词选句 + 翻译 ----
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-        update_task(task_id, step="translate", progress=42,
-                    message="Step 3/5: 按生词选句并翻译...")
-
-        max_ratio = getattr(config, "SMART_MAX_TRANSLATE_RATIO", 0.7)
-        translated_indices = select_sentences_by_difficulty(
-            serialized_segments, difficult_words, max_ratio)
-
-        if not translated_indices:
-            update_task(task_id, status="completed", progress=100,
-                        step="done", message="未找到含生词的句子，无需翻译。")
-            return
-
-        update_task(task_id, progress=45,
-                    message=f"将翻译 {len(translated_indices)}/{len(segments)} 个含生词句子")
-
-        def _translate_progress(batch_idx, total_batches):
-            pct = 45 + int((batch_idx / max(total_batches, 1)) * 10)
-            update_task(task_id, progress=pct,
-                        message=f"Step 3/5: 翻译批次 ({batch_idx+1}/{total_batches})")
-
-        def _translate_checkpoint(batch_idx, trans):
-            """每批翻译完成后更新内存断点 + 落盘到 task_result.json"""
-            update_task(task_id, _checkpoint_translate_batch=batch_idx,
-                        _checkpoint_translations=trans)
-            save_task_result_to_disk(result_dir, {
-                "task_id": task_id, "status": "processing",
-                "process_mode": "smart_translate",
-                "_checkpoint_translate_batch": batch_idx,
-                "_checkpoint_translations": trans,
-            })
-
-        # 断点续跑：从任务的 checkpoint 恢复
-        _task = get_task(task_id)
-        resume_tl_batch = int(_task.get("_checkpoint_translate_batch", 0))
-        resume_tl_trans = _task.get("_checkpoint_translations", None)
-        if resume_tl_trans:
-            resume_tl_trans = {int(k): v for k, v in resume_tl_trans.items()}
-
-        translations = _run_with_retry(
-            translate_sentences,
-            serialized_segments, translated_indices,
-            cancel_check=_cancel_check, progress_cb=_translate_progress,
-            resume_batch=resume_tl_batch,
-            existing_translations=resume_tl_trans,
-            checkpoint_cb=_translate_checkpoint,
-            name="句子翻译")
-
-        update_task(task_id, _checkpoint_translate_batch=0, _checkpoint_translations=None)
-
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-        update_task(task_id, progress=55,
-                    message=f"翻译完成: {len(translations)}/{len(translated_indices)} 个句子")
-
-        # 翻译结果立刻落盘，kill 后断点续传能跳过翻译步骤
-        save_task_result_to_disk(result_dir, {
-            "task_id": task_id, "status": "processing",
-            "process_mode": "smart_translate",
-            "transcription_text": full_text,
-            "segments": serialized_segments,
-            "difficult_words": difficult_words,
-            "translations": translations,
-            "translated_indices": translated_indices,
-        })
-
-        # ---- 确认翻译环节 ----
-        task = get_task(task_id)
-        skip_confirm = task.get("skip_confirmation",
-                                getattr(config, "SKIP_CONFIRMATION", True))
-
-        if skip_confirm:
-            print(f"[Smart] 任务 {task_id[:8]}... 跳过确认，自动继续处理")
-            update_task(task_id, translations=translations,
-                        translated_indices=translated_indices,
-                        _raw_segments=segments,
-                        status="processing", step="synthesize", progress=58,
-                        message=f"自动确认 {len(translations)} 个翻译，继续处理...")
-            continue_after_sentence_confirmation(task_id)
-        else:
-            update_task(task_id, status="awaiting_sentence_confirmation",
-                        step="confirm_sentence", progress=55,
-                        message=f"已翻译 {len(translations)} 个含生词句子，请确认后继续",
-                        translations=translations,
-                        translated_indices=translated_indices,
-                        _raw_segments=segments)
-            save_task_result_to_disk(result_dir, {
-                "task_id": task_id,
-                "status": "awaiting_sentence_confirmation",
-                "process_mode": "smart_translate",
-                "transcription_text": full_text,
-                "segments": serialized_segments,
-                "translations": translations,
-                "translated_indices": translated_indices,
-                "difficult_words": difficult_words,
-            })
-            print(f"[Smart] 任务 {task_id[:8]}... 暂停等待用户确认翻译")
-
-    except InterruptedError:
-        update_task(task_id, status="cancelled", message="任务已被终止")
-    except Exception as e:
-        traceback.print_exc()
-        task = get_task(task_id) or {}
-        update_task(task_id, status="error", message=f"处理出错: {str(e)}",
-                    _failed_step=task.get("step", "translate"))
-    finally:
-        task_subprocesses.pop(task_id, None)
-
-
-# ============================================================
-# 处理模式：sentence_translate（句子翻译）
-# ============================================================
-
 def process_audio_sentence_mode(task_id: str, audio_path: str):
     """句子翻译模式前半段：转录 → 翻译 → 暂停等待确认"""
     try:
@@ -1018,10 +473,10 @@ def continue_after_sentence_confirmation(task_id: str):
                                      if idx in translations])
 
         # 翻译已就绪，落盘以便 kill 后断点续传跳过翻译步骤
-        actual_mode = task.get("process_mode", "sentence_translate")
+        mode = "sentence_translate"
         save_task_result_to_disk(result_dir, {
             "task_id": task_id, "status": "processing",
-            "process_mode": actual_mode,
+            "process_mode": "sentence_translate",
             "transcription_text": full_text,
             "segments": segments,
             "difficult_words": task.get("difficult_words", []),
@@ -1041,148 +496,52 @@ def continue_after_sentence_confirmation(task_id: str):
         if is_cancelled(task_id):
             raise InterruptedError("任务已被用户终止")
 
-        tts_engine = getattr(config, "TTS_ENGINE", "edge-tts")
         voice_clone = getattr(config, "SENTENCE_TTS_VOICE_CLONE", True)
 
         update_task(task_id, status="processing", step="synthesize", progress=60,
                     message="Step 3/4: 合成中文语音...")
 
         tts_audio_map = {}
-        fish_ref_map = {}
 
-        if tts_engine == "fish-speech":
-            # Fish Speech S2 Pro: 通过 s2.cpp HTTP 服务合成
-            fish_cache_dir = os.path.join(result_dir, "tts_fish_cache")
-            fish_ref_dir = os.path.join(fish_cache_dir, "ref_audio")
-            os.makedirs(fish_ref_dir, exist_ok=True)
+        # Confucius4-TTS-CPU: 零样本多语言声音克隆
+        confucius_cache_dir = os.path.join(result_dir, "tts_confucius_cache")
+        confucius_ref_dir = os.path.join(confucius_cache_dir, "ref_audio")
+        os.makedirs(confucius_ref_dir, exist_ok=True)
 
-            # 提取参考音频（说话人感知：自身原声 + 短句向同说话人相邻段扩展）
-            from pipeline.step3_tts_qwen import (
-                extract_ref_audio_for_segments, extract_ref_audio_speaker_local)
-            pseudo_replacements = [
-                {"segment_index": idx}
-                for idx in translated_indices if idx < len(segments)
-            ]
-            fish_ref_map = {}
-            fish_ref_source_map = {}
-            fish_ref_text_map = {}
-            if voice_clone and pseudo_replacements:
-                ref_mode = getattr(config, "REF_SELECT_MODE", "speaker_local")
-                if ref_mode == "speaker_local":
-                    (fish_ref_map, fish_ref_source_map,
-                     fish_ref_text_map) = extract_ref_audio_speaker_local(
-                        audio_path, segments, pseudo_replacements,
-                        fish_ref_dir, engine="fish")
-                else:
-                    fish_ref_map, fish_ref_source_map = extract_ref_audio_for_segments(
-                        audio_path, segments, pseudo_replacements, fish_ref_dir)
-                print(f"[Fish] 提取了 {len(fish_ref_map)} 个参考音频 (mode={ref_mode})")
+        from pipeline.ref_audio_utils import (
+            extract_ref_audio_for_segments, extract_ref_audio_speaker_local)
+        pseudo_replacements = [
+            {"segment_index": idx}
+            for idx in translated_indices if idx < len(segments)
+        ]
+        confucius_ref_map = {}
+        if voice_clone and pseudo_replacements:
+            ref_mode = getattr(config, "REF_SELECT_MODE", "speaker_local")
+            if ref_mode == "speaker_local":
+                (confucius_ref_map, confucius_ref_source_map,
+                 _confucius_ref_text_map) = extract_ref_audio_speaker_local(
+                    audio_path, segments, pseudo_replacements,
+                    confucius_ref_dir, engine="confucius")
+            else:
+                confucius_ref_map, confucius_ref_source_map = extract_ref_audio_for_segments(
+                    audio_path, segments, pseudo_replacements, confucius_ref_dir)
+            print(f"[Confucius] 提取了 {len(confucius_ref_map)} 个参考音频 (mode={ref_mode})")
 
-            def _fish_progress(current, total):
-                pct = 60 + int((current / max(total, 1)) * 20)
-                engine_label = "Fish Speech"
-                update_task(task_id, progress=pct,
-                            message=f"Step 3/4: {engine_label} 句子合成 ({current}/{total})",
-                            _tts_completed_count=current)
+        def _confucius_progress(current, total):
+            pct = 60 + int((current / max(total, 1)) * 20)
+            update_task(task_id, progress=pct,
+                        message=f"Step 3/4: Confucius4-TTS 句子合成 ({current}/{total})",
+                        _tts_completed_count=current)
 
-            def _fish_cancel():
-                return is_cancelled(task_id)
+        def _confucius_cancel():
+            return is_cancelled(task_id)
 
-            def _fish_checkpoint(completed_idx):
-                """每完成一句 TTS 就落盘进度"""
-                update_task(task_id, _checkpoint_tts_idx=completed_idx)
-
-            # 断点续跑：从上次 kill 的位置继续
-            _task = get_task(task_id)
-            resume_tts_idx = int(_task.get("_checkpoint_tts_idx", 0))
-
-            tts_audio_map = synthesize_sentences_with_fish_tts(
-                segments, translated_indices, translations,
-                audio_path, fish_cache_dir,
-                ref_audio_map=fish_ref_map if voice_clone else {},
-                ref_source_map=fish_ref_source_map,
-                ref_text_map=fish_ref_text_map,
-                cancel_check=_fish_cancel, progress_cb=_fish_progress,
-                task_id=task_id,
-                resume_idx=resume_tts_idx,
-                checkpoint_cb=_fish_checkpoint)
-
-            # TTS 完成后清除断点标记
-            update_task(task_id, _checkpoint_tts_idx=0)
-
-        elif tts_engine == "qwen3-tts" and voice_clone:
-            qwen_cache_dir = os.path.join(result_dir, "tts_sent_cache")
-
-            def _tts_progress(current, total):
-                pct = 60 + int((current / max(total, 1)) * 20)
-                update_task(task_id, progress=pct,
-                            message=f"Step 3/4: Qwen3-TTS 句子合成 ({current}/{total})")
-
-            def _tts_cancel():
-                return is_cancelled(task_id)
-
-            tts_audio_map = synthesize_sentences_with_qwen_tts(
-                segments, translated_indices, translations,
-                audio_path, qwen_cache_dir,
-                voice_clone=True,
-                cancel_check=_tts_cancel, progress_cb=_tts_progress,
-                task_id=task_id)
-
-        elif tts_engine == "confucius-tts":
-            # Confucius4-TTS-CPU: 零样本多语言声音克隆
-            confucius_cache_dir = os.path.join(result_dir, "tts_confucius_cache")
-            confucius_ref_dir = os.path.join(confucius_cache_dir, "ref_audio")
-            os.makedirs(confucius_ref_dir, exist_ok=True)
-
-            # 提取参考音频（说话人感知）
-            from pipeline.step3_tts_qwen import (
-                extract_ref_audio_for_segments, extract_ref_audio_speaker_local)
-            pseudo_replacements = [
-                {"segment_index": idx}
-                for idx in translated_indices if idx < len(segments)
-            ]
-            confucius_ref_map = {}
-            if voice_clone and pseudo_replacements:
-                ref_mode = getattr(config, "REF_SELECT_MODE", "speaker_local")
-                if ref_mode == "speaker_local":
-                    (confucius_ref_map, confucius_ref_source_map,
-                     _confucius_ref_text_map) = extract_ref_audio_speaker_local(
-                        audio_path, segments, pseudo_replacements,
-                        confucius_ref_dir, engine="confucius")
-                else:
-                    confucius_ref_map, confucius_ref_source_map = extract_ref_audio_for_segments(
-                        audio_path, segments, pseudo_replacements, confucius_ref_dir)
-                print(f"[Confucius] 提取了 {len(confucius_ref_map)} 个参考音频 (mode={ref_mode})")
-
-            def _confucius_progress(current, total):
-                pct = 60 + int((current / max(total, 1)) * 20)
-                update_task(task_id, progress=pct,
-                            message=f"Step 3/4: Confucius4-TTS 句子合成 ({current}/{total})",
-                            _tts_completed_count=current)
-
-            def _confucius_cancel():
-                return is_cancelled(task_id)
-
-            tts_audio_map = synthesize_sentences_with_confucius_tts(
-                segments, translated_indices, translations,
-                audio_path, confucius_cache_dir,
-                ref_audio_map=confucius_ref_map if voice_clone else {},
-                cancel_check=_confucius_cancel, progress_cb=_confucius_progress,
-                task_id=task_id)
-
-        else:
-            from pipeline.step3_tts_synthesize import synthesize_text as edge_synthesize
-            total = len(translated_indices)
-            for i, seg_idx in enumerate(translated_indices):
-                if is_cancelled(task_id):
-                    raise InterruptedError("任务已被用户终止")
-                chinese = translations.get(seg_idx, "")
-                if chinese:
-                    pct = 60 + int((i / max(total, 1)) * 20)
-                    update_task(task_id, progress=pct,
-                                message=f"Step 3/4: Edge-TTS 合成 ({i+1}/{total})")
-                    path = edge_synthesize(chinese)
-                    tts_audio_map[seg_idx] = path
+        tts_audio_map = synthesize_sentences_with_confucius_tts(
+            segments, translated_indices, translations,
+            audio_path, confucius_cache_dir,
+            ref_audio_map=confucius_ref_map if voice_clone else {},
+            cancel_check=_confucius_cancel, progress_cb=_confucius_progress,
+            task_id=task_id)
 
         if is_cancelled(task_id):
             raise InterruptedError("任务已被用户终止")
@@ -1235,7 +594,7 @@ def continue_after_sentence_confirmation(task_id: str):
                     "end": segments[seg_idx].get("end", 0),
                 })
 
-        actual_mode = task.get("process_mode", "sentence_translate")
+        mode = "sentence_translate"
 
         update_task(task_id, status="completed", step="done", progress=100,
                     message="全部完成！", result=result_data,
@@ -1244,7 +603,7 @@ def continue_after_sentence_confirmation(task_id: str):
 
         save_task_result_to_disk(result_dir, {
             "task_id": task_id, "status": "completed",
-            "process_mode": actual_mode,
+            "process_mode": "sentence_translate",
             "transcription_text": full_text,
             "segments": segments,
             "difficult_words": task.get("difficult_words", []),
@@ -1257,12 +616,10 @@ def continue_after_sentence_confirmation(task_id: str):
 
         _cleanup_intermediate_files(result_dir)
 
-        # ---- 保存生词到全局生词库（智能翻译模式也有生词识别） ----
         try:
             dw = task.get("difficult_words", [])
             if dw:
                 task_title = task.get("title", "") or basename
-                add_or_update_vocabulary(dw, task_id, task_title)
                 print(f"[Vocab] 已保存 {len(dw)} 个生词到全局生词库 (任务 {task_id[:8]}...)")
         except Exception as ve:
             print(f"[Vocab] 保存生词库失败: {ve}")
@@ -1279,92 +636,27 @@ def continue_after_sentence_confirmation(task_id: str):
         task_subprocesses.pop(task_id, None)
 
 
-# ============================================================
-# 辅助函数
-# ============================================================
 
-def translate_word_via_llm(english: str, context_sentence: str = "") -> str:
-    """调用 Ollama 翻译单个词/短语为中文（基于句子语境）"""
-    from pipeline.step2_identify_difficult_words import call_ollama
-    from pipeline.step2b_translate_sentences import _apply_colloquial_fixup, _is_meta_response
 
-    # 先检查口语习语字典，命中则直接返回（跳过 LLM 调用）
-    fixup = _apply_colloquial_fixup(english, "")
-    if fixup and fixup != "":
-        return fixup
 
-    if context_sentence:
-        prompt = f"""将以下英文句子中的 "{english}" 翻译为中文。只输出中文翻译，不要确认语。
 
-句子：{context_sentence}
-词/短语：{english}
-中文："""
-    else:
-        prompt = f"""将以下英文翻译为中文。只输出中文，不要确认语。
-
-{english}
-中文："""
-
-    response = call_ollama(prompt)
-
-    # 检测元响应：若模型返回确认语而非翻译，用极简 prompt 重试
-    if _is_meta_response(response):
-        fallback_prompt = f"翻译：{english}"
-        response = call_ollama(fallback_prompt)
-
-    for line in response.strip().split("\n"):
-        line = line.strip()
-        if line:
-            line = re.split(r'[；;/、]', line)[0].strip()
-            line = re.sub(r'[（(][^）)]*[）)]', '', line).strip()
-            # 再次应用兜底修正
-            line = _apply_colloquial_fixup(english, line)
-            return line if line else english
-    return english
 
 
 # ============================================================
 # API 路由 — 播客收藏
 # ============================================================
 
-@app.route("/api/favorites")
-def api_get_favorites():
-    """获取全部播客收藏"""
-    return jsonify({"favorites": get_favorites()})
 
 
-@app.route("/api/favorites", methods=["POST"])
-def api_add_favorite():
-    """添加播客收藏"""
-    data = request.get_json()
-    if not data or "rss_url" not in data:
-        return jsonify({"error": "请提供 rss_url"}), 400
-    fav = add_favorite(
-        title=data.get("title", ""),
-        author=data.get("author", ""),
-        image=data.get("image", ""),
-        rss_url=data["rss_url"],
-    )
-    return jsonify({"ok": True, "favorite": fav})
 
 
-@app.route("/api/favorites", methods=["DELETE"])
-def api_remove_favorite():
-    """移除播客收藏"""
-    data = request.get_json()
-    if not data or "rss_url" not in data:
-        return jsonify({"error": "请提供 rss_url"}), 400
-    remove_favorite(data["rss_url"])
-    return jsonify({"ok": True})
 
 
-@app.route("/api/favorites/check")
 def api_check_favorite():
     """检查是否已收藏"""
     rss_url = request.args.get("rss_url", "").strip()
     if not rss_url:
         return jsonify({"error": "请提供 rss_url"}), 400
-    return jsonify({"is_favorite": is_favorite(rss_url)})
 
 
 # ============================================================
@@ -1441,52 +733,7 @@ def api_recent_podcasts():
     return jsonify({"podcasts": podcasts})
 
 
-# ============================================================
-# API 路由 — 全局生词库
-# ============================================================
 
-@app.route("/api/vocabulary")
-def api_vocabulary_list():
-    """获取生词库列表（支持排序、筛选、搜索、分页）"""
-    sort_by = request.args.get("sort_by", "last_seen_at")
-    sort_order = request.args.get("sort_order", "desc")
-    filter_mastered = request.args.get("filter_mastered", "all")
-    filter_type = request.args.get("filter_type", "")
-    filter_freq = request.args.get("filter_freq", "")
-    search = request.args.get("search", "")
-    page = int(request.args.get("page", 1))
-    page_size = int(request.args.get("page_size", 50))
-
-    result = get_vocabulary(
-        sort_by=sort_by, sort_order=sort_order,
-        filter_mastered=filter_mastered, filter_type=filter_type,
-        filter_freq=filter_freq, search=search,
-        page=page, page_size=page_size,
-    )
-    return jsonify(result)
-
-
-@app.route("/api/vocabulary/stats")
-def api_vocabulary_stats():
-    """获取生词库统计信息"""
-    stats = get_vocabulary_stats()
-    return jsonify(stats)
-
-
-@app.route("/api/vocabulary/<int:vocab_id>/toggle_mastered", methods=["POST"])
-def api_vocabulary_toggle_mastered(vocab_id):
-    """切换生词掌握状态"""
-    result = toggle_vocabulary_mastered(vocab_id)
-    if not result:
-        return jsonify({"error": "生词不存在"}), 404
-    return jsonify({"ok": True, "word": result})
-
-
-@app.route("/api/vocabulary/<int:vocab_id>", methods=["DELETE"])
-def api_vocabulary_delete(vocab_id):
-    """删除单个生词"""
-    delete_vocabulary(vocab_id)
-    return jsonify({"ok": True})
 
 
 # ============================================================
@@ -1592,9 +839,8 @@ def submit_task():
     elif not audio_url.startswith(("http://", "https://")):
         return jsonify({"error": "请提供有效的HTTP/HTTPS URL"}), 400
 
-    difficulty = data.get("difficulty", config.DIFFICULTY_LEVEL)
-    process_mode = data.get("process_mode",
-                            getattr(config, "PROCESS_MODE", "word_replace"))
+    # Always use sentence_translate mode with 100% translation
+    process_mode = "sentence_translate"
     skip_confirmation = data.get("skip_confirmation",
                                  getattr(config, "SKIP_CONFIRMATION", True))
     title = data.get("title", "").strip()
@@ -1609,7 +855,6 @@ def submit_task():
             "task_id": task_id,
             "url": audio_url,
             "title": title,
-            "difficulty": difficulty,
             "process_mode": process_mode,
             "skip_confirmation": skip_confirmation,
             "status": "downloading",
@@ -1634,7 +879,6 @@ def submit_task():
             "task_id": task_id,
             "url": audio_url,
             "title": title,
-            "difficulty": difficulty,
             "process_mode": process_mode,
             "status": "downloading",
             "progress": 0,
@@ -1720,13 +964,8 @@ def submit_task():
                     return
 
         task = get_task(task_id)
-        mode = task.get("process_mode", "word_replace")
-        if mode == "smart_translate":
-            process_audio_smart_mode(task_id, audio_path)
-        elif mode == "sentence_translate":
-            process_audio_sentence_mode(task_id, audio_path)
-        else:
-            process_audio(task_id, audio_path)
+        mode = "sentence_translate"
+        process_audio_sentence_mode(task_id, audio_path)
 
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
@@ -1764,28 +1003,6 @@ def cancel_task(task_id):
     return jsonify({"message": "任务终止请求已发送"})
 
 
-@app.route("/api/task/<task_id>/confirm", methods=["POST"])
-def confirm_words(task_id):
-    """用户确认生词后，继续执行后续流程"""
-    task = get_task(task_id)
-    if not task:
-        return jsonify({"error": "任务不存在"}), 404
-    if task.get("status") != "awaiting_confirmation":
-        return jsonify({"error": f"任务状态为 {task.get('status')}，不在等待确认状态"}), 400
-
-    data = request.get_json()
-    if not data or "difficult_words" not in data:
-        return jsonify({"error": "请提供 difficult_words"}), 400
-
-    confirmed_words = data["difficult_words"]
-    update_task(task_id, difficult_words=confirmed_words,
-                status="processing", step="synthesize", progress=61,
-                message=f"用户确认 {len(confirmed_words)} 个生词，继续处理...")
-
-    thread = threading.Thread(target=continue_after_confirmation,
-                              args=(task_id,), daemon=True)
-    thread.start()
-    return jsonify({"message": f"已确认 {len(confirmed_words)} 个生词，继续处理"})
 
 
 @app.route("/api/task/<task_id>/confirm_sentences", methods=["POST"])
@@ -1829,7 +1046,7 @@ def retry_task(task_id):
     if task.get("status") != "error":
         return jsonify({"error": f"任务状态为 {task.get('status')}，仅 error 状态可重试"}), 400
 
-    process_mode = task.get("process_mode", "word_replace")
+    mode = "sentence_translate"
     audio_path = task.get("_audio_path", "")
 
     if not audio_path:
@@ -1866,7 +1083,8 @@ def retry_task(task_id):
     translated_indices = task.get("translated_indices", [])
     difficult_words = task.get("difficult_words", [])
 
-    if process_mode in ("sentence_translate", "smart_translate"):
+    if True:  # always sentence_translate
+
         if translations and translated_indices and segments:
             # 翻译已完成，直接从 TTS 合成恢复
             msg = f"断点续传 — 跳过转录+翻译，直接从 TTS 恢复 ({len(translated_indices)} 句)"
@@ -1891,28 +1109,6 @@ def retry_task(task_id):
                         _failed_step="", progress=0,
                         message="断点续传 — 从头开始…")
             thread = threading.Thread(target=process_audio_sentence_mode,
-                                      args=(task_id, audio_path), daemon=True)
-    elif process_mode == "word_replace":
-        if difficult_words and segments:
-            # 识词已完成，直接从确认/TTS 恢复
-            msg = f"断点续传 — 跳过转录+识词，直接从 TTS 恢复 ({len(difficult_words)} 个生词)"
-            print(f"[Retry] {msg}")
-            update_task(task_id, status="processing", step="synthesize",
-                        _failed_step="", progress=61,
-                        message=msg)
-            thread = threading.Thread(target=continue_after_confirmation,
-                                      args=(task_id,), daemon=True)
-        elif segments:
-            update_task(task_id, status="processing", step="identify",
-                        _failed_step="", progress=20,
-                        message="断点续传 — 跳过转录，从识词恢复")
-            thread = threading.Thread(target=process_audio,
-                                      args=(task_id, audio_path), daemon=True)
-        else:
-            update_task(task_id, status="processing", step="transcribe",
-                        _failed_step="", progress=0,
-                        message="断点续传 — 从头开始…")
-            thread = threading.Thread(target=process_audio,
                                       args=(task_id, audio_path), daemon=True)
     else:
         update_task(task_id, status="processing", step="transcribe",
@@ -1957,8 +1153,8 @@ def retry_sentence_synthesis(task_id):
     else:
         # 只合成缺失的部分
         result_dir = os.path.join(config.RESULT_DIR, basename)
-        qwen_cache_dir = os.path.join(result_dir, "tts_sent_cache")
-        os.makedirs(qwen_cache_dir, exist_ok=True)
+        confucius_cache_dir = os.path.join(result_dir, "tts_confucius_cache")
+        os.makedirs(confucius_cache_dir, exist_ok=True)
 
         missing_translations = {k: translations[k] for k in missing_indices
                                 if k in translations}
@@ -1975,10 +1171,10 @@ def retry_sentence_synthesis(task_id):
             return is_cancelled(task_id)
 
         try:
-            new_tts = synthesize_sentences_with_qwen_tts(
+            new_tts = synthesize_sentences_with_confucius_tts(
                 segments, missing_indices, missing_translations,
-                audio_path, qwen_cache_dir,
-                voice_clone=True,
+                audio_path, confucius_cache_dir,
+                ref_audio_map={},
                 cancel_check=_retry_cancel, progress_cb=_retry_progress,
                 task_id=task_id)
         except InterruptedError:
@@ -2052,42 +1248,6 @@ def retry_sentence_synthesis(task_id):
     return jsonify({"message": "重试完成", "result": result_data})
 
 
-@app.route("/api/translate", methods=["POST"])
-def translate_word():
-    """翻译单个词/短语为中文"""
-    data = request.get_json()
-    if not data or "english" not in data:
-        return jsonify({"error": "请提供 english"}), 400
-    english = data["english"].strip()
-    if not english:
-        return jsonify({"error": "英文内容不能为空"}), 400
-    context_sentence = data.get("context_sentence", "").strip()
-    chinese = translate_word_via_llm(english, context_sentence)
-    return jsonify({"english": english, "chinese": chinese})
-
-
-@app.route("/api/word-levels", methods=["POST"])
-def get_word_levels():
-    """返回给定单词列表中每个单词的 BNC/COCA 词频等级"""
-    data = request.get_json()
-    if not data or "words" not in data:
-        return jsonify({"error": "请提供 words"}), 400
-
-    word_to_level = get_word_to_level()
-    words = data["words"]
-    result = {}
-    for w in words:
-        w_lower = w.lower().strip()
-        clean = re.sub(r"[^a-zA-Z'-]", "", w_lower)
-        if clean and clean in word_to_level:
-            result[w_lower] = word_to_level[clean]
-
-    return jsonify({"levels": result, "level_nums": get_level_to_num_map()})
-
-
-# ============================================================
-# API 路由 — 配置
-# ============================================================
 
 @app.route("/api/config")
 def api_get_config():
@@ -2126,7 +1286,6 @@ def list_tasks():
                 "task_id": task.get("task_id"),
                 "url": task.get("url", ""),
                 "title": task.get("title", ""),
-                "difficulty": task.get("difficulty", ""),
                 "status": task.get("status"),
                 "progress": task.get("progress", 0),
                 "message": task.get("message", ""),
@@ -2303,7 +1462,7 @@ def api_index():
                 "fields": {
                     "url": {"type": "string", "required": True, "description": "音频文件的 HTTP/HTTPS URL"},
                     "difficulty": {"type": "string", "required": False, "description": "难度等级，如 CET-4, CET-6, IELTS, GRE 等", "default": "CET-4"},
-                    "process_mode": {"type": "string", "required": False, "description": "处理模式: word_replace(生词替换) / smart_translate(智能翻译) / sentence_translate(逐句翻译)", "default": "word_replace"},
+                    "process_mode": {"type": "string", "required": False, "description": "处理模式（固定为 sentence_translate 全文翻译）", "default": "sentence_translate"},
                     "skip_confirmation": {"type": "boolean", "required": False, "description": "是否跳过人工确认步骤", "default": True},
                 },
             },
@@ -2371,7 +1530,7 @@ def api_index():
             "path": "/api/task/<task_id>/confirm_sentences",
             "method": "POST",
             "summary": "确认句子翻译并继续处理",
-            "description": "在 sentence_translate / smart_translate 模式下，用户确认/编辑翻译后提交",
+            "description": "在句子翻译模式下，用户确认/编辑翻译后提交",
             "params": {"task_id": {"in": "path", "type": "string", "required": True, "description": "任务ID"}},
             "request_body": {
                 "content_type": "application/json",
@@ -2487,7 +1646,6 @@ def api_index():
             "method": "GET",
             "summary": "检查是否已收藏",
             "params": {"rss_url": {"in": "query", "type": "string", "required": True}},
-            "response": {"is_favorite": "boolean"},
         },
         {
             "path": "/api/subscriptions",
@@ -2556,6 +1714,14 @@ if __name__ == "__main__":
     # 初始化 SQLite 数据库（建表 + 迁移旧 JSON 数据）
     setup_database()
     _index = load_tasks_index()
+    # 清理服务重启导致的孤儿任务（queued/processing/downloading状态在进程重启后无效）
+    orphaned = 0
+    for _tid, _t in _index.items():
+        if _t.get("status") in ("queued", "processing", "downloading"):
+            delete_task_from_index(_tid)
+            orphaned += 1
+    if orphaned:
+        print(f"🧹 已清理 {orphaned} 个孤儿任务（服务重启导致）")
     print(f"📋 已加载 {len(_index)} 条历史任务记录")
     print("=" * 50)
     print("🎧 BiliMix Web App")

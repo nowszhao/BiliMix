@@ -49,7 +49,7 @@ def init_db():
                 url           TEXT DEFAULT '',
                 title         TEXT DEFAULT '',
                 difficulty    TEXT DEFAULT '',
-                process_mode  TEXT DEFAULT 'word_replace',
+                process_mode  TEXT DEFAULT 'sentence_translate',
                 status        TEXT DEFAULT '',
                 progress      INTEGER DEFAULT 0,
                 message       TEXT DEFAULT '',
@@ -59,17 +59,6 @@ def init_db():
                 total_replacements INTEGER DEFAULT 0,
                 original_duration  REAL DEFAULT 0,
                 mixed_duration     REAL DEFAULT 0
-            );
-
-            -- 播客收藏表
-            CREATE TABLE IF NOT EXISTS favorites (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                title      TEXT NOT NULL,
-                author     TEXT DEFAULT '',
-                image      TEXT DEFAULT '',
-                rss_url    TEXT NOT NULL,
-                created_at TEXT DEFAULT (datetime('now', 'localtime')),
-                UNIQUE(rss_url)
             );
 
             -- RSS 订阅管理表
@@ -88,22 +77,6 @@ def init_db():
                 keyword    TEXT NOT NULL UNIQUE,
                 count      INTEGER DEFAULT 1,
                 updated_at TEXT DEFAULT (datetime('now', 'localtime'))
-            );
-
-            -- 全局生词库表
-            CREATE TABLE IF NOT EXISTS vocabulary (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                english         TEXT NOT NULL,
-                chinese         TEXT DEFAULT '',
-                type            TEXT DEFAULT 'word',
-                frequency_level TEXT DEFAULT '',
-                encounter_count INTEGER DEFAULT 1,
-                first_seen_at   TEXT DEFAULT (datetime('now', 'localtime')),
-                last_seen_at    TEXT DEFAULT (datetime('now', 'localtime')),
-                source_tasks    TEXT DEFAULT '[]',
-                context_sentence TEXT DEFAULT '',
-                mastered        INTEGER DEFAULT 0,
-                UNIQUE(english)
             );
         """)
         # 向已有的 tasks 表添加 title 列（兼容旧数据库）
@@ -150,7 +123,7 @@ def migrate_from_json():
                 summary.get("url", ""),
                 summary.get("title", ""),
                 summary.get("difficulty", ""),
-                summary.get("process_mode", "word_replace"),
+                summary.get("process_mode", "sentence_translate"),
                 summary.get("status", ""),
                 summary.get("progress", 0),
                 summary.get("message", ""),
@@ -200,7 +173,7 @@ def save_task_to_index(task_id: str, summary: dict):
             summary.get("url", ""),
             summary.get("title", ""),
             summary.get("difficulty", ""),
-            summary.get("process_mode", "word_replace"),
+            summary.get("process_mode", "sentence_translate"),
             summary.get("status", ""),
             summary.get("progress", 0),
             summary.get("message", ""),
@@ -574,8 +547,5 @@ def setup_database():
     init_db()
     migrate_from_json()
     task_count = len(load_tasks_index())
-    fav_count = len(get_favorites())
     sub_count = len(get_subscriptions())
-    vocab_stats = get_vocabulary_stats()
-    print(f"[DB] SQLite 数据库就绪: {task_count} 条任务, {fav_count} 个收藏, "
-          f"{sub_count} 个订阅, {vocab_stats['total']} 个生词")
+    print(f"[DB] SQLite 数据库就绪: {task_count} 条任务, {sub_count} 个订阅")

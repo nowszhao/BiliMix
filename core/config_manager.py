@@ -10,17 +10,11 @@ from core import config
 
 # 可更新的配置项映射: { json_key: (config_attr, type_converter) }
 UPDATABLE_CONFIGS = {
-    "process_mode": ("PROCESS_MODE", str),
-    "difficulty": ("DIFFICULTY_LEVEL", str),
     "skip_confirmation": ("SKIP_CONFIRMATION", bool),
-    "smart_max_translate_ratio": ("SMART_MAX_TRANSLATE_RATIO", float),
     "sentence_cn_ratio": ("SENTENCE_CN_RATIO", float),
     "sentence_gap_ms": ("SENTENCE_GAP_MS", int),
     "sentence_full_gap_ms": ("SENTENCE_FULL_GAP_MS", int),
-    "sentence_tts_voice_clone": ("SENTENCE_TTS_VOICE_CLONE", bool),
     "tts_engine": ("TTS_ENGINE", str),
-    "tts_voice": ("TTS_VOICE", str),
-    "tts_rate": ("TTS_RATE", str),
     "tts_text_format": ("TTS_TEXT_FORMAT", str),
     "whisperx_model": ("WHISPERX_MODEL", str),
     "whisperx_device": ("WHISPERX_DEVICE", str),
@@ -32,13 +26,6 @@ UPDATABLE_CONFIGS = {
     "llm_num_predict": ("LLM_NUM_PREDICT", int),
     "output_format": ("OUTPUT_FORMAT", str),
     "output_bitrate": ("OUTPUT_BITRATE", str),
-    "qwen3_tts_device": ("QWEN3_TTS_DEVICE", str),
-    "qwen3_tts_ref_duration": ("QWEN3_TTS_REF_DURATION", int),
-    "qwen3_tts_retry_max": ("QWEN3_TTS_RETRY_MAX", int),
-    "qwen3_tts_custom_ref": ("QWEN3_TTS_CUSTOM_REF_AUDIO", str),
-    "fish_speech_host": ("FISH_SPEECH_HOST", str),
-    "fish_speech_port": ("FISH_SPEECH_PORT", int),
-    "fish_speech_timeout": ("FISH_SPEECH_TIMEOUT", int),
     "confucius_tts_device": ("CONFUCIUS4_TTS_DEVICE", str),
     "confucius_tts_temperature": ("CONFUCIUS4_TTS_TEMPERATURE", float),
     "confucius_tts_top_p": ("CONFUCIUS4_TTS_TOP_P", float),
@@ -47,6 +34,7 @@ UPDATABLE_CONFIGS = {
     "confucius_tts_repetition_penalty": ("CONFUCIUS4_TTS_REPETITION_PENALTY", float),
     "confucius_tts_n_timesteps": ("CONFUCIUS4_TTS_N_TIMESTEPS", int),
     "confucius_tts_inference_cfg_rate": ("CONFUCIUS4_TTS_INFERENCE_CFG_RATE", float),
+    "confucius_tts_num_workers": ("CONFUCIUS4_TTS_NUM_WORKERS", int),
     "same_speaker_gap": ("SAME_SPEAKER_GAP", float),
     "auto_retry_max": ("AUTO_RETRY_MAX", int),
     # 登录认证
@@ -60,20 +48,14 @@ def get_all_config() -> dict:
     """返回前端需要的全部配置"""
     return {
         # 处理模式
-        "process_mode": getattr(config, "PROCESS_MODE", "word_replace"),
-        "difficulty": getattr(config, "DIFFICULTY_LEVEL", "CET-4"),
         "skip_confirmation": getattr(config, "SKIP_CONFIRMATION", True),
         # 智能翻译
-        "smart_max_translate_ratio": getattr(config, "SMART_MAX_TRANSLATE_RATIO", 0.7),
         # 句子翻译
         "sentence_cn_ratio": getattr(config, "SENTENCE_CN_RATIO", 0.9),
         "sentence_gap_ms": getattr(config, "SENTENCE_GAP_MS", 400),
         "sentence_full_gap_ms": getattr(config, "SENTENCE_FULL_GAP_MS", 250),
-        "sentence_tts_voice_clone": getattr(config, "SENTENCE_TTS_VOICE_CLONE", True),
         # TTS
-        "tts_engine": getattr(config, "TTS_ENGINE", "edge-tts"),
-        "tts_voice": getattr(config, "TTS_VOICE", "zh-CN-XiaoxiaoNeural"),
-        "tts_rate": getattr(config, "TTS_RATE", "+8%"),
+        "tts_engine": getattr(config, "TTS_ENGINE", "confucius-tts"),
         "tts_text_format": getattr(config, "TTS_TEXT_FORMAT", "chinese_only"),
         # WhisperX
         "whisperx_model": getattr(config, "WHISPERX_MODEL", "base"),
@@ -89,13 +71,6 @@ def get_all_config() -> dict:
         "output_format": getattr(config, "OUTPUT_FORMAT", "mp3"),
         "output_bitrate": getattr(config, "OUTPUT_BITRATE", "192k"),
         # Qwen3-TTS
-        "qwen3_tts_device": getattr(config, "QWEN3_TTS_DEVICE", "cpu"),
-        "qwen3_tts_ref_duration": getattr(config, "QWEN3_TTS_REF_DURATION", 8),
-        "qwen3_tts_retry_max": getattr(config, "QWEN3_TTS_RETRY_MAX", 3),
-        "qwen3_tts_custom_ref": getattr(config, "QWEN3_TTS_CUSTOM_REF_AUDIO", ""),
-        "fish_speech_host": getattr(config, "FISH_SPEECH_HOST", "127.0.0.1"),
-        "fish_speech_port": getattr(config, "FISH_SPEECH_PORT", 3030),
-        "fish_speech_timeout": getattr(config, "FISH_SPEECH_TIMEOUT", 120),
         "same_speaker_gap": getattr(config, "SAME_SPEAKER_GAP", 0.8),
         # Confucius4-TTS-CPU
         "confucius_tts_device": getattr(config, "CONFUCIUS4_TTS_DEVICE", "cpu"),
@@ -106,6 +81,7 @@ def get_all_config() -> dict:
         "confucius_tts_repetition_penalty": getattr(config, "CONFUCIUS4_TTS_REPETITION_PENALTY", 10.0),
         "confucius_tts_n_timesteps": getattr(config, "CONFUCIUS4_TTS_N_TIMESTEPS", 25),
         "confucius_tts_inference_cfg_rate": getattr(config, "CONFUCIUS4_TTS_INFERENCE_CFG_RATE", 0.7),
+        "confucius_tts_num_workers": getattr(config, "CONFUCIUS4_TTS_NUM_WORKERS", 2),
         # 重试
         "auto_retry_max": getattr(config, "AUTO_RETRY_MAX", 3),
         # 登录认证

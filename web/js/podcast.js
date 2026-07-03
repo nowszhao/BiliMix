@@ -64,8 +64,7 @@ async function searchPodcasts() {
 
         listDiv.innerHTML = html;
 
-        // 为搜索结果添加收藏星标
-        await addFavoriteStarsToResults();
+        // Favorites removed
 
     } catch (err) {
         listDiv.innerHTML = `<div class="podcast-empty"><p>网络错误: ${escapeHtml(err.message)}</p></div>`;
@@ -311,34 +310,7 @@ async function loadQuickPanel() {
     const panel = document.getElementById('quick-panel');
     let hasContent = false;
 
-    try {
-        const resp = await fetch('/api/favorites');
-        const data = await resp.json();
-        const favs = data.favorites || [];
-        const favSection = document.getElementById('favorites-section');
-        const favList = document.getElementById('favorites-list');
-        const favCount = document.getElementById('favorites-count');
-
-        if (favs.length > 0) {
-            favSection.style.display = 'block';
-            favCount.textContent = favs.length;
-            favList.innerHTML = favs.map(f => `
-                <div class="quick-podcast-card" onclick="quickOpenPodcast('${escapeAttr(f.rss_url)}', '${escapeAttr(f.title)}', '${escapeAttr(f.author)}', '${escapeAttr(f.image || '')}')">
-                    ${f.image ? `<img src="${escapeAttr(f.image)}" class="quick-podcast-img" onerror="this.style.display='none'" alt="">` : '<div class="quick-podcast-img-placeholder">🎙️</div>'}
-                    <div class="quick-podcast-info">
-                        <div class="quick-podcast-title">${escapeHtml(f.title)}</div>
-                        <div class="quick-podcast-author">${escapeHtml(f.author || '')}</div>
-                    </div>
-                    <button class="quick-podcast-remove" onclick="event.stopPropagation(); removeFavoriteAndRefresh('${escapeAttr(f.rss_url)}')" title="取消收藏">✕</button>
-                </div>
-            `).join('');
-            hasContent = true;
-        } else {
-            favSection.style.display = 'none';
-        }
-    } catch (e) {
-        console.warn('Failed to load favorites:', e);
-    }
+    // Favorites removed - skip favorites loading
 
     try {
         const resp = await fetch('/api/subscriptions');

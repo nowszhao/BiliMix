@@ -64,9 +64,9 @@ def main():
     original_cwd = os.getcwd()
     os.chdir(_CONFUCIUS_ROOT)
     t0 = time.time()
-    print(f"[ConfuciusWorker] 加载模型... device={device}", flush=True)
-    print(f"[ConfuciusWorker] config_path={config_path}", flush=True)
-    print(f"[ConfuciusWorker] cwd={os.getcwd()}", flush=True)
+    print(f"[ConfuciusWorker] 加载模型... device={device}", flush=True, file=sys.stderr)
+    print(f"[ConfuciusWorker] config_path={config_path}", flush=True, file=sys.stderr)
+    print(f"[ConfuciusWorker] cwd={os.getcwd()}", flush=True, file=sys.stderr)
 
     try:
         model = ConfuciusTTS(
@@ -83,7 +83,7 @@ def main():
         sys.exit(1)
 
     load_time = time.time() - t0
-    print(f"[ConfuciusWorker] 模型加载完成 ({load_time:.1f}s)", flush=True)
+    print(f"[ConfuciusWorker] 模型加载完成 ({load_time:.1f}s)", flush=True, file=sys.stderr)
 
     # ---- 逐句合成 ----
     total = len(jobs)
@@ -109,7 +109,7 @@ def main():
             output_path = job.get("output_path", "")
 
             if not text or not ref_audio or not output_path:
-                print(f"[ConfuciusWorker] [{i+1}/{total}] 跳过: 参数不完整", flush=True)
+                print(f"[ConfuciusWorker] [{i+1}/{total}] 跳过: 参数不完整", flush=True, file=sys.stderr)
                 results.append({
                     "output_path": output_path,
                     "error": "参数不完整 (text/ref_audio/output_path)",
@@ -118,7 +118,7 @@ def main():
                 continue
 
             if not os.path.isfile(ref_audio):
-                print(f"[ConfuciusWorker] [{i+1}/{total}] 跳过: 参考音频不存在 {ref_audio}", flush=True)
+                print(f"[ConfuciusWorker] [{i+1}/{total}] 跳过: 参考音频不存在 {ref_audio}", flush=True, file=sys.stderr)
                 results.append({
                     "output_path": output_path,
                     "error": f"参考音频不存在: {ref_audio}",
@@ -128,14 +128,14 @@ def main():
 
             # 检查缓存
             if os.path.exists(output_path):
-                print(f"[ConfuciusWorker] [{i+1}/{total}] 缓存: {text[:30]}...", flush=True)
+                print(f"[ConfuciusWorker] [{i+1}/{total}] 缓存: {text[:30]}...", flush=True, file=sys.stderr)
                 results.append({"output_path": output_path, "error": None})
                 success += 1
                 continue
 
             t_start = time.time()
             print(f"[ConfuciusWorker] [{i+1}/{total}] 合成: {text[:30]}... "
-                  f"(ref: {os.path.basename(ref_audio)})", flush=True)
+                  f"(ref: {os.path.basename(ref_audio)})", flush=True, file=sys.stderr)
 
             try:
                 audio = model.generate(
@@ -150,13 +150,13 @@ def main():
                 sf.write(output_path, audio_np, model.sample_rate)
                 elapsed = time.time() - t_start
                 print(f"[ConfuciusWorker] [{i+1}/{total}] 完成 ({elapsed:.1f}s) "
-                      f"-> {os.path.basename(output_path)}", flush=True)
+                      f"-> {os.path.basename(output_path)}", flush=True, file=sys.stderr)
                 results.append({"output_path": output_path, "error": None})
                 success += 1
 
             except Exception as e:
                 elapsed = time.time() - t_start
-                print(f"[ConfuciusWorker] [{i+1}/{total}] 失败 ({elapsed:.1f}s): {e}", flush=True)
+                print(f"[ConfuciusWorker] [{i+1}/{total}] 失败 ({elapsed:.1f}s): {e}", flush=True, file=sys.stderr)
                 traceback.print_exc()
                 results.append({"output_path": output_path, "error": str(e)})
                 failed += 1
@@ -171,7 +171,7 @@ def main():
         "results": results,
     }
     print(json.dumps(summary, ensure_ascii=False))
-    print(f"[ConfuciusWorker] 全部完成: {success} 成功, {failed} 失败", flush=True)
+    print(f"[ConfuciusWorker] 全部完成: {success} 成功, {failed} 失败", flush=True, file=sys.stderr)
 
 
 if __name__ == "__main__":

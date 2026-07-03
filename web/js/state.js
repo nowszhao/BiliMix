@@ -4,9 +4,9 @@
 
 let currentTaskId = null;
 let currentTaskTitle = '';
+let currentProcessMode = 'sentence_translate';
 let pollTimer = null;
 let tasks_url = '';
-let currentProcessMode = 'word_replace';
 let currentInputMode = 'search';
 let selectedEpisodeUrl = '';
 let selectedEpisodeTitle = '';

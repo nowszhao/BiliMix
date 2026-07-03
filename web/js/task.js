@@ -101,8 +101,6 @@ function formatFileSize(bytes) {
 // ============================================================
 
 async function submitTask() {
-    const difficultySelect = document.getElementById('difficulty-select');
-    const modeSelect = document.getElementById('mode-select');
     const btn = document.getElementById('generate-btn');
 
     // 如果有 Mini Player 在播放，先关闭
@@ -139,15 +137,13 @@ async function submitTask() {
 
     tasks_url = url || ('file://' + localPath);
     currentTaskTitle = title;
-    currentProcessMode = modeSelect ? modeSelect.value : 'word_replace';
+    currentProcessMode = 'sentence_translate';
     btn.disabled = true;
     btn.querySelector('.btn-text').textContent = '提交中...';
 
     try {
         const body = {
             title: title,
-            difficulty: difficultySelect.value,
-            process_mode: currentProcessMode,
             skip_confirmation: document.getElementById('skip-confirm-check')?.checked ?? true,
         };
         if (localPath) {
@@ -291,7 +287,6 @@ async function pollStatus() {
         const resp = await fetch(`/api/task/${currentTaskId}`);
         const data = await resp.json();
 
-        if (data.process_mode) currentProcessMode = data.process_mode;
         updateProgress(data);
 
         if (data.status === 'completed') {
@@ -348,51 +343,19 @@ function updateProgress(data) {
         statusText.textContent = '处理中...';
     }
 
-    // 步骤条
-    const mode = currentProcessMode;
-    const wordSteps = document.getElementById('steps-word-replace');
+    // 步骤条 - always sentence_translate
     const sentSteps = document.getElementById('steps-sentence-translate');
-    const smartSteps = document.getElementById('steps-smart-translate');
+    if (sentSteps) sentSteps.classList.remove('hidden');
 
-    if (wordSteps) wordSteps.classList.add('hidden');
-    if (sentSteps) sentSteps.classList.add('hidden');
-    if (smartSteps) smartSteps.classList.add('hidden');
-
-    let stepsConfig;
-    if (mode === 'smart_translate') {
-        if (smartSteps) smartSteps.classList.remove('hidden');
-        stepsConfig = {
-            steps: ['download', 'transcribe', 'identify', 'translate', 'confirm', 'synthesize', 'mix'],
-            stepOrder: {
-                'download': 0, 'downloading': 0, 'transcribe': 1, 'identify': 2,
-                'translate': 3, 'confirm_sentence': 4, 'confirm': 4,
-                'synthesize': 5, 'merge': 6, 'vocabulary': 6, 'done': 7,
-            },
-            prefix: 'sm-step-', container: smartSteps,
-        };
-    } else if (mode === 'sentence_translate') {
-        if (sentSteps) sentSteps.classList.remove('hidden');
-        stepsConfig = {
-            steps: ['download', 'transcribe', 'translate', 'confirm', 'synthesize', 'mix'],
-            stepOrder: {
-                'download': 0, 'downloading': 0, 'transcribe': 1, 'translate': 2,
-                'confirm_sentence': 3, 'confirm': 3, 'synthesize': 4,
-                'merge': 5, 'vocabulary': 5, 'done': 6,
-            },
-            prefix: 'st-step-', container: sentSteps,
-        };
-    } else {
-        if (wordSteps) wordSteps.classList.remove('hidden');
-        stepsConfig = {
-            steps: ['download', 'transcribe', 'identify', 'confirm', 'synthesize', 'merge'],
-            stepOrder: {
-                'download': 0, 'downloading': 0, 'transcribe': 1, 'identify': 2,
-                'translate': 2, 'confirm': 3, 'confirm_sentence': 3,
-                'synthesize': 4, 'merge': 5, 'vocabulary': 5, 'done': 6,
-            },
-            prefix: 'step-', container: wordSteps,
-        };
-    }
+    const stepsConfig = {
+        steps: ['download', 'transcribe', 'translate', 'confirm', 'synthesize', 'mix'],
+        stepOrder: {
+            'download': 0, 'downloading': 0, 'transcribe': 1, 'translate': 2,
+            'confirm_sentence': 3, 'confirm': 3, 'synthesize': 4,
+            'merge': 5, 'vocabulary': 5, 'done': 6,
+        },
+        prefix: 'st-step-', container: sentSteps,
+    };
 
     const currentStep = stepsConfig.stepOrder[data.step] ?? -1;
     stepsConfig.steps.forEach((step, i) => {
