@@ -65,7 +65,6 @@ function renderResult(data) {
     stopStreamPolling();
 
     timeMappingData = data.time_mapping || [];
-    mixedSegmentsMode = !!(data.mixed_segments && data.mixed_segments.length > 0);
 
     if (mode === 'smart_translate') {
         const sentencePairs = data.sentence_pairs || [];
@@ -86,11 +85,7 @@ function renderResult(data) {
         const mixedLabel = document.querySelector('.audio-item:last-child .audio-label');
         if (mixedLabel) mixedLabel.innerHTML = '<span class="label-dot mixed"></span>中英交替音频';
 
-        if (mixedSegmentsMode) {
-            renderTranscript(data.mixed_segments, null);
-        } else {
-            renderTranscriptSentenceMode(data.segments, sentencePairs, difficultWords);
-        }
+        renderTranscriptSentenceMode(data.segments, sentencePairs, difficultWords);
         renderVocabulary(difficultWords);
         renderSentencePairs(sentencePairs, 'replacements-list');
 
@@ -117,11 +112,7 @@ function renderResult(data) {
         const mixedLabel2 = document.querySelector('.audio-item:last-child .audio-label');
         if (mixedLabel2) mixedLabel2.innerHTML = '<span class="label-dot mixed"></span>中英交替音频';
 
-        if (mixedSegmentsMode) {
-            renderTranscript(data.mixed_segments, null);
-        } else {
-            renderTranscriptSentenceMode(data.segments, sentencePairs, null);
-        }
+        renderTranscriptSentenceMode(data.segments, sentencePairs, null);
         renderSentencePairs(sentencePairs);
         renderReplacements([]);
 

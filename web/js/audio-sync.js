@@ -33,7 +33,6 @@ function setupAudioSync() {
 }
 
 function onOriginalAudioTimeUpdate(e) {
-    if (mixedSegmentsMode) return;
     const currentTime = e.target.currentTime;
     const newIndex = findSegmentByOriginalTime(currentTime);
     if (newIndex !== activeSegmentIndex && newIndex >= 0) {
@@ -44,9 +43,7 @@ function onOriginalAudioTimeUpdate(e) {
 
 function onMixedAudioTimeUpdate(e) {
     const mixedTime = e.target.currentTime;
-    const newIndex = mixedSegmentsMode
-        ? findSegmentByOriginalTime(mixedTime)
-        : findSegmentByOriginalTime(mixedTimeToOriginalTime(mixedTime));
+    const newIndex = findSegmentByOriginalTime(mixedTimeToOriginalTime(mixedTime));
     if (newIndex !== activeSegmentIndex && newIndex >= 0) {
         activeSegmentIndex = newIndex;
         highlightSegment(newIndex);
@@ -177,7 +174,7 @@ function updateSegmentHighlight(container, index) {
 }
 
 function seekToSegment(startTime) {
-    const mixedTime = mixedSegmentsMode ? startTime : originalTimeToMixedTime(startTime);
+    const mixedTime = originalTimeToMixedTime(startTime);
     if (isFullscreen) {
         const fsAudio = document.getElementById('fullscreen-audio');
         if (fsAudio) {

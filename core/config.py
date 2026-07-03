@@ -81,10 +81,11 @@ DIFFICULTY_LEVEL = "CET-4"
 # ========================
 # TTS 配置
 # ========================
-# TTS 引擎选择: "edge-tts" | "qwen3-tts" | "fish-speech"
-#   edge-tts:     微软在线 TTS，免部署，音色统一
-#   qwen3-tts:    本地声音克隆（x-vector），需 GPU/CPU 推理
-#   fish-speech:  Fish Speech S2 Pro (s2.cpp HTTP 服务)，音色克隆最强，需先启动 s2.cpp
+# TTS 引擎选择: "edge-tts" | "qwen3-tts" | "fish-speech" | "confucius-tts"
+#   edge-tts:        微软在线 TTS，免部署，音色统一
+#   qwen3-tts:       本地声音克隆（x-vector），需 GPU/CPU 推理
+#   fish-speech:     Fish Speech S2 Pro (s2.cpp HTTP 服务)，音色克隆最强，需先启动 s2.cpp
+#   confucius-tts:   Confucius4-TTS-CPU 零样本多语言 TTS（网易有道），纯 CPU 推理
 TTS_ENGINE = "qwen3-tts"
 
 # --- Edge-TTS 配置 ---
@@ -142,6 +143,31 @@ FISH_SPEECH_PORT = 3030
 # Fish Speech HTTP 请求超时（秒），CPU 推理较慢需更多时间
 # 长句可能需要 60-120s，设置 180s 留足余量
 FISH_SPEECH_TIMEOUT = 600
+
+# --- Confucius4-TTS-CPU 配置（零样本多语言 TTS） ---
+# Confucius4-TTS-CPU 项目根目录路径
+# 默认在 BiliMix 同级目录下: ../Confucius4-TTS-CPU
+CONFUCIUS4_TTS_ROOT = ""
+# Confucius4-TTS-CPU 使用的 Python 解释器
+CONFUCIUS4_TTS_PYTHON = "/Users/changhozhao/miniconda3/bin/python"
+# 推理设备: "cpu" 或 "cuda"
+CONFUCIUS4_TTS_DEVICE = "cpu"
+# 单条 TTS 合成超时（秒），CPU 推理较慢，长句可能需要 60-120s
+CONFUCIUS4_TTS_PER_JOB_TIMEOUT = 180
+# T2S 采样温度（0.0~1.0），越高输出越多样
+CONFUCIUS4_TTS_TEMPERATURE = 0.8
+# 核采样概率阈值
+CONFUCIUS4_TTS_TOP_P = 0.8
+# Top-k 采样参数
+CONFUCIUS4_TTS_TOP_K = 30
+# 束搜索宽度（1 = 贪心解码）
+CONFUCIUS4_TTS_NUM_BEAMS = 3
+# 重复惩罚系数（越高重复越少）
+CONFUCIUS4_TTS_REPETITION_PENALTY = 10.0
+# 扩散步骤数（步数越多质量越高，但速度越慢）
+CONFUCIUS4_TTS_N_TIMESTEPS = 25
+# 无分类器引导强度（越高条件控制越强）
+CONFUCIUS4_TTS_INFERENCE_CFG_RATE = 0.7
 
 # --- 参考音频选取配置（声音克隆） ---
 # 参考音频选取模式: "speaker_local" | "segment"

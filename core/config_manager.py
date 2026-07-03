@@ -39,6 +39,14 @@ UPDATABLE_CONFIGS = {
     "fish_speech_host": ("FISH_SPEECH_HOST", str),
     "fish_speech_port": ("FISH_SPEECH_PORT", int),
     "fish_speech_timeout": ("FISH_SPEECH_TIMEOUT", int),
+    "confucius_tts_device": ("CONFUCIUS4_TTS_DEVICE", str),
+    "confucius_tts_temperature": ("CONFUCIUS4_TTS_TEMPERATURE", float),
+    "confucius_tts_top_p": ("CONFUCIUS4_TTS_TOP_P", float),
+    "confucius_tts_top_k": ("CONFUCIUS4_TTS_TOP_K", int),
+    "confucius_tts_num_beams": ("CONFUCIUS4_TTS_NUM_BEAMS", int),
+    "confucius_tts_repetition_penalty": ("CONFUCIUS4_TTS_REPETITION_PENALTY", float),
+    "confucius_tts_n_timesteps": ("CONFUCIUS4_TTS_N_TIMESTEPS", int),
+    "confucius_tts_inference_cfg_rate": ("CONFUCIUS4_TTS_INFERENCE_CFG_RATE", float),
     "same_speaker_gap": ("SAME_SPEAKER_GAP", float),
     "auto_retry_max": ("AUTO_RETRY_MAX", int),
     # 登录认证
@@ -89,6 +97,15 @@ def get_all_config() -> dict:
         "fish_speech_port": getattr(config, "FISH_SPEECH_PORT", 3030),
         "fish_speech_timeout": getattr(config, "FISH_SPEECH_TIMEOUT", 120),
         "same_speaker_gap": getattr(config, "SAME_SPEAKER_GAP", 0.8),
+        # Confucius4-TTS-CPU
+        "confucius_tts_device": getattr(config, "CONFUCIUS4_TTS_DEVICE", "cpu"),
+        "confucius_tts_temperature": getattr(config, "CONFUCIUS4_TTS_TEMPERATURE", 0.8),
+        "confucius_tts_top_p": getattr(config, "CONFUCIUS4_TTS_TOP_P", 0.8),
+        "confucius_tts_top_k": getattr(config, "CONFUCIUS4_TTS_TOP_K", 30),
+        "confucius_tts_num_beams": getattr(config, "CONFUCIUS4_TTS_NUM_BEAMS", 3),
+        "confucius_tts_repetition_penalty": getattr(config, "CONFUCIUS4_TTS_REPETITION_PENALTY", 10.0),
+        "confucius_tts_n_timesteps": getattr(config, "CONFUCIUS4_TTS_N_TIMESTEPS", 25),
+        "confucius_tts_inference_cfg_rate": getattr(config, "CONFUCIUS4_TTS_INFERENCE_CFG_RATE", 0.7),
         # 重试
         "auto_retry_max": getattr(config, "AUTO_RETRY_MAX", 3),
         # 登录认证

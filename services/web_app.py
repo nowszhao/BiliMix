@@ -48,7 +48,7 @@ from core.word_frequency import get_word_to_level, get_level_to_num_map
 from services.podcast_service import search_podcasts_itunes, parse_rss_feed
 from core.config_manager import get_all_config, update_config
 
-from pipeline.step1_transcribe import transcribe, extract_full_text, extract_word_timestamps, transcribe_mixed_audio
+from pipeline.step1_transcribe import transcribe, extract_full_text, extract_word_timestamps
 from pipeline.step2_identify_difficult_words import (
     identify_difficult_words_by_segments, locate_words_in_segments,
 )
@@ -67,6 +67,7 @@ from pipeline.step2b_translate_sentences import (
     select_sentences_by_difficulty,
     translate_sentences,
 )
+from pipeline.step3_tts_confucius import synthesize_sentences_with_confucius_tts
 from pipeline.step4b_sentence_mixer import mix_sentence_audio
 
 # Flask 静态文件目录使用绝对路径（web_app.py 已移至 services/ 子目录）
@@ -1126,6 +1127,49 @@ def continue_after_sentence_confirmation(task_id: str):
                 voice_clone=True,
                 cancel_check=_tts_cancel, progress_cb=_tts_progress,
                 task_id=task_id)
+
+        elif tts_engine == "confucius-tts":
+            # Confucius4-TTS-CPU: 零样本多语言声音克隆
+            confucius_cache_dir = os.path.join(result_dir, "tts_confucius_cache")
+            confucius_ref_dir = os.path.join(confucius_cache_dir, "ref_audio")
+            os.makedirs(confucius_ref_dir, exist_ok=True)
+
+            # 提取参考音频（说话人感知）
+            from pipeline.step3_tts_qwen import (
+                extract_ref_audio_for_segments, extract_ref_audio_speaker_local)
+            pseudo_replacements = [
+                {"segment_index": idx}
+                for idx in translated_indices if idx < len(segments)
+            ]
+            confucius_ref_map = {}
+            if voice_clone and pseudo_replacements:
+                ref_mode = getattr(config, "REF_SELECT_MODE", "speaker_local")
+                if ref_mode == "speaker_local":
+                    (confucius_ref_map, confucius_ref_source_map,
+                     _confucius_ref_text_map) = extract_ref_audio_speaker_local(
+                        audio_path, segments, pseudo_replacements,
+                        confucius_ref_dir, engine="confucius")
+                else:
+                    confucius_ref_map, confucius_ref_source_map = extract_ref_audio_for_segments(
+                        audio_path, segments, pseudo_replacements, confucius_ref_dir)
+                print(f"[Confucius] 提取了 {len(confucius_ref_map)} 个参考音频 (mode={ref_mode})")
+
+            def _confucius_progress(current, total):
+                pct = 60 + int((current / max(total, 1)) * 20)
+                update_task(task_id, progress=pct,
+                            message=f"Step 3/4: Confucius4-TTS 句子合成 ({current}/{total})",
+                            _tts_completed_count=current)
+
+            def _confucius_cancel():
+                return is_cancelled(task_id)
+
+            tts_audio_map = synthesize_sentences_with_confucius_tts(
+                segments, translated_indices, translations,
+                audio_path, confucius_cache_dir,
+                ref_audio_map=confucius_ref_map if voice_clone else {},
+                cancel_check=_confucius_cancel, progress_cb=_confucius_progress,
+                task_id=task_id)
+
         else:
             from pipeline.step3_tts_synthesize import synthesize_text as edge_synthesize
             total = len(translated_indices)
@@ -1163,18 +1207,6 @@ def continue_after_sentence_confirmation(task_id: str):
         if is_cancelled(task_id):
             raise InterruptedError("任务已被用户终止")
 
-        # ---- 100% 全翻译模式：重新转录合成音频，生成同步字幕 ----
-        is_full_translation = len(translated_indices) >= len(segments)
-        mixed_segments = None
-        if is_full_translation:
-            update_task(task_id, step="retranscribe", progress=90,
-                        message="正在重新转录合成音频（Small 模型）...")
-            try:
-                mixed_segments = transcribe_mixed_audio(output_audio_path, result_dir)
-            except Exception as e:
-                print(f"[Step4b] 重新转录失败，回退到原始字幕: {e}")
-                mixed_segments = None
-
         # ---- 完成 ----
         result_data = {
             "basename": basename,
@@ -1203,8 +1235,7 @@ def continue_after_sentence_confirmation(task_id: str):
         update_task(task_id, status="completed", step="done", progress=100,
                     message="全部完成！", result=result_data,
                     sentence_pairs=sentence_pairs,
-                    time_mapping=mix_result["time_mapping"],
-                    mixed_segments=mixed_segments)
+                    time_mapping=mix_result["time_mapping"])
 
         save_task_result_to_disk(result_dir, {
             "task_id": task_id, "status": "completed",
@@ -1217,7 +1248,6 @@ def continue_after_sentence_confirmation(task_id: str):
             "sentence_pairs": sentence_pairs,
             "result": result_data,
             "time_mapping": mix_result["time_mapping"],
-            "mixed_segments": mixed_segments,
         })
 
         _cleanup_intermediate_files(result_dir)
@@ -1970,19 +2000,6 @@ def retry_sentence_synthesis(task_id):
         tts_audio_map=tts_audio_map,
         output_path=output_audio_path)
 
-    # ---- 100% 全翻译模式：重新转录合成音频，生成同步字幕 ----
-    is_full_translation = len(translated_indices) >= len(segments)
-    mixed_segments = None
-    if is_full_translation:
-        update_task(task_id, step="retranscribe", progress=90,
-                    message="正在重新转录合成音频（Small 模型）...")
-        try:
-            mixed_segments = transcribe_mixed_audio(
-                output_audio_path, os.path.dirname(output_audio_path))
-        except Exception as e:
-            print(f"[Step4b] 重新转录失败，回退到原始字幕: {e}")
-            mixed_segments = None
-
     # 构建完整结果
     full_text = task.get("transcription_text", "")
     result_data = {
@@ -2011,8 +2028,7 @@ def retry_sentence_synthesis(task_id):
                 message="全部完成！", result=result_data,
                 sentence_pairs=sentence_pairs,
                 time_mapping=mix_result["time_mapping"],
-                tts_audio_map=tts_audio_map,
-                mixed_segments=mixed_segments)
+                tts_audio_map=tts_audio_map)
 
     save_task_result_to_disk(result_dir, {
         "task_id": task_id, "status": "completed",
@@ -2024,7 +2040,6 @@ def retry_sentence_synthesis(task_id):
         "sentence_pairs": sentence_pairs,
         "result": result_data,
         "time_mapping": mix_result["time_mapping"],
-        "mixed_segments": mixed_segments,
     })
 
     _cleanup_intermediate_files(result_dir)
@@ -2236,7 +2251,6 @@ def get_task_result(task_id):
         "sentence_pairs": task.get("sentence_pairs", []),
         "result": task.get("result"),
         "time_mapping": task.get("time_mapping", []),
-        "mixed_segments": task.get("mixed_segments"),
     })
 
 

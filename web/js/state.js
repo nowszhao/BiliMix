@@ -20,7 +20,6 @@ let segmentsData = [];
 let activeSegmentIndex = -1;
 let timeMappingData = [];
 let fullscreenAudioSource = 'original';
-let mixedSegmentsMode = false;
 
 // 生词确认状态
 let confirmWords = [];

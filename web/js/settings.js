@@ -774,6 +774,7 @@ function renderSettingsForm(cfg) {
                         <option value="edge-tts" ${cfg.tts_engine === 'edge-tts' ? 'selected' : ''}>Edge-TTS</option>
                         <option value="qwen3-tts" ${cfg.tts_engine === 'qwen3-tts' ? 'selected' : ''}>Qwen3-TTS</option>
                         <option value="fish-speech" ${cfg.tts_engine === 'fish-speech' ? 'selected' : ''}>Fish Speech (S2 Pro)</option>
+                        <option value="confucius-tts" ${cfg.tts_engine === 'confucius-tts' ? 'selected' : ''}>Confucius4-TTS (CPU)</option>
                     </select>
                 </div>
             </div>
@@ -899,6 +900,105 @@ function renderSettingsForm(cfg) {
                 <div class="settings-item-control">
                     <input type="number" class="settings-input" id="cfg-fish_speech_timeout"
                         value="${cfg.fish_speech_timeout}" min="30" max="600" step="10">
+                </div>
+            </div>
+        </div>
+
+        <!-- Confucius4-TTS-CPU -->
+        <div class="settings-group" id="settings-group-confucius-tts">
+            <div class="settings-group-title">🎵 Confucius4-TTS (CPU)</div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">推理设备</span>
+                    <span class="settings-item-desc">TTS 模型运行设备</span>
+                </div>
+                <div class="settings-item-control">
+                    <select class="settings-select" id="cfg-confucius_tts_device">
+                        <option value="cpu" ${cfg.confucius_tts_device === 'cpu' ? 'selected' : ''}>CPU</option>
+                        <option value="cuda" ${cfg.confucius_tts_device === 'cuda' ? 'selected' : ''}>CUDA</option>
+                    </select>
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">采样温度</span>
+                    <span class="settings-item-desc">T2S 采样温度，越高输出越多样</span>
+                </div>
+                <div class="settings-item-control">
+                    <div class="settings-range-wrap">
+                        <input type="range" class="settings-range" id="cfg-confucius_tts_temperature"
+                            min="0.1" max="1.5" step="0.05" value="${cfg.confucius_tts_temperature}"
+                            oninput="document.getElementById('val-conf_temp').textContent = this.value">
+                        <span class="settings-range-val" id="val-conf_temp">${cfg.confucius_tts_temperature}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">Top-P 采样</span>
+                    <span class="settings-item-desc">核采样概率阈值</span>
+                </div>
+                <div class="settings-item-control">
+                    <div class="settings-range-wrap">
+                        <input type="range" class="settings-range" id="cfg-confucius_tts_top_p"
+                            min="0.1" max="1.0" step="0.05" value="${cfg.confucius_tts_top_p}"
+                            oninput="document.getElementById('val-conf_topp').textContent = this.value">
+                        <span class="settings-range-val" id="val-conf_topp">${cfg.confucius_tts_top_p}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">Top-K 采样</span>
+                    <span class="settings-item-desc">采样候选词数</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-confucius_tts_top_k"
+                        value="${cfg.confucius_tts_top_k}" min="1" max="100" step="1">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">束搜索宽度</span>
+                    <span class="settings-item-desc">Beam search 宽度，1=贪心解码</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-confucius_tts_num_beams"
+                        value="${cfg.confucius_tts_num_beams}" min="1" max="10" step="1">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">重复惩罚</span>
+                    <span class="settings-item-desc">Repetition penalty，越高重复越少</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-confucius_tts_repetition_penalty"
+                        value="${cfg.confucius_tts_repetition_penalty}" min="1.0" max="20.0" step="0.5">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">扩散步数</span>
+                    <span class="settings-item-desc">S2A 扩散步数，步数越多质量越高但越慢</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-confucius_tts_n_timesteps"
+                        value="${cfg.confucius_tts_n_timesteps}" min="5" max="50" step="5">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">CFG 引导强度</span>
+                    <span class="settings-item-desc">无分类器引导，越高条件控制越强</span>
+                </div>
+                <div class="settings-item-control">
+                    <div class="settings-range-wrap">
+                        <input type="range" class="settings-range" id="cfg-confucius_tts_inference_cfg_rate"
+                            min="0.1" max="1.0" step="0.05" value="${cfg.confucius_tts_inference_cfg_rate}"
+                            oninput="document.getElementById('val-conf_cfg').textContent = this.value">
+                        <span class="settings-range-val" id="val-conf_cfg">${cfg.confucius_tts_inference_cfg_rate}</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1087,6 +1187,10 @@ function onTTSEngineChange() {
     if (fishGroup) {
         fishGroup.classList.toggle('hidden', engine !== 'fish-speech');
     }
+    const confGroup = document.getElementById('settings-group-confucius-tts');
+    if (confGroup) {
+        confGroup.classList.toggle('hidden', engine !== 'confucius-tts');
+    }
 }
 
 function onSettingsModeChange() {
@@ -1151,6 +1255,14 @@ async function saveSettings() {
         fish_speech_host: getValue('cfg-fish_speech_host'),
         fish_speech_port: getValue('cfg-fish_speech_port'),
         fish_speech_timeout: getValue('cfg-fish_speech_timeout'),
+        confucius_tts_device: getValue('cfg-confucius_tts_device'),
+        confucius_tts_temperature: getValue('cfg-confucius_tts_temperature'),
+        confucius_tts_top_p: getValue('cfg-confucius_tts_top_p'),
+        confucius_tts_top_k: getValue('cfg-confucius_tts_top_k'),
+        confucius_tts_num_beams: getValue('cfg-confucius_tts_num_beams'),
+        confucius_tts_repetition_penalty: getValue('cfg-confucius_tts_repetition_penalty'),
+        confucius_tts_n_timesteps: getValue('cfg-confucius_tts_n_timesteps'),
+        confucius_tts_inference_cfg_rate: getValue('cfg-confucius_tts_inference_cfg_rate'),
         same_speaker_gap: getValue('cfg-same_speaker_gap'),
         auto_retry_max: getValue('cfg-auto_retry_max'),
         auth_enabled: getValue('cfg-auth_enabled'),
