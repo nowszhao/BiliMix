@@ -320,18 +320,17 @@ def synthesize_sentences_with_confucius_tts(
     tts_map = dict(cached_results)
 
     if not worker_stall_but_done:
-        if proc.returncode != 0 and stdout_data.strip():
+        if proc.returncode != 0:
             stderr_tail = "\n".join(stderr_lines[-10:]) if stderr_lines else "无日志"
-            print(f"[Step3-Confucius] Worker 失败 (code={proc.returncode})")
+            print(f"[Step3-Confucius] Worker 异常退出 (code={proc.returncode})")
             # 尝试从磁盘回收
-            disk_recovered = 0
             for job in pending_jobs:
                 if os.path.exists(job["output_path"]):
                     tts_map[job["segment_index"]] = job["output_path"]
-                    disk_recovered += 1
-            if disk_recovered == 0:
-                raise RuntimeError(f"Confucius4-TTS worker 失败 (code={proc.returncode}):\n{stderr_tail}")
-            print(f"[Step3-Confucius] 从磁盘回收 {disk_recovered} 个文件")
+            if len(tts_map) == len(cached_results):
+                # 磁盘也回收不到任何文件 → 真正失败
+                raise RuntimeError(
+                    f"Confucius4-TTS worker 异常退出 (code={proc.returncode}):\n{stderr_tail}")
 
     # 从磁盘回收生成的音频
     for job in pending_jobs:

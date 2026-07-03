@@ -1187,6 +1187,11 @@ def continue_after_sentence_confirmation(task_id: str):
         if is_cancelled(task_id):
             raise InterruptedError("任务已被用户终止")
 
+        if len(translated_indices) > 0 and not tts_audio_map:
+            raise RuntimeError(
+                f"TTS 合成完全失败：{len(translated_indices)} 个句子未生成任何音频，"
+                f"请检查 TTS 引擎配置和环境依赖")
+
         update_task(task_id, progress=80,
                     message=f"语音合成完成: {len(tts_audio_map)} 条中文语音")
 
