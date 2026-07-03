@@ -1,4 +1,20 @@
+# ============================================================
+# BiliMix 主项目依赖
+# ============================================================
 flask>=2.3
 pydub>=0.25
 edge-tts>=6.1
 requests>=2.28
+
+# ============================================================
+# Confucius4-TTS-CPU 依赖（需单独安装在目标 Python 环境）
+# 在主环境中安装:
+#   pip install -r requirements.txt
+#
+# 然后在 CONFUCIUS4_TTS_PYTHON 指向的 Python 环境中安装:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+#   pip install transformers safetensors huggingface_hub PyYAML librosa soundfile \
+#       scipy tqdm matplotlib inflect jaconv pykakasi sentencepiece wetext ema-pytorch
+#
+# 首次运行会自动从 HuggingFace 下载模型权重:
+#   netease-youdao/Confucius4-TTS (~3GB)

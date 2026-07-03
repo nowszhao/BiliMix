@@ -3,20 +3,19 @@
 </h1>
 
 <p align="center">
-  <strong>英文播客生词替换工具 — 边听边学，沉浸式记忆</strong>
+  <strong>英文播客双语混合处理工具 — 中英交替、沉浸式听力训练</strong>
 </p>
 
 <p align="center">
-  将英文播客中超出你词汇水平的生僻词汇和短语，自动替换为中文语音，<br/>
-  生成「中英混合音频」，实现无痛听力提升。
+  将英文播客按比例翻译为中文语音，生成「中英交替音频」，<br/>
+  支持整句翻译、生词替换、全翻译等多种模式，实现无痛听力提升。
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/WhisperX-词级时间戳-green" alt="WhisperX">
-  <img src="https://img.shields.io/badge/Qwen3.5-9B-orange?logo=alibabacloud" alt="Qwen3.5">
-  <img src="https://img.shields.io/badge/TTS-声音克隆-purple" alt="TTS">
-  <img src="https://img.shields.io/badge/Fish_Speech-S2_Pro-blue" alt="Fish Speech">
+  <img src="https://img.shields.io/badge/Ollama-LLM翻译-orange?logo=ollama" alt="Ollama">
+  <img src="https://img.shields.io/badge/Confucius4-TTS-声音克隆-purple" alt="Confucius4-TTS">
   <img src="https://img.shields.io/badge/Flask-Web_UI-red?logo=flask" alt="Flask">
 </p>
 
@@ -43,12 +42,12 @@
 
 | 功能 | 描述 |
 |------|------|
-| 🎯 **智能生词识别** | 基于 Qwen3.5 大模型逐句分析，结合 BNC/COCA 25000 词频表双重过滤，精准识别超出你水平的词汇 |
-| 🗣️ **声音克隆 TTS** | 使用 Qwen3-TTS 克隆原始播客说话人的声音，用"原声"朗读中文翻译，听感自然不违和 |
-| 📊 **多难度分级** | 支持 CET-4 / CET-6 / IELTS-6 / IELTS-7 / ADVANCED 五档难度，精准匹配你的英语水平 |
-| 🔄 **音频无缝拼接** | 精确到毫秒级的时间戳定位与音频替换，保持播客原有节奏 |
-| 📚 **生词本导出** | 自动生成结构化生词本（JSON + TXT），含时间戳，方便复习 |
-| 🌐 **Web 可视化** | 精美的 Web 界面，支持在线提交、进度追踪、原文转录同步滚动、全屏阅读 |
+| 🎯 **三种处理模式** | 生词替换 / 句子翻译 / 智能翻译，灵活适配不同学习阶段 |
+| 🗣️ **声音克隆 TTS** | 支持 4 种 TTS 引擎（Edge-TTS / Qwen3-TTS / Fish Speech / Confucius4-TTS），零样本声音克隆 |
+| 📊 **多难度分级** | 支持 CET-4 / CET-6 / IELTS-6 / IELTS-7 / ADVANCED 五档难度 |
+| 🔄 **中英交替组装** | 英→中逐句交替，保留原始句间间隔，听感自然 |
+| 📚 **生词本导出** | 自动生成结构化生词本，含时间戳 |
+| 🌐 **Web 可视化** | 在线提交、进度追踪、转录同步滚动、全屏阅读、Mini Player |
 
 ---
 
@@ -56,39 +55,36 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                          输入: 英文播客音频                            │
+│                       输入: 英文播客音频                               │
 └─────────────────────────┬───────────────────────────────────────────┘
                           │
                           ▼
               ┌───────────────────────┐
-              │   Step 1: WhisperX    │  音频 → 词级别时间戳
-              │   语音转录 + 对齐     │  每个单词精确到毫秒
+              │   Step 1: WhisperX    │  音频 → 词级别时间戳 + segments
+              │   语音转录 + 对齐      │
               └───────────┬───────────┘
                           │
                           ▼
               ┌───────────────────────┐
-              │  Step 2: Qwen3.5 LLM │  逐批句子分析
-              │  生词识别 + 中文翻译   │  BNC/COCA 词频过滤
+              │   Step 2: Ollama LLM  │  生词识别 / 句子翻译
+              │   识词 / 翻译          │  BNC/COCA 词频过滤
               └───────────┬───────────┘
                           │
                           ▼
               ┌───────────────────────┐
-              │  Step 3: TTS 语音合成  │  ┌─ Edge-TTS (在线、快速)
-              │  中文翻译 → 中文语音   │  └─ Qwen3-TTS (声音克隆)
+              │  Step 3: TTS 语音合成  │  Edge-TTS / Qwen3-TTS /
+              │  中文翻译 → 中文语音   │  Fish Speech / Confucius4-TTS
               └───────────┬───────────┘
                           │
                           ▼
               ┌───────────────────────┐
-              │  Step 4: 音频编辑拼接  │  原始英文 + 中文 TTS
-              │  精确替换 + 无缝衔接   │  → 中英混合音频
+              │  Step 4: 音频组装      │  中英交替 / 全翻译拼接
+              │  翻译句替换英文原声     │
               └───────────┬───────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  输出:                                                               │
-│  📁 mixed_audio.mp3    ← 中英混合音频                                 │
-│  📁 vocabulary_book    ← JSON + TXT 生词本                           │
-│  📁 difficult_words    ← LLM 完整识别结果                             │
+│  输出: 中英交替音频 + 同步字幕 + 生词本                                │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -98,15 +94,16 @@
 
 | 层面 | 技术 | 说明 |
 |------|------|------|
-| **语音转录** | [WhisperX](https://github.com/m-bain/whisperX) | OpenAI Whisper + 强制对齐，实现词级别时间戳 |
-| **大模型推理** | [Ollama](https://ollama.ai/) + Qwen3.5:9B | 本地部署，零延迟，支持批量生词识别 |
-| **词频过滤** | BNC/COCA 25000 词频表 | 25000 词头 + 全部词形变化，无需词形还原 |
-| **TTS 引擎 A** | [Edge-TTS](https://github.com/rany2/edge-tts) | 微软在线 TTS，毫秒级合成，零部署成本 |
-| **TTS 引擎 B** | [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) | 本地声音克隆，12Hz codec，0.6B / 1.7B 参数量 |
-| **TTS 引擎 C** | [Fish Speech S2 Pro](https://github.com/fishaudio/fish-speech) | SOTA 开源 TTS，via [s2.cpp](https://github.com/rodrigomatta/s2.cpp) GGUF 量化 CPU 推理 |
-| **音频处理** | [pydub](https://github.com/jiaaro/pydub) + FFmpeg | 格式转换、切割、拼接、采样率统一 |
+| **语音转录** | [WhisperX](https://github.com/m-bain/whisperX) | OpenAI Whisper + 强制对齐，词级别时间戳 + 说话人分离 |
+| **大模型推理** | [Ollama](https://ollama.ai/) + translategemma:12b | 本地部署，支持生词识别 / 句子翻译 |
+| **词频过滤** | BNC/COCA 25000 词频表 | 25000 词头 + 全部词形变化 |
+| **TTS 引擎 A** | [Edge-TTS](https://github.com/rany2/edge-tts) | 微软在线 TTS，零部署 |
+| **TTS 引擎 B** | [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) | 本地 x-vector 声音克隆 |
+| **TTS 引擎 C** | [Fish Speech S2 Pro](https://github.com/fishaudio/fish-speech) | SOTA 开源 TTS，via s2.cpp GGUF 量化 |
+| **TTS 引擎 D** | [Confucius4-TTS-CPU](https://github.com/nowszhao/Confucius4-TTS-CPU) | 网易有道零样本多语言 TTS，纯 CPU 推理 |
+| **音频处理** | [pydub](https://github.com/jiaaro/pydub) + FFmpeg | 格式转换、切割、拼接 |
 | **Web 后端** | Flask | REST API + 后台线程 + 任务持久化 |
-| **Web 前端** | 原生 HTML/CSS/JS | Apple 设计风格，无框架依赖，全屏转录同步 |
+| **Web 前端** | 原生 HTML/CSS/JS | Apple 设计风格，全屏转录同步 |
 
 ### 多环境隔离架构
 
@@ -116,16 +113,16 @@
     ├── subprocess ──→ whisperx conda 环境 (whisperx_new)
     │                    └─ WhisperX + PyTorch + transformers
     │
-    └── subprocess ──→ qwen3-tts conda 环境 (qwen3-tts)
+    ├── subprocess ──→ qwen3-tts conda 环境 (qwen3-tts)
     │                    └─ Qwen3-TTS + PyTorch + soundfile
-    │                    └─ 通过 JSON 文件传参，stdout 返回结果
     │
-    └── HTTP ──→ s2.cpp Fish Speech server (localhost:3030)
-                     └─ GGUF 量化模型，纯 C++ CPU 推理
-                     └─ POST /generate 接口
+    ├── HTTP ──→ s2.cpp Fish Speech server (localhost:3030)
+    │              └─ GGUF 量化模型，纯 C++ CPU 推理
+    │
+    └── subprocess ──→ Confucius4-TTS-CPU worker
+                         └─ BigVGAN + T2S LLM + S2A Flow Matching
+                         └─ 首次运行自动下载模型权重
 ```
-
-> 各 AI 模型的依赖存在版本冲突，通过 conda 环境隔离 + subprocess 跨进程调用解决。
 
 ---
 
@@ -189,36 +186,41 @@ pip install qwen-tts  # 或按照 Qwen3-TTS 官方文档安装
 # 1.7B (推荐): Qwen/Qwen3-TTS-12Hz-1.7B-Base
 ```
 
-### 3b. 安装 Fish Speech S2 Pro（可选，最佳音色克隆）
-
-Fish Speech S2 Pro 通过社区移植版 [s2.cpp](https://github.com/rodrigomatta/s2.cpp) 在 CPU 上运行，音色克隆质量远超 Qwen3-TTS。
+### 3b. 安装 Confucius4-TTS-CPU（默认 TTS 引擎）
 
 ```bash
-# 1. 安装依赖
-dnf install -y cmake gcc-c++   # TencentOS / CentOS
-# 或: apt install -y cmake g++  # Ubuntu / Debian
+# 1. 克隆 Confucius4-TTS-CPU（与 BiliMix 同级目录）
+git clone https://github.com/nowszhao/Confucius4-TTS-CPU.git ../Confucius4-TTS-CPU
+cd ../Confucius4-TTS-CPU
 
-# 2. 克隆并构建 s2.cpp
+# 2. 安装依赖（需要已安装 PyTorch 的环境）
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install transformers safetensors huggingface_hub PyYAML librosa soundfile \
+    scipy tqdm matplotlib inflect jaconv pykakasi sentencepiece wetext ema-pytorch
+
+# 3. 首次运行会自动从 HuggingFace 下载模型权重（约 3GB）
+#    netease-youdao/Confucius4-TTS
+```
+
+### 3c. 安装 Fish Speech S2 Pro（可选）
+
+Fish Speech S2 Pro 通过 [s2.cpp](https://github.com/rodrigomatta/s2.cpp) 在 CPU 上运行。
+
+```bash
 git clone --recurse-submodules https://github.com/rodrigomatta/s2.cpp.git /root/s2.cpp
 cd /root/s2.cpp
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel $(nproc)
-
-# 3. 下载 GGUF 量化模型（Q4_K_M ≈ 3.6GB, 运行内存 ≈ 7GB）
 mkdir -p models
 wget -P models https://huggingface.co/rodrigomt/s2-pro-gguf/resolve/main/s2-pro-q4_k_m.gguf
-
-# 4. 启动 HTTP 服务
 nohup ./build/s2 --model ./models/s2-pro-q4_k_m.gguf --server --host 0.0.0.0 --port 3030 --threads 4 > server.log 2>&1 &
-
-# 5. 在 BiliMix 设置面板中将 TTS 引擎切换为 "Fish Speech (S2 Pro)"
 ```
 
 ### 4. 安装主项目依赖
 
 ```bash
-# 回到主项目目录
-cd /path/to/whipserx
+# 回到 BiliMix 项目目录
+cd /path/to/BiliMix
 
 pip install flask pydub edge-tts requests
 ```
@@ -304,18 +306,43 @@ DIFFICULTY_LEVEL = "CET-4"
 ### TTS 引擎选择
 
 ```python
-# "edge-tts":    微软在线 TTS（快速、免费、无需 GPU）
-# "qwen3-tts":   本地声音克隆（音色自然、需要更多资源）
-# "fish-speech": Fish Speech S2 Pro（SOTA 音色克隆，需启动 s2.cpp）
-TTS_ENGINE = "qwen3-tts"
+# "edge-tts":       微软在线 TTS（快速、免费、无需 GPU）
+# "qwen3-tts":      本地声音克隆（x-vector，适合 GPU）
+# "fish-speech":    Fish Speech S2 Pro（SOTA 音色克隆，需启动 s2.cpp）
+# "confucius-tts":  Confucius4-TTS-CPU（零样本多语言 TTS，纯 CPU，默认）
+TTS_ENGINE = "confucius-tts"
 ```
 
-| 特性 | Edge-TTS | Qwen3-TTS | Fish Speech S2 Pro |
-|------|----------|-----------|-------------------|
-| 合成速度 | 毫秒级 | 秒级（CPU）/ 亚秒（GPU） | 数秒（CPU） |
-| 音色 | 固定中文女声 | 克隆原始说话人声音 | **极致**声音克隆 |
-| 部署要求 | 联网即可 | 需下载模型 (1~4GB) | s2.cpp + GGUF 模型 (3.6GB) |
-| 适用场景 | 快速预览 | 高质量产出 | 最逼真的原声还原 |
+| 特性 | Edge-TTS | Qwen3-TTS | Fish Speech | Confucius4-TTS |
+|------|----------|-----------|-------------|----------------|
+| 合成速度 | 毫秒级 | 亚秒(GPU)/秒 | 数秒(CPU) | ~15s/句(CPU) |
+| 音色 | 固定女声 | 克隆原声 | **极致**克隆 | 优秀零样本克隆 |
+| 多语言 | 中文 | 中文 | 80+ | 80+ |
+| 部署要求 | 联网 | GPU 推荐 | s2.cpp | CPU + PyTorch |
+| 模型大小 | - | 1~4GB | 3.6GB(GGUF) | ~3GB(自动下载) |
+
+### Confucius4-TTS 参数
+
+```python
+CONFUCIUS4_TTS_PYTHON = ""          # Python 解释器（留空=当前环境）
+CONFUCIUS4_TTS_DEVICE = "cpu"       # cpu 或 cuda
+CONFUCIUS4_TTS_TEMPERATURE = 0.8    # T2S 采样温度 (0.1~1.5)
+CONFUCIUS4_TTS_TOP_P = 0.8          # 核采样阈值
+CONFUCIUS4_TTS_NUM_BEAMS = 3        # 束搜索宽度 (1=贪心)
+CONFUCIUS4_TTS_N_TIMESTEPS = 25     # 扩散步数 (5~50, 越大质量越高)
+```
+
+### 处理模式
+
+```python
+# "word_replace":      生词替换模式
+# "sentence_translate": 句子翻译模式（中英交替，默认）
+# "smart_translate":    智能翻译模式
+PROCESS_MODE = "sentence_translate"
+
+# 中文翻译比例 (0.0~1.0, 默认 1.0 = 全翻译)
+SENTENCE_CN_RATIO = 1.0
+```
 
 ### Edge-TTS 参数
 
@@ -354,60 +381,51 @@ ADJACENT_MERGE_GAP = 0.12  # 秒
 ## 📁 项目结构
 
 ```
-whipserx/
+BiliMix/
 │
-├── main.py                      # 命令行主入口（串联 Step 1-5）
+├── main.py                           # 命令行主入口
 │
-├── core/                        # 核心模块
-│   ├── config.py                # 全局配置中心
-│   ├── config_manager.py        # Web 端配置读写
-│   ├── task_manager.py          # 任务状态管理、持久化、恢复
-│   └── word_frequency.py        # BNC/COCA 词频数据查询
+├── core/                             # 核心模块
+│   ├── config.py                     # 全局配置
+│   ├── config_manager.py             # Web 端配置读写
+│   ├── database.py                   # SQLite 数据库（任务/生词库/收藏）
+│   ├── task_manager.py               # 任务状态管理、持久化
+│   └── word_frequency.py             # BNC/COCA 词频查询
 │
-├── pipeline/                    # 处理流水线
-│   ├── step1_transcribe.py      # Step 1: WhisperX 语音转录
-│   ├── step2_identify_difficult_words.py  # Step 2: LLM 生词识别 + 词频过滤
-│   ├── step2b_translate_sentences.py      # Step 2b: 句子翻译模式
-│   ├── step3_tts_synthesize.py  # Step 3A: Edge-TTS 中文语音合成
-│   ├── step3_tts_qwen.py        # Step 3B: Qwen3-TTS 声音克隆合成
-│   ├── step3_tts_fish.py        # Step 3C: Fish Speech S2 Pro 声音克隆
-│   ├── step4_audio_editor.py    # Step 4: 音频编辑拼接
-│   └── step4b_sentence_mixer.py # Step 4b: 句子翻译模式音频混合
+├── pipeline/                         # 处理流水线
+│   ├── step1_transcribe.py           # Step 1: WhisperX 转录
+│   ├── step2_identify_difficult_words.py  # Step 2: LLM 生词识别
+│   ├── step2b_translate_sentences.py      # Step 2b: 句子翻译
+│   ├── step3_tts_synthesize.py       # Step 3A: Edge-TTS
+│   ├── step3_tts_qwen.py             # Step 3B: Qwen3-TTS 声音克隆
+│   ├── step3_tts_fish.py             # Step 3C: Fish Speech S2 Pro
+│   ├── step3_tts_confucius.py        # Step 3D: Confucius4-TTS-CPU
+│   ├── step4_audio_editor.py         # Step 4: 生词替换音频编辑
+│   └── step4b_sentence_mixer.py      # Step 4b: 中英交替音频组装
 │
-├── services/                    # Web 服务
-│   ├── web_app.py               # Flask Web 后端（REST API + 后台任务）
-│   └── podcast_service.py       # 播客搜索、RSS 解析
+├── services/                         # Web 服务
+│   ├── web_app.py                    # Flask 后端 (REST API + 后台任务)
+│   └── podcast_service.py            # 播客搜索/RSS 解析
 │
-├── workers/                     # 独立 Worker 进程
-│   └── qwen_tts_worker.py       # Qwen3-TTS 独立 Worker（跨 conda 环境）
+├── workers/                          # 独立 Worker 进程
+│   ├── qwen_tts_worker.py            # Qwen3-TTS Worker
+│   └── confucius_tts_worker.py       # Confucius4-TTS Worker
 │
-├── tests/                       # 测试脚本
-│   ├── test_mixed_replacement.py
-│   ├── test_segment_ref.py
-│   └── test_voice_clone_chinese.py
+├── web/                              # 前端
+│   ├── index.html                    # 主页面
+│   └── js/                           # 前端逻辑
+│       ├── settings.js               # 设置面板
+│       ├── result.js                 # 结果渲染（字幕/生词对照）
+│       ├── audio-sync.js             # 音频同步/全屏转录
+│       └── ...
 │
-├── web/                         # 前端静态资源
-│   ├── index.html               # 主页面
-│   ├── app.js                   # 前端逻辑（任务管理、转录同步、全屏等）
-│   └── style.css                # 样式（Apple 设计风格）
+├── data/                             # 运行时数据
+│   ├── downloads/                    # 下载的音频
+│   ├── transcripts/                  # 转录缓存
+│   └── results/                      # 处理结果
 │
-├── data/                        # 统一数据目录（运行产物）
-│   ├── downloads/               # Web 模式下载的音频文件
-│   ├── transcripts/             # WhisperX 转录缓存
-│   ├── results/                 # 处理结果输出目录
-│   │   └── {basename}/
-│   │       ├── {basename}_mixed.mp3
-│   │       ├── vocabulary_book.json
-│   │       ├── vocabulary_book.txt
-│   │       ├── difficult_words.json
-│   │       ├── ref_audio/       # 声音克隆参考音频
-│   │       └── tts_cache/       # Qwen3-TTS 合成缓存
-│   └── tts_cache/               # Edge-TTS 全局合成缓存
-│
-├── BNC_COCA_lists.csv           # BNC/COCA 25000 词频分级表
-├── tasks_index.json             # Web 任务持久化索引
-├── requirements.txt             # Python 依赖
-└── test.sh                      # WhisperX 命令行测试脚本
+├── requirements.txt
+└── BNC_COCA_lists.csv
 ```
 
 ---
@@ -495,11 +513,12 @@ whipserx/
 
 | 步骤 | 耗时 | 备注 |
 |------|------|------|
-| Step 1: 转录 | ~60s | WhisperX base 模型，首次运行需下载 |
-| Step 2: 识词 | ~30s | 约 13 批 LLM 调用（100 句 ÷ 8 句/批） |
-| Step 3: TTS (Edge) | ~5s | 在线合成，极快 |
-| Step 3: TTS (Qwen3) | ~6-10min | CPU 模式下每词约 10s；GPU 下降至 0.3~1s/词 |
-| Step 3: TTS (Fish Speech) | ~3-5min | CPU 模式 Q4_K_M 量化，每句约 5-10s |
+| Step 1: 转录 | ~60s | WhisperX base 模型 |
+| Step 2: 翻译 | ~30s | Ollama LLM 调用 |
+| Step 3: TTS (Edge) | ~5s | 在线合成 |
+| Step 3: TTS (Qwen3) | ~6-10min | CPU 模式每词约 10s |
+| Step 3: TTS (Fish Speech) | ~3-5min | Q4_K_M 量化，每句 5-10s |
+| Step 3: TTS (Confucius4) | ~8-12min | CPU 模式每句约 15s，35 句 |
 | Step 4: 拼接 | ~3s | 纯内存操作 |
 
 ### 优化建议
