@@ -1061,11 +1061,13 @@ def retry_task(task_id):
             try:
                 with open(checkpoint_path, "r", encoding="utf-8") as f:
                     saved = json.load(f)
-                # 注入断点数据到内存 task
-                for key in ("_checkpoint_translate_batch",
+                # 恢复关键数据到内存 task
+                for key in ("segments", "translations", "translated_indices",
+                            "sentence_pairs", "tts_audio_map",
+                            "_checkpoint_translate_batch",
                             "_checkpoint_translations",
                             "_checkpoint_tts_idx"):
-                    if saved.get(key) is not None:
+                    if key in saved and not task.get(key):
                         task[key] = saved[key]
                 if saved.get("_checkpoint_translations"):
                     task["_checkpoint_translations"] = {
@@ -1086,13 +1088,13 @@ def retry_task(task_id):
     if True:  # always sentence_translate
 
         if translations and translated_indices and segments:
-            # 翻译已完成，直接从 TTS 合成恢复
-            msg = f"断点续传 — 跳过转录+翻译，直接从 TTS 恢复 ({len(translated_indices)} 句)"
+            # 翻译已完成，直接从 TTS 合成恢复（只补缺失的 TTS 文件）
+            msg = f"断点续传 — 跳过转录+翻译，从 TTS 恢复 ({len(translated_indices)} 句)"
             print(f"[Retry] {msg}")
             update_task(task_id, status="processing", step="synthesize",
                         _failed_step="", progress=58,
                         message=msg)
-            thread = threading.Thread(target=continue_after_sentence_confirmation,
+            thread = threading.Thread(target=_synthesis_resume,
                                       args=(task_id,), daemon=True)
         elif segments:
             # 转录已完成，从翻译步骤恢复
@@ -1119,6 +1121,79 @@ def retry_task(task_id):
 
     thread.start()
     return jsonify({"message": "已开始断点续传"})
+
+
+def _synthesis_resume(task_id):
+    """断点续传：跳过转录+翻译，只补充合成缺失的 TTS 文件并重新混合"""
+    task = get_task(task_id)
+    if not task: return
+    segments = task.get("segments", [])
+    translated_indices = task.get("translated_indices", [])
+    translations = task.get("translations", {})
+    translations = {int(k): v for k, v in translations.items()}
+    audio_path = task.get("_audio_path", "")
+    basename = task.get("_basename", "")
+    result_dir = os.path.join(config.RESULT_DIR, basename)
+
+    existing_tts = task.get("tts_audio_map", {}) or {}
+    missing_indices = [idx for idx in translated_indices if idx not in existing_tts]
+
+    if not missing_indices:
+        tts_audio_map = existing_tts
+        print(f"[SynthesisResume] 全部 {len(tts_audio_map)} 条 TTS 已就绪，直接混合")
+    else:
+        missing_translations = {k: translations[k] for k in missing_indices if k in translations}
+        confucius_cache_dir = os.path.join(result_dir, "tts_confucius_cache")
+        os.makedirs(confucius_cache_dir, exist_ok=True)
+
+        def _progress(current, total):
+            update_task(task_id, progress=60 + int((current / max(total, 1)) * 20),
+                        message=f"补充合成 TTS ({current}/{total})")
+
+        def _cancel(): return is_cancelled(task_id)
+
+        update_task(task_id, status="processing", step="synthesize",
+                    progress=60, message=f"补充合成 {len(missing_indices)} 条 TTS...")
+        try:
+            new_tts = synthesize_sentences_with_confucius_tts(
+                segments, missing_indices, missing_translations,
+                audio_path, confucius_cache_dir,
+                ref_audio_map={},
+                cancel_check=_cancel, progress_cb=_progress, task_id=task_id)
+        except InterruptedError:
+            update_task(task_id, status="cancelled", message="重试已被取消")
+            return
+        tts_audio_map = dict(existing_tts)
+        tts_audio_map.update(new_tts)
+        update_task(task_id, tts_audio_map=tts_audio_map)
+
+    update_task(task_id, status="processing", step="merge", progress=82,
+                message="重新组装音频...")
+    output_path = os.path.join(result_dir, f"{basename}_sentence.{config.OUTPUT_FORMAT}")
+    mix_result = mix_sentence_audio(audio_path, segments,
+                                    translated_indices, translations,
+                                    tts_audio_map, output_path)
+    
+    # 完成
+    result_data = {
+        "basename": basename,
+        "original_audio": audio_path,
+        "mixed_audio": output_path,
+        "original_duration": mix_result["original_duration"],
+        "mixed_duration": mix_result["mixed_duration"],
+        "total_segments": len(segments),
+        "translated_segments": len(translated_indices),
+    }
+    update_task(task_id, status="completed", progress=100,
+                step="done", message="断点续传完成!",
+                result=result_data, sentence_pairs=task.get("sentence_pairs", []))
+    save_task_result_to_disk(result_dir, {**result_data, "task_id": task_id,
+                              "status": "completed", "segments": segments,
+                              "translations": translations,
+                              "translated_indices": translated_indices,
+                              "process_mode": "sentence_translate"})
+    save_task_to_index(task_id, {"status": "completed", "progress": 100,
+                       "step": "done", "message": "断点续传完成!"})
 
 
 @app.route("/api/task/<task_id>/retry-synthesis", methods=["POST"])

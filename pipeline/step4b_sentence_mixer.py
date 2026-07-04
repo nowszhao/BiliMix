@@ -62,16 +62,24 @@ def mix_sentence_audio(
         print(f"[Step4b] 100% 全翻译模式：直接拼接 TTS 音频")
         print(f"  总句子数: {len(translated_indices)}, 句间间隔: {full_gap_ms}ms")
 
-        # 从第一个 TTS 文件获取音频参数（采样率/通道数）
-        first_seg = translated_indices[0]
-        first_tts = tts_audio_map.get(first_seg, "")
+        # 找到第一个可用的 TTS 文件获取音频参数
+        first_tts = None
+        first_seg = None
+        for idx in translated_indices:
+            p = tts_audio_map.get(idx, "")
+            if p and os.path.exists(p):
+                first_tts = p
+                first_seg = idx
+                break
         if first_tts and os.path.exists(first_tts):
             probe = AudioSegment.from_file(first_tts)
             target_sr = probe.frame_rate
             target_channels = probe.channels
         else:
-            raise RuntimeError(
-                f"seg[{first_seg}] TTS 文件缺失 ({first_tts or '(无)'}), 100% 模式无法继续")
+            # 全部 TTS 文件都缺失：无法确定音频参数，用默认值
+            print(f"[Step4b] 警告：所有 TTS 文件缺失，使用默认参数 22050Hz/mono")
+            target_sr = 22050
+            target_channels = 1
 
         gap_seg = AudioSegment.silent(duration=full_gap_ms, frame_rate=target_sr)
         result = AudioSegment.empty()
@@ -81,12 +89,15 @@ def mix_sentence_audio(
         for i, seg_idx in enumerate(translated_indices):
             tts_path = tts_audio_map.get(seg_idx, "")
             if not tts_path or not os.path.exists(tts_path):
-                raise RuntimeError(
-                    f"seg[{seg_idx}] TTS 文件缺失 ({tts_path or '(无)'}), 100% 模式无法继续")
-
-            tts_clip = AudioSegment.from_file(tts_path)
-            tts_clip = tts_clip.set_frame_rate(target_sr).set_channels(target_channels)
-            tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
+                print(f"[Step4b] 警告: seg[{seg_idx}] TTS 文件缺失，插入静音代替")
+                missed_seg = segments[seg_idx] if seg_idx < len(segments) else {}
+                seg_dur_s = missed_seg.get("end", 0) - missed_seg.get("start", 0)
+                seg_len_ms = max(int(seg_dur_s * 1000), 500)
+                tts_clip = AudioSegment.silent(duration=seg_len_ms, frame_rate=target_sr)
+            else:
+                tts_clip = AudioSegment.from_file(tts_path)
+                tts_clip = tts_clip.set_frame_rate(target_sr).set_channels(target_channels)
+                tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
             tts_len_ms = len(tts_clip)
 
             result += tts_clip

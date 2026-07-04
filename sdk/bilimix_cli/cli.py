@@ -561,60 +561,6 @@ def cmd_translate_word(args, client):
     return EXIT_OK
 
 
-def cmd_translate_word_levels(args, client):
-    if args.words:
-        words = [w.strip() for w in args.words.split(",")]
-    else:
-        import json
-        with open(args.words_file, "r", encoding="utf-8") as f:
-            words = json.load(f)
-    body = {"words": words}
-    result = client.post_json("/api/word-levels", body)
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-# ============================================================
-# vocab 命令
-# ============================================================
-
-def cmd_vocab_list(args, client):
-    params = {
-        "sort_by": args.sort_by,
-        "sort_order": args.sort_order,
-        "filter_mastered": args.filter_mastered,
-        "page": args.page,
-        "page_size": args.page_size,
-    }
-    if args.filter_type:
-        params["filter_type"] = args.filter_type
-    if args.filter_freq:
-        params["filter_freq"] = args.filter_freq
-    if args.search:
-        params["search"] = args.search
-    result = client.get("/api/vocab", params=params)
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_vocab_stats(args, client):
-    result = client.get("/api/vocab/stats")
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_vocab_toggle_mastered(args, client):
-    result = client.post_json(f"/api/vocab/{args.id}/toggle-mastered")
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_vocab_delete(args, client):
-    result = client.delete_json(f"/api/vocab/{args.id}")
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
 # ============================================================
 # podcast 命令
 # ============================================================
@@ -648,31 +594,6 @@ def _build_podcast_body(args):
     if getattr(args, "image", None):
         body["image"] = args.image
     return body
-
-
-def cmd_favorites_list(args, client):
-    result = client.get("/api/favorites")
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_favorites_add(args, client):
-    body = _build_podcast_body(args)
-    result = client.post_json("/api/favorites", body)
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_favorites_remove(args, client):
-    result = client.delete_json("/api/favorites", {"rss_url": args.rss_url})
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_favorites_check(args, client):
-    result = client.get("/api/favorites/check", params={"rss_url": args.rss_url})
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
 
 
 # ============================================================
@@ -986,8 +907,6 @@ def build_parser():
     p.set_defaults(func=cmd_vocab_delete)
 
     # ---- favorites ----
-    p_f = add_cmd(sub, "favorites", help="播客收藏")
-    f_sub = p_f.add_subparsers(dest="subcommand", required=True)
 
     p = add_cmd(f_sub, "list", help="收藏列表")
     p.set_defaults(func=cmd_favorites_list)
