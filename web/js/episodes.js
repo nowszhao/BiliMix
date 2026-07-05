@@ -63,11 +63,14 @@ async function loadEpisodes() {
     const container = document.getElementById('episodes-list');
     if (!container) return;
 
-    container.innerHTML = '<div class="episodes-loading"><div class="spinner"></div><p>加载中...</p></div>';
+    // 如果是首次加载或过滤器变化导致的「硬加载」
+    if (episodesCache.length === 0) {
+        container.innerHTML = '<div class="episodes-loading"><div class="spinner"></div><p>加载中...</p></div>';
+    }
 
     try {
         const params = new URLSearchParams({
-            status: episodesStatusFilter,
+            status: 'all',
             time_range: episodesTimeRange,
             page: episodesCurrentPage,
             page_size: 100,
@@ -79,13 +82,26 @@ async function loadEpisodes() {
 
         episodesCache = data.episodes || [];
         renderEpisodeStats(data.total);
-        renderEpisodes(episodesCache);
+        renderFilteredEpisodes();  // 本地过滤渲染，不再请求
+        // 后台异步刷新统计
+        loadEpisodeStats();
     } catch (err) {
         container.innerHTML = `<div class="episodes-empty"><p>加载失败: ${escapeHtml(err.message)}</p></div>`;
     }
 }
 
-async function loadEpisodeStats(totalCount) {
+function renderFilteredEpisodes() {
+    let filtered = episodesCache;
+    if (episodesStatusFilter !== 'all') {
+        filtered = filtered.filter(ep => ep.status === episodesStatusFilter);
+    }
+    if (episodesRssFilter) {
+        filtered = filtered.filter(ep => ep.rss_url === episodesRssFilter);
+    }
+    renderEpisodes(filtered);
+}
+
+async function loadEpisodeStats(overrideTotal) {
     try {
         const params = new URLSearchParams();
         if (episodesRssFilter) params.set('rss_url', episodesRssFilter);
@@ -121,6 +137,7 @@ async function loadEpisodeStats(totalCount) {
 }
 
 function renderEpisodeStats(total) {
+    // 后台异步同步全量统计（保持 Segmented Control 计数准确），不阻塞渲染
     loadEpisodeStats(total);
 }
 
@@ -261,7 +278,55 @@ async function toggleEpisode(id) {
         } catch (e) {}
     }
 
-    renderEpisodes(episodesCache);
+    // 只更新目标卡片的状态类和展开内容，不重建整个列表
+    const card = document.querySelector(`.episode-card[onclick*="${id}"]`);
+    if (card) {
+        if (wasExpanded) {
+            card.classList.remove('expanded');
+            const detail = card.querySelector('.episode-card-detail');
+            if (detail) detail.remove();
+        } else {
+            card.classList.add('expanded');
+            if (ep) {
+                const newDetail = renderEpisodeDetail(ep);
+                card.insertAdjacentHTML('beforeend', newDetail);
+            }
+        }
+        // 更新状态样式
+        if (ep) {
+            const statusClass = {unread:'unread',read:'read',transcribed:'transcribed',dismissed:'dismissed'}[ep.status] || 'unread';
+            card.className = card.className.replace(/unread|read|transcribed|dismissed/g, '');
+            card.classList.add(statusClass, episodesExpandedId === id ? 'expanded' : '');
+            const dot = card.querySelector('.episode-status-dot');
+            if (dot) {
+                dot.className = dot.className.replace(/unread|read|transcribed|dismissed/g, '');
+                dot.classList.add(statusClass);
+            }
+            const label = card.querySelector('.episode-status-label');
+            if (label) {
+                label.textContent = {unread:'未读',read:'已读',transcribed:'已转录',dismissed:'已忽略'}[ep.status] || '未读';
+            }
+        }
+    }
+}
+
+function renderEpisodeDetail(ep) {
+    let html = `<div class="episode-card-detail">`;
+    if (ep.description) {
+        html += `<p class="episode-detail-desc">${escapeHtml(ep.description)}</p>`;
+    }
+    html += `<div class="episode-detail-actions">`;
+    if (ep.status === 'unread') {
+        html += `<button class="ep-btn-small" onclick="event.stopPropagation(); markEpisode(${ep.id}, 'read')">✓ 标记已读</button>`;
+        html += `<button class="ep-btn-small" onclick="event.stopPropagation(); markEpisode(${ep.id}, 'dismissed')">忽略</button>`;
+    } else if (ep.status === 'read') {
+        html += `<button class="ep-btn-small" onclick="event.stopPropagation(); markEpisode(${ep.id}, 'unread')">标记未读</button>`;
+        html += `<button class="ep-btn-small" onclick="event.stopPropagation(); markEpisode(${ep.id}, 'dismissed')">忽略</button>`;
+    } else if (ep.status === 'transcribed') {
+        html += `<button class="ep-btn-small" onclick="event.stopPropagation(); markEpisode(${ep.id}, 'unread')">标记未读</button>`;
+    }
+    html += `</div></div>`;
+    return html;
 }
 
 async function markEpisode(id, status) {
@@ -271,7 +336,12 @@ async function markEpisode(id, status) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status }),
         });
-        loadEpisodes();
+        // 本地更新缓存，避免整表重新请求
+        const ep = episodesCache.find(e => e.id === id);
+        if (ep) ep.status = status;
+        renderFilteredEpisodes();
+        // 后台刷新统计
+        loadEpisodeStats();
     } catch (err) {
         showToast('更新失败: ' + err.message);
     }
@@ -315,8 +385,15 @@ async function processEpisode(id, audioUrl, title) {
             currentTaskTitle = title;
             tasks_url = audioUrl;
 
-            showSection('progress');
-            if (typeof startPolling === 'function') startPolling();
+            // 跳转到任务页，新任务会自动出现在列表中
+            showToast('✅ 任务已提交');
+            switchView('tasks');
+            // 稍等 loadHistory 完成后再展开该任务详情
+            setTimeout(() => {
+                if (typeof toggleTaskDetail === 'function') {
+                    toggleTaskDetail(data.task_id, audioUrl);
+                }
+            }, 800);
         } else {
             showToast('提交失败: ' + (data.error || '未知错误'));
         }
@@ -337,18 +414,21 @@ function viewEpisodeResult(taskId) {
 
 function setEpisodeStatusFilter(status) {
     episodesStatusFilter = status;
-    episodesCurrentPage = 1;
     episodesExpandedId = null;
-    loadEpisodes();
+    // 客户端即时过滤，不再请求网络
+    renderFilteredEpisodes();
 }
 
 function setEpisodeTimeRange(range) {
     episodesTimeRange = range;
     episodesCurrentPage = 1;
+    episodesExpandedId = null;
     // 更新按钮高亮
     document.querySelectorAll('.time-range-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.range === range);
     });
+    // 时间范围变化需要重新请求后端（数据范围变了），但先清空 cache 再重载
+    episodesCache = [];
     loadEpisodes();
 }
 

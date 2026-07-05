@@ -165,8 +165,14 @@ async function submitTask() {
         currentTaskId = data.task_id;
         // 提交成功后清除文件状态，下次回来不会残留
         if (currentInputMode === 'file') clearUploadedFile();
-        showSection('progress');
-        startPolling();
+        // 跳转到任务页，新任务自动展开详情
+        showToast('✅ 任务已提交');
+        if (typeof switchView === 'function') switchView('tasks');
+        setTimeout(() => {
+            if (typeof toggleTaskDetail === 'function') {
+                toggleTaskDetail(data.task_id, tasks_url);
+            }
+        }, 800);
     } catch (err) {
         alert('网络错误: ' + err.message);
         btn.disabled = false;

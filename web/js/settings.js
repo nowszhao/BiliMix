@@ -448,6 +448,10 @@ function toggleHistoryPlay(taskId, basename, audioUrl) {
     audio.onerror = () => { btn.textContent = '▶'; btn.title = '播放原始音频'; historyPlayingTaskId = null; };
 }
 
+// 任务展开状态
+let taskExpandedId = null;
+let taskPollInterval = null;
+
 async function loadHistory() {
     const list = document.getElementById('history-list');
     const tasksContainer = document.getElementById('tasks-list-container');
@@ -456,7 +460,7 @@ async function loadHistory() {
     if (tasksContainer) tasksContainer.innerHTML = loadingHtml;
 
     try {
-        const resp = await fetch('/api/tasks');
+        const resp = await fetch('/api/tasks?limit=20');
         const data = await resp.json();
         const tasks = data.tasks || [];
 
@@ -469,55 +473,7 @@ async function loadHistory() {
 
         let html = '';
         tasks.forEach(t => {
-            const statusMap = {
-                'completed': '已完成', 'processing': '处理中', 'downloading': '下载中',
-                'queued': '排队中',
-                'awaiting_confirmation': '待确认', 'awaiting_sentence_confirmation': '待确认翻译',
-                'error': '出错', 'cancelled': '已终止',
-            };
-            const statusLabel = statusMap[t.status] || t.status;
-            const statusClass = t.status || 'processing';
-
-            let displayUrl = t.url || '--';
-            try {
-                const u = new URL(displayUrl);
-                displayUrl = u.hostname + u.pathname.substring(u.pathname.lastIndexOf('/'));
-            } catch(e) {}
-
-            const displayName = t.title || displayUrl;
-
-            let statsHtml = '';
-            if (t.status === 'completed' && t.mixed_duration) {
-                statsHtml = `
-                    <div class="history-card-stats">
-                        ${t.mixed_duration ? `<span class="history-stat"><strong>${t.mixed_duration}</strong>s 混合音频</span>` : ''}
-                    </div>
-                `;
-            }
-
-            html += `
-                <div class="history-card" onclick="viewHistoryTask('${t.task_id}', '${escapeAttr(t.url)}')" title="${escapeAttr(displayName)}">
-                    <div class="history-card-header">
-                        <div class="history-card-url">${escapeHtml(displayName)}</div>
-                        <div class="history-card-actions">
-                            ${t.basename ? `
-                            <button class="history-play-btn" id="history-play-${t.task_id}"
-                                onclick="event.stopPropagation(); toggleHistoryPlay('${t.task_id}', '${escapeAttr(t.basename)}', '${escapeAttr(t.url)}')"
-                                title="播放原始音频">▶</button>
-                            ` : ''}
-                            <button class="history-delete-btn" onclick="event.stopPropagation(); confirmDeleteTask('${t.task_id}', '${escapeAttr(displayName)}')" title="删除任务">
-                                🗑
-                            </button>
-                        </div>
-                    </div>
-                    <div class="history-card-meta">
-                        <span class="history-status ${statusClass}">${statusLabel}</span>
-                        <span class="history-card-info">${t.created_at || ''}</span>
-                        ${t.status === 'processing' && t.progress ? `<span class="history-card-info">${t.progress}%</span>` : ''}
-                    </div>
-                    ${statsHtml}
-                </div>
-            `;
+            html += renderTaskCard(t);
         });
 
         if (list) list.innerHTML = html;
@@ -529,46 +485,231 @@ async function loadHistory() {
     }
 }
 
-async function viewHistoryTask(taskId, url) {
-    if (typeof closeHistory === 'function') closeHistory();
+function renderTaskCard(t) {
+    const statusMap = {
+        'completed': '已完成', 'processing': '处理中', 'downloading': '下载中',
+        'queued': '排队中',
+        'awaiting_confirmation': '待确认', 'awaiting_sentence_confirmation': '待确认翻译',
+        'error': '出错', 'cancelled': '已终止',
+    };
+    const statusLabel = statusMap[t.status] || t.status;
+    const statusClass = t.status || 'processing';
+    const isExpanded = taskExpandedId === t.task_id;
 
-    // 如果有 Mini Player 在播放，先关闭
-    if (miniPlayerState) {
-        miniPlayerClose();
+    let displayUrl = t.url || '--';
+    try {
+        const u = new URL(displayUrl);
+        displayUrl = u.hostname + u.pathname.substring(u.pathname.lastIndexOf('/'));
+    } catch(e) {}
+    const displayName = t.title || displayUrl;
+
+    let html = `<div class="history-card ${statusClass} ${isExpanded ? 'expanded' : ''}" onclick="toggleTaskDetail('${t.task_id}', '${escapeAttr(t.url)}')">`;
+    html += `<div class="history-card-header">`;
+    html += `<div class="history-card-url">${escapeHtml(displayName)}</div>`;
+    html += `<div class="history-card-actions">`;
+    if (t.basename) {
+        html += `<button class="history-play-btn" onclick="event.stopPropagation(); toggleHistoryPlay('${t.task_id}', '${escapeAttr(t.basename)}', '${escapeAttr(t.url)}')" title="播放原始音频">▶</button>`;
+    }
+    html += `<button class="history-delete-btn" onclick="event.stopPropagation(); confirmDeleteTask('${t.task_id}', '${escapeAttr(displayName)}')" title="删除任务">✕</button>`;
+    html += `</div></div>`;
+    html += `<div class="history-card-meta">`;
+    html += `<span class="history-status ${statusClass}">${statusLabel}</span>`;
+    html += `<span class="history-card-info">${t.created_at || ''}</span>`;
+    if (t.status === 'processing' && t.progress) {
+        html += `<span class="history-card-info">${t.progress}%</span>`;
+    }
+    if (t.status === 'completed' && t.mixed_duration) {
+        html += `<span class="history-card-info">${t.mixed_duration}s</span>`;
+    }
+    html += `</div>`;
+
+    // 展开详情占位区（由 toggleTaskDetail 异步填充）
+    html += `<div class="history-card-detail" id="task-detail-${t.task_id}">`;
+    if (isExpanded) {
+        html += `<div style="text-align:center;padding:16px;color:var(--text-tertiary);">加载中...</div>`;
+    }
+    html += `</div>`;
+
+    html += `</div>`;
+    return html;
+}
+
+async function toggleTaskDetail(taskId, url) {
+    const prevExpanded = taskExpandedId;
+    taskExpandedId = (taskExpandedId === taskId) ? null : taskId;
+
+    // 折叠上一个展开的
+    if (prevExpanded && prevExpanded !== taskId) {
+        const prevCard = document.querySelector(`.history-card[onclick*="${prevExpanded}"]`);
+        if (prevCard) prevCard.classList.remove('expanded');
+        const prevDetail = document.getElementById(`task-detail-${prevExpanded}`);
+        if (prevDetail) prevDetail.innerHTML = '';
+        stopTaskPoll();
     }
 
-    currentTaskId = taskId;
-    tasks_url = url || '';
+    if (!taskExpandedId) {
+        stopTaskPoll();
+        return;
+    }
+
+    // 加载并渲染详情
+    const detailEl = document.getElementById(`task-detail-${taskId}`);
+    const card = document.querySelector(`.history-card[onclick*="${taskId}"]`);
+    if (card) card.classList.add('expanded');
+    if (!detailEl) return;
+
+    detailEl.innerHTML = '<div style="text-align:center;padding:16px;color:var(--text-tertiary);">加载中...</div>';
 
     try {
         const resp = await fetch(`/api/task/${taskId}`);
-        const data = await resp.json();
+        const task = await resp.json();
 
-        // 保存任务标题（从历史记录进入时也能获取正确标题）
-        if (data.title) {
-            currentTaskTitle = data.title;
-        }
+        currentTaskId = taskId;
+        tasks_url = url || task.url || '';
 
-        if (data.status === 'completed') {
-            await loadResult();
-        } else if (data.status === 'awaiting_confirmation') {
-            await loadConfirmationUI();
-        } else if (data.status === 'awaiting_sentence_confirmation') {
-            await loadSentenceConfirmationUI();
-        } else if (data.status === 'processing' || data.status === 'downloading') {
-            showSection('progress');
-            resetProgressUI();
-            startPolling();
-        } else {
-            showSection('progress');
-            updateProgress(data);
-            if (data.status === 'cancelled') showCancelledUI();
-            else { showError(data.message); showCancelledUI(); }
+        renderTaskDetail(detailEl, task);
+
+        // 进行中 / 下载中：自动轮询刷新
+        if (task.status === 'processing' || task.status === 'downloading') {
+            startTaskPoll(taskId, url);
         }
     } catch (err) {
-        alert('加载任务失败: ' + err.message);
+        detailEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--error);">加载失败</div>`;
     }
 }
+
+function renderTaskDetail(container, task) {
+    const status = task.status || '';
+    let html = '';
+
+    if (status === 'completed') {
+        html = renderCompletedTaskDetail(task);
+    } else if (status === 'processing' || status === 'downloading') {
+        html = renderProcessingTaskDetail(task);
+    } else if (status === 'cancelled' || status === 'error') {
+        html = `<div class="task-detail-end">${status === 'cancelled' ? '已终止' : '出错'}: ${escapeHtml(task.message || '')}</div>`;
+    } else {
+        html = `<div class="task-detail-end">状态: ${status}</div>`;
+    }
+
+    container.innerHTML = html;
+}
+
+function renderProcessingTaskDetail(task) {
+    const progress = task.progress || 0;
+    const message = task.message || '';
+    const step = task.step || '';
+
+    const steps = [
+        {key: 'download', label: '下载'},
+        {key: 'transcribe', label: '转录'},
+        {key: 'translate', label: '翻译'},
+        {key: 'confirm', label: '确认'},
+        {key: 'synthesize', label: '合成'},
+        {key: 'mix', label: '拼接'},
+    ];
+
+    const stepIdx = steps.findIndex(s => s.key === step);
+    let stepsHtml = '<div class="task-steps">';
+    steps.forEach((s, i) => {
+        const cls = i < stepIdx ? 'done' : i === stepIdx ? 'active' : '';
+        stepsHtml += `<span class="task-step ${cls}">${s.label}</span>`;
+        if (i < steps.length - 1) stepsHtml += '<span class="task-step-line"></span>';
+    });
+    stepsHtml += '</div>';
+
+    return `
+        <div class="task-progress-bar">
+            <div class="task-progress-fill" style="width:${progress}%"></div>
+        </div>
+        <div class="task-progress-info">${(progress || 0).toFixed(0)}% · ${escapeHtml(message)}</div>
+        ${stepsHtml}
+        <div class="task-detail-actions">
+            <button class="btn-cancel task-cancel-btn" onclick="event.stopPropagation(); cancelTaskInline('${currentTaskId}')">终止任务</button>
+        </div>
+    `;
+}
+
+function renderCompletedTaskDetail(task) {
+    const basename = task.basename || (task.result && task.result.basename) || '';
+    const mixedAudio = task.result && task.result.mixed_audio ? task.result.mixed_audio : '';
+    const originalAudio = task.result && task.result.original_audio ? task.result.original_audio : '';
+
+    let playerHtml = '';
+    if (basename) {
+        playerHtml = `<div class="task-audio-inline">`;
+        if (mixedAudio) {
+            playerHtml += `<div class="task-audio-item"><span class="task-audio-label">混合</span><audio controls preload="none" src="${escapeAttr(mixedAudio)}"></audio></div>`;
+        }
+        if (originalAudio) {
+            playerHtml += `<div class="task-audio-item"><span class="task-audio-label">原始</span><audio controls preload="none" src="${escapeAttr(originalAudio)}"></audio></div>`;
+        }
+        playerHtml += `</div>`;
+    }
+
+    return `
+        ${playerHtml}
+        <div class="task-detail-end">✅ 已完成 · ${(task.mixed_duration || 0)}s 混合音频</div>
+    `;
+}
+
+function startTaskPoll(taskId, url) {
+    stopTaskPoll();
+    taskPollInterval = setInterval(async () => {
+        try {
+            const resp = await fetch(`/api/task/${taskId}`);
+            const task = await resp.json();
+            const detailEl = document.getElementById(`task-detail-${taskId}`);
+            if (detailEl) {
+                renderTaskDetail(detailEl, task);
+            }
+            // 如果终态，停止轮询并刷新列表
+            if (task.status === 'completed' || task.status === 'cancelled' || task.status === 'error') {
+                stopTaskPoll();
+                // 稍后刷新任务列表（更新卡片元数据）
+                setTimeout(() => loadHistory(), 500);
+            }
+        } catch (e) {}
+    }, 2000);
+}
+
+function stopTaskPoll() {
+    if (taskPollInterval) {
+        clearInterval(taskPollInterval);
+        taskPollInterval = null;
+    }
+}
+
+async function cancelTaskInline(taskId) {
+    if (!confirm('确定终止该任务吗？')) return;
+    try {
+        const resp = await fetch(`/api/task/${taskId}/cancel`, { method: 'POST' });
+        const data = await resp.json();
+        if (resp.ok) {
+            showToast('已发送终止请求');
+        } else {
+            showToast(data.error || '终止失败');
+        }
+    } catch (e) {
+        showToast('网络错误');
+    }
+    // 刷新详情
+    try {
+        const resp = await fetch(`/api/task/${taskId}`);
+        const task = await resp.json();
+        const detailEl = document.getElementById(`task-detail-${taskId}`);
+        if (detailEl) renderTaskDetail(detailEl, task);
+    } catch (e) {}
+}
+
+async function viewHistoryTask(taskId, url) {
+    // 兼容旧调用：直接展开任务
+    toggleTaskDetail(taskId, url);
+}
+
+// 切换到任务页时停止轮询
+const _origSwitchView = typeof switchView === 'function' ? switchView : null;
+// (stopTaskPoll already safe to call via existing code)
 
 // ============================================================
 // Delete Task Confirmation

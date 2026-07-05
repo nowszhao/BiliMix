@@ -796,17 +796,26 @@ def api_mark_all_episodes_read():
 
 @app.route("/api/episodes/refresh", methods=["POST"])
 def api_refresh_episodes():
-    """手动刷新所有订阅源，拉取最新单集"""
+    """手动刷新所有订阅源，并发拉取最新单集"""
     subs = get_subscriptions()
     total_new = 0
     errors = []
-    for sub in subs:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _refresh_one(sub):
         rss_url = sub["rss_url"]
         count, err = _refresh_single_feed(rss_url)
-        if count is None:
-            errors.append(err)
-        else:
-            total_new += count
+        return count, err
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = {pool.submit(_refresh_one, sub): sub for sub in subs}
+        for future in as_completed(futures):
+            count, err = future.result()
+            if count is None:
+                errors.append(err)
+            else:
+                total_new += count
+
     return jsonify({
         "ok": True,
         "refreshed": len(subs),
@@ -1515,6 +1524,9 @@ def list_tasks():
 
     sorted_tasks = sorted(result.values(),
                           key=lambda t: t.get("created_at", ""), reverse=True)
+    limit = request.args.get("limit", type=int, default=0)
+    if limit > 0:
+        sorted_tasks = sorted_tasks[:limit]
     return jsonify({"tasks": sorted_tasks})
 
 

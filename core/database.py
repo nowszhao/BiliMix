@@ -122,6 +122,8 @@ def init_db():
                 created_at TEXT DEFAULT (datetime('now', 'localtime'))
             );
 
+            CREATE INDEX IF NOT EXISTS idx_subscriptions_rss_url ON subscriptions(rss_url);
+
             -- 搜索历史表
             CREATE TABLE IF NOT EXISTS search_history (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,6 +150,10 @@ def init_db():
                 updated_at      TEXT DEFAULT (datetime('now', 'localtime')),
                 UNIQUE(rss_url, guid)
             );
+
+            CREATE INDEX IF NOT EXISTS idx_episodes_published_at_ts ON episodes(published_at_ts);
+            CREATE INDEX IF NOT EXISTS idx_episodes_status ON episodes(status);
+            CREATE INDEX IF NOT EXISTS idx_episodes_rss_url ON episodes(rss_url);
         """)
         # 向已有的 tasks 表添加 title 列（兼容旧数据库）
         try:
@@ -159,6 +165,13 @@ def init_db():
             conn.execute("ALTER TABLE episodes ADD COLUMN published_at_ts REAL DEFAULT 0")
         except sqlite3.OperationalError:
             pass  # 列已存在，忽略
+        # episodes 索引（兼容旧数据库，CREATE INDEX IF NOT EXISTS 已是幂等，但这里是给老库）
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_published_at_ts ON episodes(published_at_ts)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_status ON episodes(status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_rss_url ON episodes(rss_url)")
+        except sqlite3.OperationalError:
+            pass
         _backfill_episode_timestamps(conn)
 
 
@@ -753,28 +766,24 @@ def get_episode_stats(rss_url: str = "", time_range: str = "all") -> dict:
     where_clause = " AND ".join(conditions) if conditions else "1=1"
 
     with get_db() as conn:
-        def _count(status_cond=""):
-            inner_where = f"{status_cond} AND" if status_cond else ""
-            return conn.execute(
-                f"""SELECT COUNT(*) as cnt FROM episodes e
-                    WHERE {inner_where} e.rss_url IN (SELECT s.rss_url FROM subscriptions s)
-                    {'AND ' + where_clause if where_clause != '1=1' else ''}""",
-                params
-            ).fetchone()["cnt"]
+        rows = conn.execute(
+            f"""SELECT e.status, COUNT(*) as cnt FROM episodes e
+                WHERE {' AND '.join(['1=1', f'e.rss_url IN (SELECT s.rss_url FROM subscriptions s)'] + ([where_clause] if where_clause != '1=1' else []))}
+                GROUP BY e.status""",
+            params
+        ).fetchall()
 
-        total = _count()
-        unread = _count("e.status = 'unread'")
-        read = _count("e.status = 'read'")
-        transcribed = _count("e.status = 'transcribed'")
-        dismissed = _count("e.status = 'dismissed'")
+        result = {"total": 0, "unread": 0, "read": 0, "transcribed": 0, "dismissed": 0}
+        for row in rows:
+            status = row["status"]
+            cnt = row["cnt"]
+            result["total"] += cnt
+            if status == "unread": result["unread"] = cnt
+            elif status == "read": result["read"] = cnt
+            elif status == "transcribed": result["transcribed"] = cnt
+            elif status == "dismissed": result["dismissed"] = cnt
 
-    return {
-        "total": total,
-        "unread": unread,
-        "read": read,
-        "transcribed": transcribed,
-        "dismissed": dismissed,
-    }
+    return result
 
 
 def get_unread_counts_by_subscription(time_range: str = "all") -> list:

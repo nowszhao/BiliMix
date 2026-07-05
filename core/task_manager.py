@@ -85,11 +85,11 @@ def update_task(task_id: str, **kwargs):
     with tasks_lock:
         if task_id in tasks:
             tasks[task_id].update(kwargs)
-    # 持久化关键状态变更（包含 queued/processing 防止重启丢失）
+    # 持久化关键状态变更（processing 仅在轮询中频繁调用，不写盘）
     if "status" in kwargs and kwargs["status"] in (
         "completed", "error", "cancelled",
         "awaiting_confirmation", "awaiting_sentence_confirmation",
-        "queued", "processing",
+        "queued",
     ):
         _persist_task(task_id)
     # basename / audio_path 首次设置时也更新 SQLite（保证中断后历史记录完整）

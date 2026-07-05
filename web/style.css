@@ -1386,6 +1386,114 @@ body {
     color: var(--text-primary);
 }
 
+/* 任务卡片展开详情 */
+.history-card.expanded {
+    border-color: var(--accent);
+    cursor: default;
+}
+
+.history-card-detail {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-light);
+}
+
+.task-progress-bar {
+    height: 6px;
+    background: var(--bg-hover);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.task-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.task-progress-info {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+}
+
+.task-steps {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-bottom: 14px;
+}
+
+.task-step {
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--bg-hover);
+}
+
+.task-step.done {
+    background: var(--success-light);
+    color: var(--success);
+}
+
+.task-step.active {
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+}
+
+.task-step-line {
+    width: 10px;
+    height: 1px;
+    background: var(--border);
+}
+
+.task-audio-inline {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.task-audio-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.task-audio-item audio {
+    height: 32px;
+    width: 100%;
+}
+
+.task-audio-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    width: 28px;
+    flex-shrink: 0;
+}
+
+.task-detail-end {
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.task-detail-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.task-cancel-btn {
+    padding: 6px 16px;
+    font-size: 12px;
+}
+
 /* Confirm Dialog */
 .confirm-overlay {
     position: fixed;
@@ -4934,6 +5042,8 @@ body {
     cursor: pointer;
     transition: var(--transition);
     border-bottom: 1px solid var(--border-light);
+    content-visibility: auto;
+    contain-intrinsic-size: auto 52px;
 }
 
 .episode-card:last-child {
