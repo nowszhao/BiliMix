@@ -481,12 +481,27 @@ async function toggleSubscription(rssUrl, title, author, image, btnEl) {
             btnEl.textContent = '✓ 已订阅';
             btnEl.classList.add('saved');
             showToast('📡 已订阅');
+            // 新订阅后自动刷新该源的单集，立即填充更新列表
+            _autoRefreshNewFeed(rssUrl);
         }
         loadQuickPanel();
         loadSavedSubscriptions();
     } catch (e) {
         showToast('❌ 操作失败');
     }
+}
+
+async function _autoRefreshNewFeed(rssUrl) {
+    try {
+        const resp = await fetch(`/api/episodes/refresh/${encodeURIComponent(rssUrl)}`, { method: 'POST' });
+        const data = await resp.json();
+        if (data.ok && data.new_episodes > 0) {
+            showToast(`📡 已拉取 ${data.new_episodes} 条新单集`);
+        }
+    } catch (e) {}
+    // 刷新侧边栏和更新列表
+    if (typeof loadSidebarSubscriptions === 'function') loadSidebarSubscriptions();
+    if (typeof loadEpisodes === 'function') loadEpisodes();
 }
 
 // ============================================================

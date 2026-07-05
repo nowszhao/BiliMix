@@ -46,7 +46,7 @@ async function onFileSelected(input) {
     infoEl.style.display = 'flex';
     nameEl.textContent = '⏳ 上传中...';
     sizeEl.textContent = formatFileSize(file.size);
-    labelEl.querySelector('span').textContent = '正在上传...';
+    labelEl.textContent = '正在上传...';
 
     // 上传文件
     try {
@@ -62,7 +62,7 @@ async function onFileSelected(input) {
         if (!resp.ok || !data.ok) {
             showToast('❌ ' + (data.error || '上传失败'));
             infoEl.style.display = 'none';
-            labelEl.querySelector('span').textContent = '点击选择或拖拽音频文件到此处';
+            labelEl.textContent = '选择或拖拽音频文件';
             input.value = '';
             return;
         }
@@ -71,12 +71,12 @@ async function onFileSelected(input) {
         uploadedFileName = data.filename;
         nameEl.textContent = '✅ ' + data.filename;
         sizeEl.textContent = formatFileSize(file.size);
-        labelEl.querySelector('span').textContent = '上传完成，点击可重新选择';
+        labelEl.textContent = '上传完成，点击可重新选择';
         showToast('✅ 上传成功 (' + data.size_mb + ' MB)');
     } catch (err) {
         showToast('❌ 上传失败: ' + err.message);
         infoEl.style.display = 'none';
-        labelEl.querySelector('span').textContent = '点击选择或拖拽音频文件到此处';
+        labelEl.textContent = '选择或拖拽音频文件';
         input.value = '';
     }
 }
@@ -86,8 +86,7 @@ function clearUploadedFile() {
     uploadedFileName = '';
     document.getElementById('file-upload-info').style.display = 'none';
     document.getElementById('file-upload-input').value = '';
-    document.getElementById('file-upload-label').querySelector('span').textContent =
-        '点击选择或拖拽音频文件到此处';
+    document.getElementById('file-upload-label').textContent = '选择或拖拽音频文件';
 }
 
 function formatFileSize(bytes) {
@@ -102,6 +101,7 @@ function formatFileSize(bytes) {
 
 async function submitTask() {
     const btn = document.getElementById('generate-btn');
+    if (!btn) return;
 
     // 如果有 Mini Player 在播放，先关闭
     if (miniPlayerState) {
@@ -111,27 +111,24 @@ async function submitTask() {
     let url = '';
     let title = '';
     let localPath = '';
-    if (currentInputMode === 'search') {
-        url = selectedEpisodeUrl;
-        title = selectedEpisodeTitle;
-        if (!url) { showToast('❗ 请先搜索并选择一个播客单集'); return; }
-    } else if (currentInputMode === 'rss') {
-        url = rssSelectedEpisodeUrl;
-        title = rssSelectedEpisodeTitle;
-        if (!url) { showToast('❗ 请先解析 RSS 并选择一个单集'); return; }
-    } else if (currentInputMode === 'file') {
+
+    if (currentInputMode === 'file') {
+        // 文件模式：独立提交流程
         if (!uploadedFilePath) {
-            showToast('❗ 请先选择并上传一个音频文件');
+            showToast('❗ 请先选择一个音频文件上传');
             return;
         }
         localPath = uploadedFilePath;
         title = uploadedFileName;
     } else {
+        // URL 模式：独立提交流程
         const urlInput = document.getElementById('audio-url');
+        if (!urlInput) { showToast('❗ 请输入音频 URL'); return; }
         url = urlInput.value.trim();
-        if (!url) { shakeElement(urlInput.parentElement); urlInput.focus(); return; }
+        if (!url) { shakeElement(urlInput); urlInput.focus(); return; }
         if (!url.startsWith('http://') && !url.startsWith('https://')) {
-            shakeElement(urlInput.parentElement); urlInput.focus(); return;
+            showToast('❗ 请输入有效的 HTTP/HTTPS 链接');
+            return;
         }
     }
 
@@ -142,9 +139,10 @@ async function submitTask() {
     btn.querySelector('.btn-text').textContent = '提交中...';
 
     try {
+        // 始终跳过确认
         const body = {
             title: title,
-            skip_confirmation: document.getElementById('skip-confirm-check')?.checked ?? true,
+            skip_confirmation: true,
         };
         if (localPath) {
             body.local_path = localPath;
@@ -165,6 +163,8 @@ async function submitTask() {
             return;
         }
         currentTaskId = data.task_id;
+        // 提交成功后清除文件状态，下次回来不会残留
+        if (currentInputMode === 'file') clearUploadedFile();
         showSection('progress');
         startPolling();
     } catch (err) {

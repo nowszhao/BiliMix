@@ -16,7 +16,7 @@ let episodesCache = [];
 // ============================================================
 
 function switchView(view) {
-    const views = ['updates-view', 'discover-view', 'tasks-view'];
+    const views = ['updates-view', 'tasks-view'];
     views.forEach(v => {
         const el = document.getElementById(v);
         if (el) el.style.display = (v === view + '-view') ? '' : 'none';
@@ -30,9 +30,8 @@ function switchView(view) {
     if (view === 'updates') {
         loadEpisodes();
         loadSidebarSubscriptions();
-    } else if (view === 'discover') {
-        loadSidebarSubscriptions();
     } else if (view === 'tasks') {
+        if (typeof clearUploadedFile === 'function') clearUploadedFile();
         if (typeof loadHistory === 'function') loadHistory();
     }
 
@@ -345,6 +344,10 @@ function setEpisodeStatusFilter(status) {
 function setEpisodeTimeRange(range) {
     episodesTimeRange = range;
     episodesCurrentPage = 1;
+    // 更新按钮高亮
+    document.querySelectorAll('.time-range-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.range === range);
+    });
     loadEpisodes();
 }
 
@@ -365,8 +368,19 @@ function setEpisodeRssFilter(rssUrl) {
     document.querySelectorAll('.sidebar-sub-item').forEach(item => {
         item.classList.toggle('active', item.dataset.rssUrl === rssUrl);
     });
+
+    // 更新来源筛选标签和清除按钮
     const clearBtn = document.getElementById('clear-rss-filter');
-    if (clearBtn) clearBtn.style.display = rssUrl ? '' : 'none';
+    const sourceLabel = document.getElementById('filter-source-label');
+    const showClear = !!rssUrl;
+    if (clearBtn) clearBtn.style.display = showClear ? '' : 'none';
+    if (sourceLabel) {
+        sourceLabel.style.display = showClear ? '' : 'none';
+        if (showClear) {
+            const sub = document.querySelector(`.sidebar-sub-item[data-rss-url="${escapeAttr(rssUrl)}"] .sidebar-sub-title`);
+            sourceLabel.textContent = sub ? `来源: ${sub.textContent}` : '来源: 已筛选';
+        }
+    }
 }
 
 // ============================================================
@@ -492,6 +506,189 @@ async function loadSidebarSubscriptions() {
         renderSidebarSubscriptions(data.subscriptions || []);
     } catch (e) {}
 }
+
+// ============================================================
+// 添加订阅 Modal
+// ============================================================
+
+function openAddSubscriptionModal() {
+    const overlay = document.getElementById('add-sub-modal');
+    if (overlay) overlay.classList.add('open');
+    // 清空搜索/RSS输入
+    const searchInput = document.getElementById('modal-search-input');
+    if (searchInput) searchInput.value = '';
+    const rssInput = document.getElementById('modal-rss-input');
+    if (rssInput) rssInput.value = '';
+    const results = document.getElementById('modal-podcast-results');
+    if (results) results.style.display = 'none';
+    const rssPanel = document.getElementById('modal-rss-episodes-panel');
+    if (rssPanel) rssPanel.style.display = 'none';
+}
+
+function closeAddSubscriptionModal() {
+    const overlay = document.getElementById('add-sub-modal');
+    if (overlay) overlay.classList.remove('open');
+}
+
+// Modal 内搜索（复用 podcast.js 的 searchPodcasts 能力，输出到 modal 面板）
+let modalSearchTimer = null;
+
+function debouncedModalPodcastSearch() {
+    if (modalSearchTimer) clearTimeout(modalSearchTimer);
+    modalSearchTimer = setTimeout(() => {
+        const input = document.getElementById('modal-search-input');
+        if (input && input.value.trim().length >= 2) modalSearchPodcasts();
+    }, 500);
+}
+
+async function modalSearchPodcasts() {
+    const input = document.getElementById('modal-search-input');
+    const q = input ? input.value.trim() : '';
+    if (!q) return;
+
+    const resultsDiv = document.getElementById('modal-podcast-results');
+    const listDiv = document.getElementById('modal-podcast-results-list');
+    resultsDiv.style.display = 'block';
+    listDiv.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary);">搜索中...</div>';
+
+    try {
+        const resp = await fetch(`/api/podcast/search?q=${encodeURIComponent(q)}`);
+        const data = await resp.json();
+        const podcasts = data.podcasts || [];
+
+        if (podcasts.length === 0) {
+            listDiv.innerHTML = '<div style="text-align:center;padding:16px;color:var(--text-tertiary);">未找到相关播客</div>';
+            return;
+        }
+
+        listDiv.innerHTML = podcasts.map(p => {
+            const imgHtml = p.image
+                ? `<img src="${escapeAttr(p.image)}" class="podcast-item-img" onerror="this.style.display='none'" alt="">`
+                : '<div class="podcast-item-img-placeholder">🎙️</div>';
+            return `
+                <div class="podcast-item">
+                    ${imgHtml}
+                    <div class="podcast-item-info">
+                        <div class="podcast-item-title">${escapeHtml(p.title)}</div>
+                        <div class="podcast-item-author">${escapeHtml(p.author || '')}</div>
+                    </div>
+                    <button class="podcast-sub-btn" onclick="modalToggleSubscription(event, '${escapeAttr(p.url)}', '${escapeAttr(p.title)}', '${escapeAttr(p.author || '')}', '${escapeAttr(p.image || '')}', this)">+ 订阅</button>
+                </div>
+            `;
+        }).join('');
+
+        // 标记已订阅的播客
+        modalMarkExistingSubscriptions();
+    } catch (e) {
+        listDiv.innerHTML = '<div style="text-align:center;padding:16px;color:var(--error);">搜索失败</div>';
+    }
+}
+
+async function modalMarkExistingSubscriptions() {
+    try {
+        const resp = await fetch('/api/subscriptions');
+        const data = await resp.json();
+        const subs = data.subscriptions || [];
+        const urls = new Set(subs.map(s => s.rss_url));
+        document.querySelectorAll('#modal-podcast-results-list .podcast-sub-btn').forEach(btn => {
+            const onclick = btn.getAttribute('onclick') || '';
+            const match = onclick.match(/'([^']*)'/);
+            if (match && urls.has(match[1])) {
+                btn.textContent = '✓ 已订阅';
+                btn.classList.add('saved');
+            }
+        });
+    } catch (e) {}
+}
+
+async function modalToggleSubscription(e, rssUrl, title, author, image, btnEl) {
+    e.stopPropagation();
+    if (typeof toggleSubscription === 'function') {
+        await toggleSubscription(rssUrl, title, author, image, btnEl);
+    }
+}
+
+// Modal 内 RSS 解析
+async function modalLoadRssFeed() {
+    const input = document.getElementById('modal-rss-input');
+    const url = input ? input.value.trim() : '';
+    if (!url) return;
+
+    if (typeof loadRssFeed === 'function') {
+        // 借用旧的 RSS 逻辑，临时把输入框的值指向 modal 输入框
+        const originalInput = document.getElementById('rss-url-input');
+        const tempSet = originalInput ? originalInput.value : '';
+        if (originalInput) originalInput.value = url;
+
+        // 创建临时 DOM 来接收结果，然后映射到 modal 面板
+        try {
+            const resp = await fetch(`/api/podcast/rss?url=${encodeURIComponent(url)}`);
+            const data = await resp.json();
+            if (data.error) {
+                showToast('解析失败: ' + data.error);
+                return;
+            }
+            renderModalRssEpisodes(data);
+        } catch (e) {
+            showToast('解析失败');
+        }
+    }
+}
+
+function renderModalRssEpisodes(data) {
+    const panel = document.getElementById('modal-rss-episodes-panel');
+    if (!panel) return;
+    panel.style.display = 'block';
+
+    const podcast = data.podcast || {};
+    document.getElementById('modal-rss-podcast-img').src = (podcast.image || '');
+    document.getElementById('modal-rss-podcast-title').textContent = podcast.title || '';
+    document.getElementById('modal-rss-podcast-author').textContent = podcast.author || '';
+
+    const listDiv = document.getElementById('modal-rss-episodes-list');
+    const episodes = data.episodes || [];
+    listDiv.innerHTML = episodes.map(ep => `
+        <div class="episode-item" style="opacity:0.6">
+            <div class="episode-item-info">
+                <div class="episode-item-title">${escapeHtml(ep.title || '')}</div>
+                <div class="episode-item-meta">
+                    ${ep.duration ? `<span>${escapeHtml(ep.duration)}</span>` : ''}
+                    ${ep.datePublished ? `<span>${escapeHtml(ep.datePublished)}</span>` : ''}
+                </div>
+            </div>
+        </div>
+    `).join('');
+
+    // 添加订阅按钮
+    const headerEl = panel.querySelector('.episodes-header');
+    let subBtn = headerEl.querySelector('.modal-rss-sub-btn');
+    if (!subBtn) {
+        subBtn = document.createElement('button');
+        subBtn.className = 'podcast-sub-btn modal-rss-sub-btn';
+        subBtn.textContent = '+ 订阅';
+        subBtn.onclick = async (e) => {
+            e.stopPropagation();
+            const rssUrl = document.getElementById('modal-rss-input').value.trim();
+            if (rssUrl && typeof toggleSubscription === 'function') {
+                await toggleSubscription(rssUrl, podcast.title || '', podcast.author || '', podcast.image || '', subBtn);
+            }
+        };
+        headerEl.appendChild(subBtn);
+    }
+}
+
+function closeModalRssEpisodes() {
+    const panel = document.getElementById('modal-rss-episodes-panel');
+    if (panel) panel.style.display = 'none';
+}
+
+// 点击 Modal 外部关闭
+document.addEventListener('click', (e) => {
+    const overlay = document.getElementById('add-sub-modal');
+    if (overlay && overlay.classList.contains('open') && e.target === overlay) {
+        closeAddSubscriptionModal();
+    }
+});
 
 // ============================================================
 // 初始化

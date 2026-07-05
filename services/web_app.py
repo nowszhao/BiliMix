@@ -707,6 +707,26 @@ def api_remove_subscription():
 # API 路由 — 订阅单集 (Episodes)
 # ============================================================
 
+def _normalize_episodes_for_insert(episodes, rss_url):
+    """将 parse_rss_feed 返回的 episode 列表标准化为 upsert_episodes 需要的格式"""
+    for i, ep in enumerate(episodes):
+        ep["audio_url"] = ep.get("enclosureUrl", "")
+        ep["published_at"] = ep.get("datePublished", "")
+        if not ep.get("guid"):
+            ep["guid"] = ep.get("enclosureUrl") or f"{rss_url}#{i}"
+
+
+def _refresh_single_feed(rss_url):
+    """刷新单个 RSS Feed，返回 (new_count, error_dict)"""
+    feed_data = parse_rss_feed(rss_url, max_episodes=50)
+    if "error" in feed_data:
+        return None, {"rss_url": rss_url, "error": feed_data["error"]}
+    episodes = feed_data.get("episodes", [])
+    _normalize_episodes_for_insert(episodes, rss_url)
+    return upsert_episodes(rss_url, episodes), None
+
+
+
 @app.route("/api/episodes")
 def api_get_episodes():
     """获取订阅单集列表，支持筛选"""
@@ -761,25 +781,29 @@ def api_refresh_episodes():
     errors = []
     for sub in subs:
         rss_url = sub["rss_url"]
-        feed_data = parse_rss_feed(rss_url, max_episodes=50)
-        if "error" in feed_data:
-            errors.append({"rss_url": rss_url, "error": feed_data["error"]})
-            continue
-        episodes = feed_data.get("episodes", [])
-        # 映射字段并生成 guid
-        for i, ep in enumerate(episodes):
-            ep["audio_url"] = ep.get("enclosureUrl", "")
-            ep["published_at"] = ep.get("datePublished", "")
-            if not ep.get("guid"):
-                ep["guid"] = ep.get("enclosureUrl") or f"{rss_url}#{i}"
-        new_count = upsert_episodes(rss_url, episodes)
-        total_new += new_count
+        count, err = _refresh_single_feed(rss_url)
+        if count is None:
+            errors.append(err)
+        else:
+            total_new += count
     return jsonify({
         "ok": True,
         "refreshed": len(subs),
         "new_episodes": total_new,
         "errors": errors,
     })
+
+
+@app.route("/api/episodes/refresh/<path:rss_url>", methods=["POST"])
+def api_refresh_single_feed(rss_url):
+    """刷新单个订阅源，用于新订阅时即时拉取单集"""
+    from urllib.parse import unquote as _unquote
+    rss_url = _unquote(rss_url)
+    count, err = _refresh_single_feed(rss_url)
+    if count is None:
+        return jsonify({"ok": False, "error": err.get("error", "刷新失败")}), 502
+    return jsonify({"ok": True, "new_episodes": count})
+
 
 
 # ============================================================

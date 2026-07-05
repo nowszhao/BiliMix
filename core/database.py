@@ -690,6 +690,9 @@ def get_episodes(status_filter: str = "all", rss_url: str = "",
         conditions.append("e.published_at_ts >= ?")
         params.append(boundary_ts)
 
+    # 只统计活跃订阅源的单集（已取消订阅的来源不应出现在更新列表中）
+    conditions.append("e.rss_url IN (SELECT s.rss_url FROM subscriptions s)")
+
     where_clause = " AND ".join(conditions) if conditions else "1=1"
 
     with get_db() as conn:
@@ -737,42 +740,29 @@ def update_episode_status(episode_id: int, status: str, task_id: str = "") -> di
 
 
 def get_episode_stats(rss_url: str = "") -> dict:
-    """获取单集状态统计"""
+    """获取单集状态统计，仅统计活跃订阅源的单集"""
     conditions = []
     params = []
     if rss_url:
-        conditions.append("rss_url = ?")
+        conditions.append("e.rss_url = ?")
         params.append(rss_url)
     where_clause = " AND ".join(conditions) if conditions else "1=1"
 
     with get_db() as conn:
-        total = conn.execute(
-            f"SELECT COUNT(*) as cnt FROM episodes WHERE {where_clause}", params
-        ).fetchone()["cnt"]
-        unread = conn.execute(
-            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='unread'"
-            + (" AND " + where_clause if conditions else ""), params
-        ).fetchone()["cnt"] if not rss_url else conn.execute(
-            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='unread' AND {where_clause}", params
-        ).fetchone()["cnt"]
-        read = conn.execute(
-            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='read'"
-            + (" AND " + where_clause if conditions else ""), params
-        ).fetchone()["cnt"] if not rss_url else conn.execute(
-            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='read' AND {where_clause}", params
-        ).fetchone()["cnt"]
-        transcribed = conn.execute(
-            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='transcribed'"
-            + (" AND " + where_clause if conditions else ""), params
-        ).fetchone()["cnt"] if not rss_url else conn.execute(
-            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='transcribed' AND {where_clause}", params
-        ).fetchone()["cnt"]
-        dismissed = conn.execute(
-            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='dismissed'"
-            + (" AND " + where_clause if conditions else ""), params
-        ).fetchone()["cnt"] if not rss_url else conn.execute(
-            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='dismissed' AND {where_clause}", params
-        ).fetchone()["cnt"]
+        def _count(status_cond=""):
+            inner_where = f"{status_cond} AND" if status_cond else ""
+            return conn.execute(
+                f"""SELECT COUNT(*) as cnt FROM episodes e
+                    WHERE {inner_where} e.rss_url IN (SELECT s.rss_url FROM subscriptions s)
+                    {'AND ' + where_clause if where_clause != '1=1' else ''}""",
+                params
+            ).fetchone()["cnt"]
+
+        total = _count()
+        unread = _count("e.status = 'unread'")
+        read = _count("e.status = 'read'")
+        transcribed = _count("e.status = 'transcribed'")
+        dismissed = _count("e.status = 'dismissed'")
 
     return {
         "total": total,

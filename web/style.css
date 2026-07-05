@@ -3997,6 +3997,36 @@ body {
     background: #FFF8E6;
 }
 
+/* Subscribe button on search-result cards */
+.podcast-sub-btn {
+    padding: 7px 16px;
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: var(--transition);
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.podcast-sub-btn:hover {
+    background: #005BB5;
+}
+
+.podcast-sub-btn.saved {
+    color: var(--accent);
+    background: var(--accent-light);
+    cursor: default;
+}
+
+.podcast-sub-btn.saved:hover {
+    background: var(--accent-light);
+}
+
 .podcast-fav-btn.favorited {
     color: #FFB800;
 }
@@ -4421,9 +4451,20 @@ body {
 }
 
 .sidebar-nav-icon {
-    font-size: 16px;
     width: 20px;
-    text-align: center;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.sidebar-nav-icon svg {
+    stroke: currentColor;
+}
+
+.sidebar-nav-item.active .sidebar-nav-icon svg {
+    stroke: var(--accent);
 }
 
 .sidebar-divider {
@@ -4743,8 +4784,50 @@ body {
     outline: none;
 }
 
+.time-range-buttons {
+    display: flex;
+    gap: 4px;
+    background: var(--bg-hover);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+}
+
+.time-range-btn {
+    padding: 5px 14px;
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.time-range-btn:hover {
+    color: var(--text-primary);
+}
+
+.time-range-btn.active {
+    background: #fff;
+    color: var(--text-primary);
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.filter-source-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+}
+
 .filter-clear-btn {
-    padding: 6px 12px;
+    padding: 5px 12px;
     font-family: var(--font);
     font-size: 12px;
     font-weight: 500;
@@ -4753,6 +4836,12 @@ body {
     border: none;
     border-radius: var(--radius-sm);
     cursor: pointer;
+    white-space: nowrap;
+}
+
+.filter-clear-btn:hover {
+    background: var(--accent);
+    color: #fff;
 }
 
 /* ---- 单集列表 ---- */
@@ -5015,25 +5104,112 @@ body {
     padding: 24px;
 }
 
-.discover-search-area,
-.discover-rss-area,
-.discover-direct-area {
+.task-submit-card {
     margin-bottom: 24px;
+    padding: 20px 24px;
 }
 
-.discover-section-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-secondary);
-    margin-bottom: 10px;
+.task-mode-tabs {
+    margin-bottom: 16px;
 }
 
-.discover-submit-area {
+.task-submit-bar {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-light);
+}
+
+/* ---- 添加订阅 Modal ---- */
+.modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    background: rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-overlay.open {
+    display: flex;
+}
+
+.modal-card {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    width: 540px;
+    max-width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-xl);
+    padding: 24px;
+    animation: modalSlideIn 0.2s ease;
+}
+
+@keyframes modalSlideIn {
+    from { opacity: 0; transform: translateY(-12px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.modal-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-top: 16px;
-    border-top: 1px solid var(--border-light);
+    margin-bottom: 20px;
+}
+
+.modal-title {
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.modal-close {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: var(--bg-hover);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-secondary);
+    transition: var(--transition);
+}
+
+.modal-close:hover {
+    background: var(--border);
+    color: var(--text-primary);
+}
+
+.modal-search-area {
+    margin-bottom: 16px;
+}
+
+.modal-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 16px 0;
+    color: var(--text-tertiary);
+    font-size: 12px;
+}
+
+.modal-divider::before,
+.modal-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border-light);
+}
+
+.modal-rss-area {
+    margin-top: 0;
 }
 
 /* ---- 任务页 ---- */
