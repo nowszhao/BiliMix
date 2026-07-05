@@ -1102,15 +1102,18 @@ def cancel_task(task_id):
         event.set()
 
     proc = task_subprocesses.get(task_id)
-    if proc and proc.poll() is None:
-        try:
-            proc.terminate()
-            proc.wait(timeout=5)
-        except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+    if proc:
+        procs = proc if isinstance(proc, list) else [proc]
+        for p in procs:
+            if p and p.poll() is None:
+                try:
+                    p.terminate()
+                    p.wait(timeout=5)
+                except Exception:
+                    try:
+                        p.kill()
+                    except Exception:
+                        pass
 
     update_task(task_id, status="cancelled", message="任务已被终止")
     return jsonify({"message": "任务终止请求已发送"})
@@ -1510,11 +1513,14 @@ def delete_task(task_id):
         if event:
             event.set()
         proc = task_subprocesses.get(task_id)
-        if proc and proc.poll() is None:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
+        if proc:
+            procs = proc if isinstance(proc, list) else [proc]
+            for p in procs:
+                if p and p.poll() is None:
+                    try:
+                        p.terminate()
+                    except Exception:
+                        pass
 
     basename = ""
     audio_path = ""
