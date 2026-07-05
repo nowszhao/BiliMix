@@ -694,6 +694,57 @@ def cmd_subscriptions_remove(args, client):
 
 
 # ============================================================
+# episodes 命令
+# ============================================================
+
+def cmd_episodes_list(args, client):
+    params = {"status": args.status, "time_range": args.time_range,
+              "page": args.page, "page_size": args.page_size}
+    if args.rss_url:
+        params["rss_url"] = args.rss_url
+    result = client.get("/api/episodes", params=params)
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_episodes_stats(args, client):
+    params = {"time_range": args.time_range}
+    if args.rss_url:
+        params["rss_url"] = args.rss_url
+    result = client.get("/api/episodes/stats", params=params)
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_episodes_update(args, client):
+    result = client.patch_json(f"/api/episodes/{args.id}", {"status": args.status})
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_episodes_mark_read(args, client):
+    body = {"time_range": args.time_range}
+    if args.rss_url:
+        body["rss_url"] = args.rss_url
+    result = client.post_json("/api/episodes/mark-all-read", body)
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_episodes_refresh(args, client):
+    result = client.post_json("/api/episodes/refresh")
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_episodes_refresh_feed(args, client):
+    from urllib.parse import quote
+    result = client.post_json(f"/api/episodes/refresh/{quote(args.rss_url, safe='')}")
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+# ============================================================
 # history 命令
 # ============================================================
 
@@ -1020,6 +1071,45 @@ def build_parser():
     p = add_cmd(s_sub, "remove", help="移除订阅")
     p.add_argument("--rss-url", required=True)
     p.set_defaults(func=cmd_subscriptions_remove)
+
+    # ---- episodes ----
+    p_ep = add_cmd(sub, "episodes", help="订阅单集")
+    ep_sub = p_ep.add_subparsers(dest="subcommand", required=True)
+
+    p = add_cmd(ep_sub, "list", help="单集列表")
+    p.add_argument("--status", default="all",
+                   choices=["all", "unread", "read", "transcribed", "dismissed"])
+    p.add_argument("--time-range", default="all",
+                   choices=["today", "week", "month", "all"])
+    p.add_argument("--rss-url", default="")
+    p.add_argument("--page", type=int, default=1)
+    p.add_argument("--page-size", type=int, default=100)
+    p.set_defaults(func=cmd_episodes_list)
+
+    p = add_cmd(ep_sub, "stats", help="单集统计")
+    p.add_argument("--time-range", default="all",
+                   choices=["today", "week", "month", "all"])
+    p.add_argument("--rss-url", default="")
+    p.set_defaults(func=cmd_episodes_stats)
+
+    p = add_cmd(ep_sub, "update", help="更新单集状态")
+    p.add_argument("id", type=int)
+    p.add_argument("--status", required=True,
+                   choices=["unread", "read", "transcribed", "dismissed"])
+    p.set_defaults(func=cmd_episodes_update)
+
+    p = add_cmd(ep_sub, "mark-read", help="批量已读")
+    p.add_argument("--rss-url", default="")
+    p.add_argument("--time-range", default="all",
+                   choices=["today", "week", "month", "all"])
+    p.set_defaults(func=cmd_episodes_mark_read)
+
+    p = add_cmd(ep_sub, "refresh", help="刷新所有订阅源")
+    p.set_defaults(func=cmd_episodes_refresh)
+
+    p = add_cmd(ep_sub, "refresh-feed", help="刷新单个订阅源")
+    p.add_argument("rss_url")
+    p.set_defaults(func=cmd_episodes_refresh_feed)
 
     # ---- history ----
     p_h = add_cmd(sub, "history", help="搜索历史")

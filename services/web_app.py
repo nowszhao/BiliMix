@@ -43,6 +43,7 @@ from core.database import (
     upsert_episodes, get_episodes, update_episode_status,
     get_episode_stats, get_unread_counts_by_subscription,
     update_episode_status_by_task, mark_all_episodes_read,
+    add_favorite, remove_favorite, is_favorite, get_favorites,
 )
 from services.podcast_service import search_podcasts_itunes, parse_rss_feed
 
@@ -654,18 +655,37 @@ def continue_after_sentence_confirmation(task_id: str):
 # ============================================================
 # API 路由 — 播客收藏
 # ============================================================
+@app.route("/api/favorites")
+def api_get_favorites():
+    return jsonify({"favorites": get_favorites()})
 
 
+@app.route("/api/favorites", methods=["POST"])
+def api_add_favorite():
+    data = request.get_json()
+    if not data or "rss_url" not in data:
+        return jsonify({"error": "请提供 rss_url"}), 400
+    fav = add_favorite(title=data.get("title", ""), author=data.get("author", ""),
+                       image=data.get("image", ""), rss_url=data["rss_url"])
+    return jsonify({"ok": True, "favorite": fav})
 
 
+@app.route("/api/favorites", methods=["DELETE"])
+def api_remove_favorite():
+    data = request.get_json()
+    if not data or "rss_url" not in data:
+        return jsonify({"error": "请提供 rss_url"}), 400
+    remove_favorite(data["rss_url"])
+    return jsonify({"ok": True})
 
 
-
+@app.route("/api/favorites/check")
 def api_check_favorite():
-    """检查是否已收藏"""
     rss_url = request.args.get("rss_url", "").strip()
     if not rss_url:
         return jsonify({"error": "请提供 rss_url"}), 400
+    return jsonify({"is_favorite": is_favorite(rss_url)})
+
 
 
 # ============================================================
