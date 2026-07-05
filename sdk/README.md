@@ -1,20 +1,7 @@
 # BiliMix CLI SDK
 
-> 面向 AI Agent 的 BiliMix 命令行接口与 Python 客户端库
->
-> 将 BiliMix Web App 的全部 REST API 包装为结构化、可脚本化的工具。
-
----
-
-## 介绍
-
-BiliMix CLI 是 BiliMix 服务的命令行客户端，提供：
-
-- **命令行工具 `bmx`**：默认输出 JSON，支持字段提取、阻塞等��
-- **Python 客户端库**：可作为 SDK 在 Python 代码中直接调用
-- **AI Agent 友好**：稳定退出码、结构化输出、自描述端点
-
-能力覆盖：音频处理任务全生命周期、播客搜索、翻译、配置管理等。
+面向 AI Agent 的 BiliMix 命令行接口与 Python 客户端库。
+将 BiliMix Web App 的全部 REST API 包装为结构化、可脚本化的工具。
 
 ---
 
@@ -22,22 +9,18 @@ BiliMix CLI 是 BiliMix 服务的命令行客户端，提供：
 
 ```bash
 cd sdk/
-pip install -e .          # 开发模式
-# 或
-pip install .              # 安装到 site-packages
+pip install -e .
 
-# 使用
 bmx --help
-bmx task submit --url https://example.com/ep.mp3 --wait
 ```
 
-### 作为 Python 库使用
+### Python SDK
 
 ```python
 from bilimix_cli.client import BiliMixClient
 
-client = BiliMixClient("http://localhost:5000")
-client.post_json("/api/login", {"username": "admin", "password": "admin123"})
+client = BiliMixClient("http://localhost:5050")
+client.post_json("/api/login", {"username": "admin", "password": "bilimix2024"})
 
 # 提交任务
 result = client.post_json("/api/submit", {
@@ -47,16 +30,13 @@ result = client.post_json("/api/submit", {
 })
 task_id = result["task_id"]
 
-# 轮询状态
+# 轮询进度
 import time
 while True:
-    status = client.get(f"/api/task/{task_id}")
-    if status["status"] in ("completed", "error", "cancelled"):
+    task = client.get(f"/api/task/{task_id}")
+    if task["status"] in ("completed", "error", "cancelled"):
         break
     time.sleep(2)
-
-final = client.get(f"/api/task/{task_id}/result")
-print(final["result"]["mixed_audio"])
 ```
 
 ---
@@ -71,50 +51,90 @@ print(final["result"]["mixed_audio"])
 ## 认证
 
 ```bash
-bmx auth login --username admin --password admin123
-# session 自动持��化
+bmx auth login --username admin --password bilimix2024
 ```
-
-## 端到端一行命令
-
-```bash
-bmx task submit --url https://example.com/ep.mp3 --wait --field result.mixed_audio
-```
-
-处理模式固定为 sentence_translate（100% 全文翻译）。
 
 ---
 
 ## 命令速查
 
-| 命令 | 用途 |
+### 订阅单集
+
+| 命令 | 说明 |
 |------|------|
-| `bmx auth login/logout/status` | 认证管理 |
-| `bmx task submit [--url/--local-path] [--wait]` | 提交任务 |
-| `bmx task list` / `status <id>` / `result <id>` | 查询任务 |
+| `bmx episodes list [--status] [--time-range today\|week\|month\|all]` | 单集列表 |
+| `bmx episodes stats [--time-range]` | 统计 + 各订阅未读数 |
+| `bmx episodes update <id> --status {unread\|read\|transcribed\|dismissed}` | 更新状态 |
+| `bmx episodes mark-read [--rss-url] [--time-range]` | 批量已读 |
+| `bmx episodes refresh` | 刷新所有订阅源 |
+| `bmx episodes refresh-feed <rss_url>` | 刷新单个订阅源 |
+
+### 任务管理
+
+| 命令 | 说明 |
+|------|------|
+| `bmx task submit --url <URL> [--wait]` | 提交音频处理 |
+| `bmx task submit --local-path <FILE> [--wait]` | 提交本地文件 |
+| `bmx task list` | 任务列表 |
+| `bmx task status <id>` | 查询状态 |
+| `bmx task result <id>` | 获取结果 |
 | `bmx task cancel <id>` | 终止任务 |
 | `bmx task retry <id>` | 断点续传 |
-| `bmx task wait <id> [--until STATUS]` | 等待终态 |
-| `bmx podcast search <q>` / `rss --url <url>` | 播客搜索 |
-| `bmx translate --text <text>` | 句子翻译 |
-| `bmx config show/set/reset` | 配置管理 |
-| `bmx audio upload <file>` | 上传音频 |
-| `bmx api` | 端点目录 |
+| `bmx task delete <id>` | 删除任务及文件 |
+| `bmx task wait <id> [--until STATUS]` | 阻塞等待 |
 
-**全局选项**（可在命令前后任意位置）：
+### 播客 & 内容
+
+| 命令 | 说明 |
+|------|------|
+| `bmx podcast search <q>` | 搜索播客 |
+| `bmx podcast rss <url>` | 解析 RSS Feed |
+| `bmx subscriptions list / add / remove` | RSS 订阅管理 |
+| `bmx favorites list / add / remove / check` | 播客收藏管理 |
+
+### 翻译 & 工具
+
+| 命令 | 说明 |
+|------|------|
+| `bmx translate word <english> [--context]` | 翻译单词/短语 |
+| `bmx translate word-levels --words <...>` | 查询 BNC/COCA 词频等级 |
+| `bmx audio upload <file>` | 上传音频 |
+| `bmx audio download [--task-id\|--path]` | 下载音频 |
+| `bmx config get / set` | 配置管理 |
+| `bmx api` | API 端点目录 |
+
+### 全局选项
+
 - `--server URL` 服务地址
-- `--pretty` 美化 JSON
-- `--field PATH` 提取嵌套字段
+- `--pretty` 美化 JSON 输出
+- `--field PATH` 提取嵌套字段，如 `result.mixed_audio`
+
+---
+
+## 一行完成
+
+```bash
+# 提交 + 等待完成 + 提取混合音频 URL
+bmx task submit --url https://example.com/ep.mp3 --wait --field result.mixed_audio
+
+# 查今天新增的单集
+bmx episodes list --time-range today
+
+# 查看所有未读
+bmx episodes stats --time-range all
+```
+
+---
 
 ## 退出码
 
-| 码 | 含义 | 处理建议 |
-|----|------|----------|
-| 0 | 成功 | 解析 stdout |
-| 1 | API 错误 | 修正参数 |
-| 2 | 未认证 | 先 `auth login` |
-| 3 | 超时 | 检查服务后重试 |
-| 4 | 网络错误 | 检查 `--server` |
+| 码 | 含义 |
+|----|------|
+| 0 | 成功 |
+| 1 | API 错误 (HTTP 4xx/5xx) |
+| 2 | 未认证 (401) |
+| 3 | 请求超时 |
+| 4 | 网络错误 |
 
 ---
 
@@ -123,32 +143,14 @@ bmx task submit --url https://example.com/ep.mp3 --wait --field result.mixed_aud
 ```
 sdk/
 ├── bilimix_cli/
-│   ├── __init__.py
-│   ├── __main__.py       # python -m bilimix_cli
 │   ├── cli.py            # CLI 主逻辑
-│   └── client.py         # Python 库接口
-├── docs/
-│   └── cli.md            # 详细文档
-├── examples/
-│   └── library_usage.py  # 示例
-├── pyproject.toml        # 打包配置
+│   └── client.py         # Python SDK
+├── README.md
 ├── requirements.txt
-└── README.md
+└── setup.py
 ```
 
-## 部署
-
-```bash
-cd sdk/
-python -m build              # 打包
-pip install dist/bilimix_cli-*.whl  # 安装到其他机器
-```
-
-CLI 只需 `requests` 库，不需要 whisperx / torch / pydub 等重量级依赖。
-
-## 文档
-
-详见 [docs/cli.md](docs/cli.md) — 全部命令详细参考。
+---
 
 ## License
 
