@@ -590,46 +590,6 @@ def cmd_podcast_rss(args, client):
     return EXIT_OK
 
 
-# ============================================================
-# vocab 命令
-# ============================================================
-
-def cmd_vocab_list(args, client):
-    params = {
-        "sort_by": args.sort_by,
-        "sort_order": args.sort_order,
-        "filter_mastered": args.filter_mastered,
-        "page": args.page,
-        "page_size": args.page_size,
-    }
-    if args.filter_type:
-        params["filter_type"] = args.filter_type
-    if args.filter_freq:
-        params["filter_freq"] = args.filter_freq
-    if args.search:
-        params["search"] = args.search
-    result = client.get("/api/vocab", params=params)
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_vocab_stats(args, client):
-    result = client.get("/api/vocab/stats")
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_vocab_toggle_mastered(args, client):
-    result = client.post_json(f"/api/vocab/{args.id}/toggle-mastered")
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
-def cmd_vocab_delete(args, client):
-    result = client.delete_json(f"/api/vocab/{args.id}")
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
 
 # ============================================================
 # favorites 命令
@@ -1001,36 +961,6 @@ def build_parser():
     p = add_cmd(pc_sub, "rss", help="解析 RSS Feed")
     p.add_argument("url")
     p.set_defaults(func=cmd_podcast_rss)
-
-    # ---- vocab ----
-    p_v = add_cmd(sub, "vocab", help="生词库")
-    v_sub = p_v.add_subparsers(dest="subcommand", required=True)
-
-    p = add_cmd(v_sub, "list", help="生词列表")
-    p.add_argument("--sort-by", default="last_seen_at",
-                   help="排序字段 (last_seen_at/encounter_count/"
-                        "frequency_level/english)")
-    p.add_argument("--sort-order", default="desc", choices=["asc", "desc"])
-    p.add_argument("--filter-mastered", default="all",
-                   choices=["all", "mastered", "unmastered"])
-    p.add_argument("--filter-type", default="",
-                   help="类型 (word/phrase/idiom/collocation)")
-    p.add_argument("--filter-freq", default="")
-    p.add_argument("--search", default="")
-    p.add_argument("--page", type=int, default=1)
-    p.add_argument("--page-size", type=int, default=50)
-    p.set_defaults(func=cmd_vocab_list)
-
-    p = add_cmd(v_sub, "stats", help="生词统计")
-    p.set_defaults(func=cmd_vocab_stats)
-
-    p = add_cmd(v_sub, "toggle-mastered", help="切换掌握状态")
-    p.add_argument("id", type=int)
-    p.set_defaults(func=cmd_vocab_toggle_mastered)
-
-    p = add_cmd(v_sub, "delete", help="删除生词")
-    p.add_argument("id", type=int)
-    p.set_defaults(func=cmd_vocab_delete)
 
     # ---- favorites ----
     p_f = add_cmd(sub, "favorites", help="播客收藏")

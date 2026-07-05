@@ -92,10 +92,12 @@ def update_task(task_id: str, **kwargs):
         "queued",
     ):
         _persist_task(task_id)
-    # basename / audio_path 首次设置时也更新 SQLite（保证中断后历史记录完整）
+    # basename / audio_path / original_duration 首次设置时也更新 SQLite
     elif "_basename" in kwargs and kwargs.get("_basename"):
         _persist_task(task_id)
     elif "_audio_path" in kwargs and kwargs.get("_audio_path"):
+        _persist_task(task_id)
+    elif "original_duration" in kwargs and kwargs.get("original_duration"):
         _persist_task(task_id)
 
 
@@ -105,6 +107,10 @@ def _persist_task(task_id: str):
         task = tasks.get(task_id)
         if not task:
             return
+        # 优先使用顶层 original_duration（下载完成后立即设置），否则尝试从 result 取
+        orig_dur = task.get("original_duration", 0)
+        if not orig_dur and task.get("result"):
+            orig_dur = task.get("result", {}).get("original_duration", 0)
         summary = {
             "task_id": task.get("task_id"),
             "url": task.get("url", ""),
@@ -120,8 +126,7 @@ def _persist_task(task_id: str):
                             if task.get("result") else 0),
             "total_replacements": (task.get("result", {}).get("total_replacements", 0)
                                    if task.get("result") else 0),
-            "original_duration": (task.get("result", {}).get("original_duration", 0)
-                                  if task.get("result") else 0),
+            "original_duration": orig_dur,
             "mixed_duration": (task.get("result", {}).get("mixed_duration", 0)
                                if task.get("result") else 0),
         }

@@ -296,50 +296,6 @@
         </div>
     </aside>
 
-    <!-- ====== 生词库抽屉 ====== -->
-    <div class="vocab-overlay" id="vocab-overlay" onclick="closeVocabulary()"></div>
-    <aside class="vocab-drawer" id="vocab-drawer">
-        <div class="drawer-header">
-            <h2 class="drawer-title">📚 我的生词库</h2>
-            <button class="drawer-close" onclick="closeVocabulary()">✕</button>
-        </div>
-        <div class="vocab-stats-bar" id="vocab-stats-bar">
-            <div class="vocab-stat-item">
-                <span class="vocab-stat-num" id="vocab-stat-total">0</span>
-                <span class="vocab-stat-label">总计</span>
-            </div>
-            <div class="vocab-stat-item">
-                <span class="vocab-stat-num" id="vocab-stat-unmastered" style="color:var(--accent);">0</span>
-                <span class="vocab-stat-label">未掌握</span>
-            </div>
-            <div class="vocab-stat-item">
-                <span class="vocab-stat-num" id="vocab-stat-mastered" style="color:var(--success);">0</span>
-                <span class="vocab-stat-label">已掌握</span>
-            </div>
-        </div>
-        <div class="vocab-toolbar">
-            <div class="vocab-search-wrap">
-                <input type="text" class="vocab-search-input" id="vocab-search-input"
-                       placeholder="搜索单词或释义..." oninput="onVocabSearchInput()">
-            </div>
-            <div class="vocab-filters">
-                <select class="vocab-filter-select" id="vocab-filter-mastered" onchange="loadVocabulary()">
-                    <option value="all">全部</option>
-                    <option value="unmastered" selected>未掌握</option>
-                    <option value="mastered">已掌握</option>
-                </select>
-            </div>
-        </div>
-        <div class="drawer-body" id="vocab-list">
-            <div class="history-empty"><p>暂无生词记录</p></div>
-        </div>
-        <div class="vocab-pagination" id="vocab-pagination" style="display:none;">
-            <button class="vocab-page-btn" id="vocab-prev-btn" onclick="vocabPrevPage()">← 上一页</button>
-            <span class="vocab-page-info" id="vocab-page-info">1 / 1</span>
-            <button class="vocab-page-btn" id="vocab-next-btn" onclick="vocabNextPage()">下一页 →</button>
-        </div>
-    </aside>
-
     <!-- ====== 全屏转录覆盖层 ====== -->
     <div class="fullscreen-overlay" id="fullscreen-overlay">
         <div class="fullscreen-header">

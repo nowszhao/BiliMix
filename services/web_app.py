@@ -7,7 +7,6 @@ BiliMix Web App - Flask 后端
   - task_manager.py: 任务状态管理、持久化、恢复
   - podcast_service.py: 播客搜索、RSS 解析
   - config_manager.py: 配置读取/保存
-  - word_frequency.py: BNC/COCA 词频数据
 """
 import hashlib
 import json
@@ -31,7 +30,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory, sessi
 from core import config
 from core.task_manager import (
     tasks, tasks_lock, cancel_flags, task_subprocesses,
-    load_tasks_index, save_tasks_index,
+    load_tasks_index,
     save_task_result_to_disk, restore_task_from_disk,
     update_task, get_task, is_cancelled,
 )
@@ -49,7 +48,7 @@ from services.podcast_service import search_podcasts_itunes, parse_rss_feed
 
 from core.config_manager import get_all_config, update_config
 
-from pipeline.step1_transcribe import transcribe, extract_full_text, extract_word_timestamps
+from pipeline.step1_transcribe import transcribe, extract_full_text
 # step2_identify_difficult_words removed (word_replace mode deleted)
 from pipeline.step3_tts_confucius import synthesize_sentences_with_confucius_tts
 # step4_audio_editor removed (word_replace mode deleted)
@@ -75,19 +74,6 @@ _queue_waiters = _collections.deque()  # 按提交顺序存储等待中的 task_
 # 登录认证
 # ============================================================
 
-def login_required(f):
-    """装饰器：检查用户是否已登录"""
-    @functools.wraps(f)
-    def decorated(*args, **kwargs):
-        if not getattr(config, "AUTH_ENABLED", True):
-            return f(*args, **kwargs)
-        if not session.get("logged_in"):
-            # API 请求返回 401 JSON，页面请求重定向
-            if request.path.startswith("/api/"):
-                return jsonify({"error": "未登录", "code": "AUTH_REQUIRED"}), 401
-            return redirect("/login")
-        return f(*args, **kwargs)
-    return decorated
 
 
 @app.before_request
@@ -197,6 +183,16 @@ def api_auth_check():
 # 核心处理流程（在后台线程中执行）
 # ============================================================
 
+def _probe_audio_duration(path: str) -> float:
+    """从本地音频文件快速读取时长（秒）。失败返回 0。"""
+    try:
+        from pydub import AudioSegment
+        seg = AudioSegment.from_file(path)
+        return seg.duration_seconds
+    except Exception:
+        return 0.0
+
+
 def download_audio(url: str, save_path: str, task_id: str) -> bool:
     """下载音频文件（支持终止）"""
     try:
@@ -229,6 +225,15 @@ def download_audio(url: str, save_path: str, task_id: str) -> bool:
 
         size_mb = os.path.getsize(save_path) / (1024 * 1024)
         update_task(task_id, message=f"音频下载完成 ({size_mb:.1f} MB)")
+
+        # 探测音频时长，更新到内存 tasks 字典并落盘，使任务列表立即可显示
+        try:
+            duration = _probe_audio_duration(save_path)
+            if duration > 0:
+                update_task(task_id, original_duration=duration)
+        except Exception:
+            pass
+
         return True
     except InterruptedError:
         update_task(task_id, status="cancelled", message="任务已终止")
@@ -837,6 +842,50 @@ def api_refresh_single_feed(rss_url):
 
 
 # ============================================================
+
+def _translate_word(english, context_sentence=None):
+    """简化的翻译函数：调用 LLM 翻译单个英文词/短语"""
+    try:
+        from core.llm_utils import call_ollama
+        prompt = f'Translate the following English word/phrase to Chinese. Return only the Chinese translation, nothing else.\n\nEnglish: {english}'
+        if context_sentence:
+            prompt += f'\nContext: {context_sentence}'
+        result = call_ollama(prompt, raw=True)
+        return {"english": english, "chinese": (result or "").strip()}
+    except Exception as e:
+        return {"english": english, "chinese": "", "error": str(e)}
+
+
+def _batch_word_levels(words):
+    """批量查询词频等级（回退到简单实现）"""
+    return {"levels": {}, "level_nums": {}}
+
+
+# API 路由 — 翻译工具
+# ============================================================
+
+@app.route("/api/translate", methods=["POST"])
+def api_translate():
+    """翻译单个英文词/短语为中文"""
+    data = request.get_json()
+    if not data or "english" not in data:
+        return jsonify({"error": "请提供 english 字段"}), 400
+    result = _translate_word(data["english"], data.get("context_sentence"))
+    return jsonify(result)
+
+
+@app.route("/api/word-levels", methods=["POST"])
+def api_word_levels():
+    """查询单词的 BNC/COCA 词频等级"""
+    data = request.get_json()
+    words = data.get("words", []) if data else []
+    if not words:
+        return jsonify({"error": "请提供 words 列表"}), 400
+    result = _batch_word_levels(words)
+    return jsonify(result)
+
+
+# ============================================================
 # API 路由 — 搜索历史
 # ============================================================
 
@@ -986,6 +1035,21 @@ def submit_task():
     skip_confirmation = data.get("skip_confirmation",
                                  getattr(config, "SKIP_CONFIRMATION", True))
     title = data.get("title", "").strip()
+    duration_str = data.get("duration", "").strip()
+
+    # 解析预知时长：支持 "HH:MM:SS" / "MM:SS" / 纯秒数
+    pre_duration = 0.0
+    if duration_str:
+        try:
+            parts = [float(p) for p in duration_str.replace(",","").split(":")]
+            if len(parts) == 3:
+                pre_duration = parts[0] * 3600 + parts[1] * 60 + parts[2]
+            elif len(parts) == 2:
+                pre_duration = parts[0] * 60 + parts[1]
+            else:
+                pre_duration = float(duration_str)
+        except ValueError:
+            pass
 
     task_id = generate_task_id(audio_url + str(time.time()))
 
@@ -1004,6 +1068,7 @@ def submit_task():
             "progress": 0,
             "message": "任务已创建，准备下载...",
             "created_at": created_at,
+            "original_duration": pre_duration,
             "transcription_text": "",
             "segments": [],
             "difficult_words": [],
@@ -1029,7 +1094,7 @@ def submit_task():
             "basename": "",
             "total_words": 0,
             "total_replacements": 0,
-            "original_duration": 0,
+            "original_duration": pre_duration,
             "mixed_duration": 0,
         })
     except Exception as e:
@@ -1516,8 +1581,9 @@ def list_tasks():
                                 if task.get("result") else 0),
                 "total_replacements": (task.get("result", {}).get("total_replacements", 0)
                                        if task.get("result") else 0),
-                "original_duration": (task.get("result", {}).get("original_duration", 0)
-                                      if task.get("result") else 0),
+                "original_duration": (task.get("original_duration", 0)
+                                      or (task.get("result", {}).get("original_duration", 0)
+                                          if task.get("result") else 0)),
                 "mixed_duration": (task.get("result", {}).get("mixed_duration", 0)
                                    if task.get("result") else 0),
             }

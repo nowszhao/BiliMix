@@ -357,20 +357,27 @@ async function processEpisode(id, audioUrl, title) {
         return;
     }
 
+    // 获取单集预知时长
+    const ep = episodesCache.find(e => e.id === id);
+    const duration = ep ? ep.duration : '';
+
     // 设置选中单集信息
     selectedEpisodeUrl = audioUrl;
     selectedEpisodeTitle = title;
 
     // 调用提交
     try {
+        const body = {
+            url: audioUrl,
+            title: title,
+            skip_confirmation: true,
+        };
+        if (duration) body.duration = duration;
+
         const resp = await fetch('/api/submit', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                url: audioUrl,
-                title: title,
-                skip_confirmation: true,
-            }),
+            body: JSON.stringify(body),
         });
         const data = await resp.json();
         if (resp.ok && data.task_id) {

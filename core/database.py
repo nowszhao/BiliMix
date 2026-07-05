@@ -124,6 +124,16 @@ def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_subscriptions_rss_url ON subscriptions(rss_url);
 
+            -- 播客收藏表
+            CREATE TABLE IF NOT EXISTS favorites (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                title      TEXT DEFAULT '',
+                author     TEXT DEFAULT '',
+                image      TEXT DEFAULT '',
+                rss_url    TEXT NOT NULL UNIQUE,
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
             -- 搜索历史表
             CREATE TABLE IF NOT EXISTS search_history (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -446,185 +456,6 @@ def get_recent_podcasts(limit: int = 10) -> list:
 
     result = sorted(host_map.values(), key=lambda x: x["last_used"], reverse=True)
     return result[:limit]
-
-
-# ============================================================
-# 全局生词库 CRUD
-# ============================================================
-
-def add_or_update_vocabulary(words: list, task_id: str = "", task_title: str = ""):
-    """
-    批量添加/更新生词到全局生词库。
-    words: [{"english": "...", "chinese": "...", "type": "word|phrase|idiom|collocation"}]
-    如果生词已存在，更新 encounter_count、last_seen_at、source_tasks。
-    """
-    from core.word_frequency import get_word_level_str
-
-    with get_db() as conn:
-        for w in words:
-            english = w.get("english", "").strip()
-            if not english:
-                continue
-            chinese = w.get("chinese", "").strip()
-            word_type = w.get("type", "word")
-            freq_level = get_word_level_str(english) or ""
-
-            # 查找是否已存在
-            row = conn.execute(
-                "SELECT id, encounter_count, source_tasks FROM vocabulary WHERE english = ?",
-                (english,)
-            ).fetchone()
-
-            if row:
-                # 已存在：更新 encounter_count 和 source_tasks
-                existing_sources = json.loads(row["source_tasks"] or "[]")
-                new_source = {"task_id": task_id, "title": task_title}
-                # 避免重复添加同一任务
-                if not any(s.get("task_id") == task_id for s in existing_sources):
-                    existing_sources.append(new_source)
-                conn.execute("""
-                    UPDATE vocabulary
-                    SET encounter_count = encounter_count + 1,
-                        last_seen_at = datetime('now', 'localtime'),
-                        source_tasks = ?,
-                        chinese = CASE WHEN chinese = '' THEN ? ELSE chinese END
-                    WHERE id = ?
-                """, (json.dumps(existing_sources, ensure_ascii=False),
-                      chinese, row["id"]))
-            else:
-                # 新词：插入
-                source_tasks = json.dumps(
-                    [{"task_id": task_id, "title": task_title}] if task_id else [],
-                    ensure_ascii=False
-                )
-                conn.execute("""
-                    INSERT INTO vocabulary
-                    (english, chinese, type, frequency_level, encounter_count,
-                     source_tasks, context_sentence, mastered)
-                    VALUES (?, ?, ?, ?, 1, ?, '', 0)
-                """, (english, chinese, word_type, freq_level, source_tasks))
-
-
-def get_vocabulary(sort_by: str = "last_seen_at", sort_order: str = "desc",
-                   filter_mastered: str = "all", filter_type: str = "",
-                   filter_freq: str = "", search: str = "",
-                   page: int = 1, page_size: int = 50) -> dict:
-    """
-    获取生词库列表，支持排序、筛选、搜索、分页。
-    sort_by: last_seen_at | encounter_count | frequency_level | english
-    filter_mastered: all | unmastered | mastered
-    filter_type: word | phrase | idiom | collocation | ""(全部)
-    filter_freq: "1k" | "3k" | ... | ""(全部)
-    search: 搜索关键词（匹配 english 或 chinese）
-    """
-    allowed_sort = {"last_seen_at", "encounter_count", "frequency_level", "english", "first_seen_at"}
-    if sort_by not in allowed_sort:
-        sort_by = "last_seen_at"
-    allowed_order = {"asc", "desc"}
-    if sort_order.lower() not in allowed_order:
-        sort_order = "desc"
-
-    conditions = []
-    params = []
-
-    if filter_mastered == "unmastered":
-        conditions.append("mastered = 0")
-    elif filter_mastered == "mastered":
-        conditions.append("mastered = 1")
-
-    if filter_type:
-        conditions.append("type = ?")
-        params.append(filter_type)
-
-    if filter_freq:
-        conditions.append("frequency_level = ?")
-        params.append(filter_freq)
-
-    if search:
-        conditions.append("(english LIKE ? OR chinese LIKE ?)")
-        params.extend([f"%{search}%", f"%{search}%"])
-
-    where_clause = " AND ".join(conditions) if conditions else "1=1"
-
-    with get_db() as conn:
-        # 总数
-        count_row = conn.execute(
-            f"SELECT COUNT(*) as cnt FROM vocabulary WHERE {where_clause}", params
-        ).fetchone()
-        total = count_row["cnt"]
-
-        # 分页数据
-        offset = (page - 1) * page_size
-        rows = conn.execute(
-            f"""SELECT * FROM vocabulary WHERE {where_clause}
-                ORDER BY {sort_by} {sort_order}
-                LIMIT ? OFFSET ?""",
-            params + [page_size, offset]
-        ).fetchall()
-
-    return {
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "words": [dict(r) for r in rows],
-    }
-
-
-def toggle_vocabulary_mastered(vocab_id: int) -> dict:
-    """切换生词的掌握状态"""
-    with get_db() as conn:
-        row = conn.execute("SELECT * FROM vocabulary WHERE id = ?", (vocab_id,)).fetchone()
-        if not row:
-            return {}
-        new_mastered = 0 if row["mastered"] else 1
-        conn.execute("UPDATE vocabulary SET mastered = ? WHERE id = ?",
-                     (new_mastered, vocab_id))
-        row = conn.execute("SELECT * FROM vocabulary WHERE id = ?", (vocab_id,)).fetchone()
-    return dict(row) if row else {}
-
-
-def delete_vocabulary(vocab_id: int):
-    """删除单个生词"""
-    with get_db() as conn:
-        conn.execute("DELETE FROM vocabulary WHERE id = ?", (vocab_id,))
-
-
-def get_vocabulary_stats() -> dict:
-    """获取生词库统计信息"""
-    with get_db() as conn:
-        total = conn.execute("SELECT COUNT(*) as cnt FROM vocabulary").fetchone()["cnt"]
-        mastered = conn.execute(
-            "SELECT COUNT(*) as cnt FROM vocabulary WHERE mastered = 1"
-        ).fetchone()["cnt"]
-        unmastered = total - mastered
-
-        # 按类型统计
-        type_rows = conn.execute(
-            "SELECT type, COUNT(*) as cnt FROM vocabulary GROUP BY type"
-        ).fetchall()
-        by_type = {r["type"]: r["cnt"] for r in type_rows}
-
-        # 按频率等级统计
-        freq_rows = conn.execute(
-            "SELECT frequency_level, COUNT(*) as cnt FROM vocabulary "
-            "WHERE frequency_level != '' GROUP BY frequency_level"
-        ).fetchall()
-        by_freq = {r["frequency_level"]: r["cnt"] for r in freq_rows}
-
-        # 最近7天新增数
-        recent = conn.execute(
-            "SELECT COUNT(*) as cnt FROM vocabulary "
-            "WHERE first_seen_at >= datetime('now', '-7 days', 'localtime')"
-        ).fetchone()["cnt"]
-
-    return {
-        "total": total,
-        "mastered": mastered,
-        "unmastered": unmastered,
-        "by_type": by_type,
-        "by_frequency": by_freq,
-        "recent_7days": recent,
-    }
 
 
 # ============================================================
