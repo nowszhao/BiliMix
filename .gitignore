@@ -25,6 +25,11 @@ build/
 .DS_Store
 Thumbs.db
 
+# SQLite 数据库文件
+data/bilimix.db
+data/bilimix.db-shm
+data/bilimix.db-wal
+
 # 数据目录（运行时生成）
 data/downloads/
 data/results/
