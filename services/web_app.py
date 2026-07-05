@@ -744,8 +744,9 @@ def api_get_episodes():
 def api_episode_stats():
     """获取单集状态统计"""
     rss_url = request.args.get("rss_url", "")
-    stats = get_episode_stats(rss_url=rss_url)
-    subs = get_unread_counts_by_subscription()
+    time_range = request.args.get("time_range", "all")
+    stats = get_episode_stats(rss_url=rss_url, time_range=time_range)
+    subs = get_unread_counts_by_subscription(time_range=time_range)
     return jsonify({"stats": stats, "subscriptions": subs})
 
 

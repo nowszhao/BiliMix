@@ -739,13 +739,17 @@ def update_episode_status(episode_id: int, status: str, task_id: str = "") -> di
     return dict(row) if row else {}
 
 
-def get_episode_stats(rss_url: str = "") -> dict:
+def get_episode_stats(rss_url: str = "", time_range: str = "all") -> dict:
     """获取单集状态统计，仅统计活跃订阅源的单集"""
     conditions = []
     params = []
     if rss_url:
         conditions.append("e.rss_url = ?")
         params.append(rss_url)
+    boundary_ts = _time_range_boundary_ts(time_range)
+    if boundary_ts > 0:
+        conditions.append("e.published_at_ts >= ?")
+        params.append(boundary_ts)
     where_clause = " AND ".join(conditions) if conditions else "1=1"
 
     with get_db() as conn:
@@ -773,16 +777,28 @@ def get_episode_stats(rss_url: str = "") -> dict:
     }
 
 
-def get_unread_counts_by_subscription() -> list:
+def get_unread_counts_by_subscription(time_range: str = "all") -> list:
     """获取每个订阅源的未读数与封面图，用于侧边栏列表。"""
+    boundary_ts = _time_range_boundary_ts(time_range)
+
     with get_db() as conn:
-        rows = conn.execute("""
-            SELECT s.rss_url, s.title, s.image, COUNT(e.id) as unread_count
-            FROM subscriptions s
-            LEFT JOIN episodes e ON s.rss_url = e.rss_url AND e.status = 'unread'
-            GROUP BY s.rss_url, s.title, s.image
-            ORDER BY s.created_at DESC
-        """).fetchall()
+        if boundary_ts > 0:
+            rows = conn.execute("""
+                SELECT s.rss_url, s.title, s.image, COUNT(e.id) as unread_count
+                FROM subscriptions s
+                LEFT JOIN episodes e ON s.rss_url = e.rss_url
+                    AND e.status = 'unread' AND e.published_at_ts >= ?
+                GROUP BY s.rss_url, s.title, s.image
+                ORDER BY s.created_at DESC
+            """, (boundary_ts,)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT s.rss_url, s.title, s.image, COUNT(e.id) as unread_count
+                FROM subscriptions s
+                LEFT JOIN episodes e ON s.rss_url = e.rss_url AND e.status = 'unread'
+                GROUP BY s.rss_url, s.title, s.image
+                ORDER BY s.created_at DESC
+            """).fetchall()
     return [{"rss_url": r["rss_url"], "title": r["title"], "image": r["image"],
              "unread": r["unread_count"]} for r in rows]
 

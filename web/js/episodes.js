@@ -89,6 +89,7 @@ async function loadEpisodeStats(totalCount) {
     try {
         const params = new URLSearchParams();
         if (episodesRssFilter) params.set('rss_url', episodesRssFilter);
+        params.set('time_range', episodesTimeRange);
         const resp = await fetch(`/api/episodes/stats?${params}`);
         const data = await resp.json();
         const stats = data.stats || {};

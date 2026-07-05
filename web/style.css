@@ -4790,6 +4790,8 @@ body {
     background: var(--bg-hover);
     border-radius: var(--radius-sm);
     padding: 3px;
+    margin-bottom: 20px;
+    width: fit-content;
 }
 
 .time-range-btn {

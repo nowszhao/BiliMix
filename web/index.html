@@ -68,7 +68,15 @@
                 </div>
             </div>
 
-            <!-- Segmented Control -->
+            <!-- 一级：全局时间范围 -->
+            <div class="time-range-buttons">
+                <button class="time-range-btn active" data-range="today" onclick="setEpisodeTimeRange('today')">今日</button>
+                <button class="time-range-btn" data-range="week" onclick="setEpisodeTimeRange('week')">本周</button>
+                <button class="time-range-btn" data-range="month" onclick="setEpisodeTimeRange('month')">本月</button>
+                <button class="time-range-btn" data-range="all" onclick="setEpisodeTimeRange('all')">全部</button>
+            </div>
+
+            <!-- 二级：状态筛选 + 来源 -->
             <div class="seg-control">
                 <div class="seg-control-item active" data-status="all" onclick="setEpisodeStatusFilter('all')">
                     <span class="seg-label">全部</span>
@@ -88,14 +96,8 @@
                 </div>
             </div>
 
-            <!-- 筛选栏 -->
+            <!-- 来源筛选 -->
             <div class="filter-bar">
-                <div class="time-range-buttons">
-                    <button class="time-range-btn active" data-range="today" onclick="setEpisodeTimeRange('today')">今日</button>
-                    <button class="time-range-btn" data-range="week" onclick="setEpisodeTimeRange('week')">本周</button>
-                    <button class="time-range-btn" data-range="month" onclick="setEpisodeTimeRange('month')">本月</button>
-                    <button class="time-range-btn" data-range="all" onclick="setEpisodeTimeRange('all')">全部</button>
-                </div>
                 <span class="filter-source-label" id="filter-source-label" style="display:none;"></span>
                 <button class="filter-clear-btn" onclick="setEpisodeRssFilter('')" style="display:none;" id="clear-rss-filter">✕ 显示全部来源</button>
             </div>
