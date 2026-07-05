@@ -39,7 +39,10 @@ from core.database import (
     setup_database, delete_task_from_index, save_task_to_index,
     load_tasks_index, get_subscriptions, add_subscription, remove_subscription,
     add_search_keyword, get_search_suggestions, clear_search_history,
-    get_recent_podcasts
+    get_recent_podcasts,
+    upsert_episodes, get_episodes, update_episode_status,
+    get_episode_stats, get_unread_counts_by_subscription,
+    update_episode_status_by_task, mark_all_episodes_read,
 )
 from services.podcast_service import search_podcasts_itunes, parse_rss_feed
 
@@ -601,6 +604,12 @@ def continue_after_sentence_confirmation(task_id: str):
                     sentence_pairs=sentence_pairs,
                     time_mapping=mix_result["time_mapping"])
 
+        # 回写关联单集状态为已转录
+        try:
+            update_episode_status_by_task(task_id, "transcribed")
+        except Exception:
+            pass
+
         save_task_result_to_disk(result_dir, {
             "task_id": task_id, "status": "completed",
             "process_mode": "sentence_translate",
@@ -692,6 +701,85 @@ def api_remove_subscription():
         return jsonify({"error": "请提供 rss_url"}), 400
     remove_subscription(data["rss_url"])
     return jsonify({"ok": True})
+
+
+# ============================================================
+# API 路由 — 订阅单集 (Episodes)
+# ============================================================
+
+@app.route("/api/episodes")
+def api_get_episodes():
+    """获取订阅单集列表，支持筛选"""
+    status_filter = request.args.get("status", "all")
+    rss_url = request.args.get("rss_url", "")
+    time_range = request.args.get("time_range", "week")
+    page = int(request.args.get("page", 1))
+    page_size = int(request.args.get("page_size", 100))
+    result = get_episodes(status_filter=status_filter, rss_url=rss_url,
+                          time_range=time_range, page=page, page_size=page_size)
+    return jsonify(result)
+
+
+@app.route("/api/episodes/stats")
+def api_episode_stats():
+    """获取单集状态统计"""
+    rss_url = request.args.get("rss_url", "")
+    stats = get_episode_stats(rss_url=rss_url)
+    subs = get_unread_counts_by_subscription()
+    return jsonify({"stats": stats, "subscriptions": subs})
+
+
+@app.route("/api/episodes/<int:episode_id>", methods=["PATCH"])
+def api_update_episode(episode_id):
+    """更新单集状态"""
+    data = request.get_json()
+    status = data.get("status", "")
+    task_id = data.get("task_id", "")
+    if status not in ("unread", "read", "transcribed", "dismissed"):
+        return jsonify({"error": "无效的状态"}), 400
+    ep = update_episode_status(episode_id, status, task_id)
+    if not ep:
+        return jsonify({"error": "单集不存在"}), 404
+    return jsonify({"ok": True, "episode": ep})
+
+
+@app.route("/api/episodes/mark-all-read", methods=["POST"])
+def api_mark_all_episodes_read():
+    """批量将未读单集标记为已读"""
+    data = request.get_json(silent=True) or {}
+    rss_url = data.get("rss_url", "")
+    time_range = data.get("time_range", "all")
+    affected = mark_all_episodes_read(rss_url=rss_url, time_range=time_range)
+    return jsonify({"ok": True, "affected": affected})
+
+
+@app.route("/api/episodes/refresh", methods=["POST"])
+def api_refresh_episodes():
+    """手动刷新所有订阅源，拉取最新单集"""
+    subs = get_subscriptions()
+    total_new = 0
+    errors = []
+    for sub in subs:
+        rss_url = sub["rss_url"]
+        feed_data = parse_rss_feed(rss_url, max_episodes=50)
+        if "error" in feed_data:
+            errors.append({"rss_url": rss_url, "error": feed_data["error"]})
+            continue
+        episodes = feed_data.get("episodes", [])
+        # 映射字段并生成 guid
+        for i, ep in enumerate(episodes):
+            ep["audio_url"] = ep.get("enclosureUrl", "")
+            ep["published_at"] = ep.get("datePublished", "")
+            if not ep.get("guid"):
+                ep["guid"] = ep.get("enclosureUrl") or f"{rss_url}#{i}"
+        new_count = upsert_episodes(rss_url, episodes)
+        total_new += new_count
+    return jsonify({
+        "ok": True,
+        "refreshed": len(subs),
+        "new_episodes": total_new,
+        "errors": errors,
+    })
 
 
 # ============================================================
@@ -1761,6 +1849,37 @@ def api_index():
             "summary": "获取最近使用的播客源",
             "response": {"podcasts": "array"},
         },
+        {
+            "path": "/api/episodes",
+            "method": "GET",
+            "summary": "获取订阅单集列表",
+            "params": {"status": "all|unread|read|transcribed|dismissed",
+                        "rss_url": "筛选指定订阅源",
+                        "time_range": "today|week|month|all"},
+        },
+        {
+            "path": "/api/episodes/stats",
+            "method": "GET",
+            "summary": "获取单集状态统计与各订阅未读数",
+        },
+        {
+            "path": "/api/episodes/<id>",
+            "method": "PATCH",
+            "summary": "更新单集状态",
+            "request_body": {"fields": {"status": "unread|read|transcribed|dismissed"}},
+        },
+        {
+            "path": "/api/episodes/refresh",
+            "method": "POST",
+            "summary": "刷新所有订阅源，拉取最新单集",
+        },
+        {
+            "path": "/api/episodes/mark-all-read",
+            "method": "POST",
+            "summary": "批量将未读单集标记为已读",
+            "request_body": {"fields": {"rss_url": "限定订阅源（可选）",
+                                          "time_range": "today|week|month|all（可选）"}},
+        },
     ]
 
     return jsonify({
@@ -1797,9 +1916,12 @@ if __name__ == "__main__":
             orphaned += 1
     if orphaned:
         print(f"🧹 已清理 {orphaned} 个孤儿任务（服务重启导致）")
+    # 支持命令行传入端口号，默认 5000
+    _port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
+
     print(f"📋 已加载 {len(_index)} 条历史任务记录")
     print("=" * 50)
     print("🎧 BiliMix Web App")
-    print(f"📡 http://localhost:5000")
+    print(f"📡 http://localhost:{_port}")
     print("=" * 50)
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=_port, debug=False, threaded=True)

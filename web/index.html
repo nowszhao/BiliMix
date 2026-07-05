@@ -3,170 +3,221 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BiliMix · 英语听力句子翻译助手</title>
+    <title>BiliMix · 中英混合播客学习工具</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <!-- ====== 导航栏 ====== -->
-    <nav class="navbar">
-        <div class="nav-inner">
-            <div class="nav-brand" onclick="goHome()" style="cursor:pointer;" title="返回首页">
+    <!-- ====== 侧边栏 ====== -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-brand" onclick="switchView('updates')" style="cursor:pointer;">
                 <span class="brand-icon">🎧</span>
                 <span class="brand-text">BiliMix</span>
             </div>
-            <div class="nav-actions">
-                <button class="nav-btn" onclick="toggleSettings()" title="系统设置">
-                    <span class="nav-btn-icon">⚙️</span>
-                    <span class="nav-btn-text">设置</span>
-                </button>
-                <button class="nav-btn" onclick="toggleHistory()" title="历史任务">
-                    <span class="nav-btn-icon">📋</span>
-                    <span class="nav-btn-text">历史任务</span>
-                </button>
-                <button class="nav-btn nav-btn-logout" id="logout-btn" onclick="doLogout()" title="退出登录" style="display:none;">
-                    <span class="nav-btn-icon">🚪</span>
-                    <span class="nav-btn-text">退出</span>
-                </button>
-            </div>
         </div>
-    </nav>
 
-    <!-- ====== 主体内容 ====== -->
-    <main class="main-container">
+        <nav class="sidebar-nav">
+            <div class="sidebar-nav-item active" data-view="updates" onclick="switchView('updates')">
+                <span class="sidebar-nav-icon">🔔</span>
+                <span class="sidebar-nav-text">更新</span>
+            </div>
+            <div class="sidebar-nav-item" data-view="discover" onclick="switchView('discover')">
+                <span class="sidebar-nav-icon">🔍</span>
+                <span class="sidebar-nav-text">发现</span>
+            </div>
+            <div class="sidebar-nav-item" data-view="tasks" onclick="switchView('tasks')">
+                <span class="sidebar-nav-icon">📋</span>
+                <span class="sidebar-nav-text">任务</span>
+            </div>
+            <div class="sidebar-nav-item" data-view="settings" onclick="toggleSettings()">
+                <span class="sidebar-nav-icon">⚙️</span>
+                <span class="sidebar-nav-text">设置</span>
+            </div>
+        </nav>
 
-        <!-- ====== Hero 输入区 ====== -->
-        <section id="hero-section" class="hero-section">
-            <div class="hero-content">
-                <h1 class="hero-title">
-                    听英文播客，<br>
-                    <span class="gradient-text">自动练听力</span>
-                </h1>
-                <p class="hero-subtitle">
-                    搜索英文播客、选择单集，AI 自动识别生僻词汇，<br>
-                    生成中英混合音频，边听边学。
-                </p>
+        <div class="sidebar-divider"></div>
 
-                <!-- ====== 快捷面板：我的播客 & 最近收听 ====== -->
-                <div class="quick-panel" id="quick-panel" style="display:none;">
-                    <!-- 收藏的播客 -->
-                    <div class="quick-section" id="favorites-section" style="display:none;">
-                        <div class="quick-section-header">
-                            <span class="quick-section-title">⭐ 我的收藏</span>
-                            <span class="quick-section-count" id="favorites-count">0</span>
-                        </div>
-                        <div class="quick-section-scroll" id="favorites-list">
-                            <!-- 动态填充 -->
-                        </div>
+        <div class="sidebar-subs-header">
+            <span class="sidebar-subs-title">📡 订阅</span>
+            <button class="sidebar-subs-add" onclick="switchView('discover')" title="添加订阅">+</button>
+        </div>
+        <div class="sidebar-subs" id="sidebar-subs">
+            <div class="sidebar-subs-empty">暂无订阅</div>
+        </div>
+
+        <div class="sidebar-footer">
+            <button class="nav-btn nav-btn-logout" id="logout-btn" onclick="doLogout()" title="退出登录" style="display:none;">
+                <span class="nav-btn-icon">🚪</span>
+                <span class="nav-btn-text">退出</span>
+            </button>
+        </div>
+    </aside>
+
+    <!-- ====== 主内容区 ====== -->
+    <main class="main-area">
+
+        <!-- ====== 更新页 ====== -->
+        <section id="updates-view" class="content-view">
+            <div class="content-header">
+                <div>
+                    <h1 class="content-title">更新</h1>
+                    <p class="content-subtitle" id="updates-subtitle">今日 · 加载中...</p>
+                </div>
+                <div class="content-header-actions">
+                    <button class="mark-all-read-btn" id="mark-all-read-btn" onclick="markAllRead()">✓ 全部已读</button>
+                    <button class="refresh-btn" id="refresh-btn" onclick="refreshAllSubscriptions()">⟳ 刷新</button>
+                </div>
+            </div>
+
+            <!-- Segmented Control -->
+            <div class="seg-control">
+                <div class="seg-control-item active" data-status="all" onclick="setEpisodeStatusFilter('all')">
+                    <span class="seg-label">全部</span>
+                    <span class="seg-count">0</span>
+                </div>
+                <div class="seg-control-item" data-status="unread" onclick="setEpisodeStatusFilter('unread')">
+                    <span class="seg-label">未读</span>
+                    <span class="seg-count">0</span>
+                </div>
+                <div class="seg-control-item" data-status="transcribed" onclick="setEpisodeStatusFilter('transcribed')">
+                    <span class="seg-label">已转录</span>
+                    <span class="seg-count">0</span>
+                </div>
+                <div class="seg-control-item" data-status="read" onclick="setEpisodeStatusFilter('read')">
+                    <span class="seg-label">已读</span>
+                    <span class="seg-count">0</span>
+                </div>
+            </div>
+
+            <!-- 筛选栏 -->
+            <div class="filter-bar">
+                <select class="filter-select" onchange="setEpisodeTimeRange(this.value)">
+                    <option value="today" selected>今日</option>
+                    <option value="week">本周</option>
+                    <option value="month">本月</option>
+                    <option value="all">全部时间</option>
+                </select>
+                <button class="filter-clear-btn" onclick="setEpisodeRssFilter('')" style="display:none;" id="clear-rss-filter">显示全部来源</button>
+            </div>
+
+            <!-- 单集列表 -->
+            <div id="episodes-list" class="updates-episodes-list">
+                <div class="episodes-loading"><div class="spinner"></div><p>加载中...</p></div>
+            </div>
+        </section>
+
+        <!-- ====== 发现页 ====== -->
+        <section id="discover-view" class="content-view" style="display:none;">
+            <div class="content-header">
+                <div>
+                    <h1 class="content-title">发现</h1>
+                    <p class="content-subtitle">搜索播客或通过 RSS 添加订阅</p>
+                </div>
+            </div>
+
+            <div class="discover-card">
+                <!-- 搜索 -->
+                <div class="discover-search-area">
+                    <div class="input-row" style="position:relative;">
+                        <div class="input-icon">🔍</div>
+                        <input
+                            type="text"
+                            id="podcast-search-input"
+                            placeholder="搜索播客名称、主持人..."
+                            spellcheck="false"
+                            oninput="debouncedPodcastSearch(); showSearchSuggestions()"
+                            onkeydown="handleSearchKeydown(event)"
+                            onfocus="showSearchSuggestions()"
+                        >
+                        <button class="search-btn" onclick="searchPodcasts()" title="搜索">搜索</button>
+                        <div class="search-suggestions" id="search-suggestions" style="display:none;"></div>
                     </div>
-
-                    <!-- 已保存的订阅 -->
-                    <div class="quick-section" id="subscriptions-section" style="display:none;">
-                        <div class="quick-section-header">
-                            <span class="quick-section-title">📡 我的订阅</span>
-                            <span class="quick-section-count" id="subscriptions-count">0</span>
+                    <div class="podcast-results" id="podcast-results" style="display:none;">
+                        <div class="podcast-results-header">
+                            <span id="podcast-results-count">搜索结果</span>
+                            <button class="podcast-results-close" onclick="closePodcastResults()" title="关闭">✕</button>
                         </div>
-                        <div class="quick-section-scroll" id="subscriptions-list">
-                            <!-- 动态填充 -->
+                        <div class="podcast-results-list" id="podcast-results-list"></div>
+                    </div>
+                    <div class="episodes-panel" id="episodes-panel" style="display:none;">
+                        <div class="episodes-header">
+                            <button class="episodes-back-btn" onclick="backToPodcastList()" title="返回播客列表">←</button>
+                            <div class="episodes-podcast-info">
+                                <img class="episodes-podcast-img" id="episodes-podcast-img" src="" alt="">
+                                <div class="episodes-podcast-meta">
+                                    <span class="episodes-podcast-title" id="episodes-podcast-title">播客名称</span>
+                                    <span class="episodes-podcast-author" id="episodes-podcast-author">作者</span>
+                                </div>
+                            </div>
                         </div>
+                        <div class="episodes-list" id="episodes-list-search"></div>
+                    </div>
+                    <div class="selected-episode" id="selected-episode" style="display:none;">
+                        <div class="selected-episode-info">
+                            <span class="selected-episode-icon">🎙️</span>
+                            <div class="selected-episode-meta">
+                                <span class="selected-episode-title" id="selected-episode-title">--</span>
+                                <span class="selected-episode-detail" id="selected-episode-detail">--</span>
+                            </div>
+                        </div>
+                        <button class="selected-episode-clear" onclick="clearSelectedEpisode()" title="清除选择">✕</button>
                     </div>
                 </div>
 
-                <div class="input-card">
-                    <!-- 输入模式切换 Tab -->
-                    <div class="input-mode-tabs">
-                        <button class="input-mode-tab active" data-mode="search" onclick="switchInputMode('search')">
-                            🔍 搜索播客
-                        </button>
-                        <button class="input-mode-tab" data-mode="url" onclick="switchInputMode('url')">
-                            🔗 粘贴URL
-                        </button>
-                        <button class="input-mode-tab" data-mode="file" onclick="switchInputMode('file')">
-                            📁 本地文件
-                        </button>
-                        <button class="input-mode-tab" data-mode="rss" onclick="switchInputMode('rss')">
-                            📡 RSS订阅
-                        </button>
+                <!-- RSS 添加 -->
+                <div class="discover-rss-area">
+                    <div class="discover-section-title">📡 或通过 RSS 添加</div>
+                    <div class="input-row">
+                        <div class="input-icon">📡</div>
+                        <input
+                            type="url"
+                            id="rss-url-input"
+                            placeholder="粘贴播客 RSS Feed URL..."
+                            spellcheck="false"
+                            onkeydown="if(event.key==='Enter') loadRssFeed()"
+                        >
+                        <button class="search-btn" onclick="loadRssFeed()" title="解析">解析</button>
                     </div>
-
-                    <!-- 搜索播客模式 -->
-                    <div class="input-mode-content active" id="input-mode-search">
-                        <div class="podcast-search-area">
-                            <div class="input-row" style="position:relative;">
-                                <div class="input-icon">🔍</div>
-                                <input
-                                    type="text"
-                                    id="podcast-search-input"
-                                    placeholder="搜索播客名称、主持人..."
-                                    spellcheck="false"
-                                    oninput="debouncedPodcastSearch(); showSearchSuggestions()"
-                                    onkeydown="handleSearchKeydown(event)"
-                                    onfocus="showSearchSuggestions()"
-                                >
-                                <button class="search-btn" onclick="searchPodcasts()" title="搜索">
-                                    搜索
-                                </button>
-                                <!-- 搜索建议下拉 -->
-                                <div class="search-suggestions" id="search-suggestions" style="display:none;">
-                                    <!-- 动态填充 -->
+                    <div class="episodes-panel" id="rss-episodes-panel" style="display:none;">
+                        <div class="episodes-header">
+                            <div class="episodes-podcast-info">
+                                <img class="episodes-podcast-img" id="rss-podcast-img" src="" alt="">
+                                <div class="episodes-podcast-meta">
+                                    <span class="episodes-podcast-title" id="rss-podcast-title">播客名称</span>
+                                    <span class="episodes-podcast-author" id="rss-podcast-author">作者</span>
                                 </div>
-                            </div>
-                            <!-- 搜索结果：播客列表 -->
-                            <div class="podcast-results" id="podcast-results" style="display:none;">
-                                <div class="podcast-results-header">
-                                    <span id="podcast-results-count">搜索结果</span>
-                                    <button class="podcast-results-close" onclick="closePodcastResults()" title="关闭">✕</button>
-                                </div>
-                                <div class="podcast-results-list" id="podcast-results-list">
-                                    <!-- 动态填充 -->
-                                </div>
-                            </div>
-                            <!-- 单集列表 -->
-                            <div class="episodes-panel" id="episodes-panel" style="display:none;">
-                                <div class="episodes-header">
-                                    <button class="episodes-back-btn" onclick="backToPodcastList()" title="返回播客列表">←</button>
-                                    <div class="episodes-podcast-info">
-                                        <img class="episodes-podcast-img" id="episodes-podcast-img" src="" alt="">
-                                        <div class="episodes-podcast-meta">
-                                            <span class="episodes-podcast-title" id="episodes-podcast-title">播客名称</span>
-                                            <span class="episodes-podcast-author" id="episodes-podcast-author">作者</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="episodes-list" id="episodes-list">
-                                    <!-- 动态填充 -->
-                                </div>
-                            </div>
-                            <!-- 已选单集显示 -->
-                            <div class="selected-episode" id="selected-episode" style="display:none;">
-                                <div class="selected-episode-info">
-                                    <span class="selected-episode-icon">🎙️</span>
-                                    <div class="selected-episode-meta">
-                                        <span class="selected-episode-title" id="selected-episode-title">--</span>
-                                        <span class="selected-episode-detail" id="selected-episode-detail">--</span>
-                                    </div>
-                                </div>
-                                <button class="selected-episode-clear" onclick="clearSelectedEpisode()" title="清除选择">✕</button>
                             </div>
                         </div>
+                        <div class="episodes-list" id="rss-episodes-list"></div>
                     </div>
+                    <div class="selected-episode" id="rss-selected-episode" style="display:none;">
+                        <div class="selected-episode-info">
+                            <span class="selected-episode-icon">🎙️</span>
+                            <div class="selected-episode-meta">
+                                <span class="selected-episode-title" id="rss-selected-episode-title">--</span>
+                                <span class="selected-episode-detail" id="rss-selected-episode-detail">--</span>
+                            </div>
+                        </div>
+                        <button class="selected-episode-clear" onclick="clearRssSelectedEpisode()" title="清除选择">✕</button>
+                    </div>
+                </div>
 
-                    <!-- 粘贴URL模式 -->
-                    <div class="input-mode-content" id="input-mode-url">
+                <!-- URL/文件直接提交 -->
+                <div class="discover-direct-area">
+                    <div class="discover-section-title">🔗 或直接提交音频</div>
+                    <div class="input-mode-tabs">
+                        <button class="input-mode-tab active" data-mode="url" onclick="switchInputMode('url')">🔗 粘贴URL</button>
+                        <button class="input-mode-tab" data-mode="file" onclick="switchInputMode('file')">📁 本地文件</button>
+                    </div>
+                    <div class="input-mode-content active" id="input-mode-url">
                         <div class="input-row">
                             <div class="input-icon">🔗</div>
-                            <input
-                                type="url"
-                                id="audio-url"
-                                placeholder="粘贴音频 URL（支持 mp3, wav, m4a...）"
-                                spellcheck="false"
-                            >
+                            <input type="url" id="audio-url" placeholder="粘贴音频 URL（支持 mp3, wav, m4a...）" spellcheck="false">
                         </div>
                     </div>
-
-                    <!-- 本地上传模式 -->
                     <div class="input-mode-content" id="input-mode-file">
                         <div class="input-row file-upload-row" id="file-upload-area">
                             <div class="input-icon">📁</div>
@@ -174,12 +225,7 @@
                                 <span>点击选择或拖拽音频文件到此处</span>
                                 <span class="file-upload-hint">支持 mp3, wav, m4a, ogg, flac, aac</span>
                             </div>
-                            <input
-                                type="file"
-                                id="file-upload-input"
-                                accept=".mp3,.wav,.m4a,.ogg,.flac,.aac"
-                                onchange="onFileSelected(this)"
-                            >
+                            <input type="file" id="file-upload-input" accept=".mp3,.wav,.m4a,.ogg,.flac,.aac" onchange="onFileSelected(this)">
                         </div>
                         <div class="file-upload-info" id="file-upload-info" style="display:none;">
                             <span class="file-upload-icon">✅</span>
@@ -188,90 +234,34 @@
                             <button class="file-upload-clear" onclick="clearUploadedFile()" title="移除文件">✕</button>
                         </div>
                     </div>
-
-                    <!-- RSS订阅模式 -->
-                    <div class="input-mode-content" id="input-mode-rss">
-                        <div class="input-row">
-                            <div class="input-icon">📡</div>
-                            <input
-                                type="url"
-                                id="rss-url-input"
-                                placeholder="粘贴播客 RSS Feed URL..."
-                                spellcheck="false"
-                                onkeydown="if(event.key==='Enter') loadRssFeed()"
-                            >
-                            <button class="search-btn" onclick="loadRssFeed()" title="解析">
-                                解析
-                            </button>
-                        </div>
-                        <!-- 已保存的 RSS 订阅列表 -->
-                        <div class="saved-subscriptions" id="rss-saved-subscriptions" style="display:none;">
-                            <div class="saved-subscriptions-header">
-                                <span class="saved-subscriptions-title">📋 已保存的订阅</span>
-                            </div>
-                            <div class="saved-subscriptions-list" id="rss-saved-subscriptions-list">
-                                <!-- 动态填充 -->
-                            </div>
-                        </div>
-                        <!-- RSS 单集列表 -->
-                        <div class="episodes-panel" id="rss-episodes-panel" style="display:none;">
-                            <div class="episodes-header">
-                                <div class="episodes-podcast-info">
-                                    <img class="episodes-podcast-img" id="rss-podcast-img" src="" alt="">
-                                    <div class="episodes-podcast-meta">
-                                        <span class="episodes-podcast-title" id="rss-podcast-title">播客名称</span>
-                                        <span class="episodes-podcast-author" id="rss-podcast-author">作者</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="episodes-list" id="rss-episodes-list">
-                                <!-- 动态填充 -->
-                            </div>
-                        </div>
-                        <!-- RSS 已选单集 -->
-                        <div class="selected-episode" id="rss-selected-episode" style="display:none;">
-                            <div class="selected-episode-info">
-                                <span class="selected-episode-icon">🎙️</span>
-                                <div class="selected-episode-meta">
-                                    <span class="selected-episode-title" id="rss-selected-episode-title">--</span>
-                                    <span class="selected-episode-detail" id="rss-selected-episode-detail">--</span>
-                                </div>
-                            </div>
-                            <button class="selected-episode-clear" onclick="clearRssSelectedEpisode()" title="清除选择">✕</button>
-                        </div>
-                    </div>
-
-                    <div class="input-options">
-                        <div class="option-group">
-                            <label class="option-label">难度等级</label>
-                            <select id="difficulty-select">
-                                <option value="CET-4" selected>CET-4 四级</option>
-                                <option value="CET-6">CET-6 六级</option>
-                                <option value="IELTS-6">雅思 6 分</option>
-                                <option value="IELTS-7">雅思 7 分</option>
-                                <option value="ADVANCED">高级</option>
-                            </select>
-                        </div>
-                        <div class="option-group">
-                            <label class="option-label">处理模式</label>
-                            <input type="hidden" id="mode-select" value="sentence_translate">
-                        </div>
-                        <div class="option-group option-group-checkbox">
-                            <label class="checkbox-label" title="跳过确认环节，直接使用 AI 识别/翻译结果">
-                                <input type="checkbox" id="skip-confirm-check" checked>
-                                <span>跳过确认</span>
-                            </label>
-                        </div>
-                        <button id="generate-btn" class="btn-primary" onclick="submitTask()">
-                            <span class="btn-icon">✨</span>
-                            <span class="btn-text">开始生成</span>
-                        </button>
-                    </div>
-                    <div class="mode-hint" id="mode-hint" style="display:none;">
-                        <span class="mode-hint-icon">💡</span>
-                        <span class="mode-hint-text" id="mode-hint-text">提示文案</span>
-                    </div>
                 </div>
+
+                <!-- 提交按钮 -->
+                <div class="discover-submit-area">
+                    <div class="option-group option-group-checkbox">
+                        <label class="checkbox-label" title="跳过确认环节">
+                            <input type="checkbox" id="skip-confirm-check" checked>
+                            <span>跳过确认</span>
+                        </label>
+                    </div>
+                    <button id="generate-btn" class="btn-primary" onclick="submitTask()">
+                        <span class="btn-icon">✨</span>
+                        <span class="btn-text">开始生成</span>
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ====== 任务页 ====== -->
+        <section id="tasks-view" class="content-view" style="display:none;">
+            <div class="content-header">
+                <div>
+                    <h1 class="content-title">任务</h1>
+                    <p class="content-subtitle">处理历史与进行中任务</p>
+                </div>
+            </div>
+            <div id="tasks-list-container" class="tasks-list-container">
+                <div class="episodes-loading"><div class="spinner"></div><p>加载中...</p></div>
             </div>
         </section>
 
@@ -289,229 +279,24 @@
                     <div class="progress-bar-fill" id="progress-bar" style="width: 0%"></div>
                 </div>
                 <p class="progress-message" id="progress-message">准备开始...</p>
-
-                <!-- 终止按钮 -->
                 <div class="cancel-area" id="cancel-area">
                     <button class="btn-cancel" id="cancel-btn" onclick="cancelTask()">
                         <span class="btn-icon">⏹</span>
                         <span class="btn-text">终止任务</span>
                     </button>
                 </div>
-
-                <!-- 进度步骤指示器 - 生词替换模式 -->
-                <div class="steps-indicator" id="steps-word-replace">
-                    <div class="step-item" id="step-download">
-                        <div class="step-dot"></div>
-                        <span>下载</span>
-                    </div>
+                <div class="steps-indicator" id="steps-sentence-translate">
+                    <div class="step-item" id="st-step-download"><div class="step-dot"></div><span>下载</span></div>
                     <div class="step-line"></div>
-                    <div class="step-item" id="step-transcribe">
-                        <div class="step-dot"></div>
-                        <span>转录</span>
-                    </div>
+                    <div class="step-item" id="st-step-transcribe"><div class="step-dot"></div><span>转录</span></div>
                     <div class="step-line"></div>
-                    <div class="step-item" id="step-identify">
-                        <div class="step-dot"></div>
-                        <span>识词</span>
-                    </div>
+                    <div class="step-item" id="st-step-translate"><div class="step-dot"></div><span>翻译</span></div>
                     <div class="step-line"></div>
-                    <div class="step-item" id="step-confirm">
-                        <div class="step-dot"></div>
-                        <span>确认</span>
-                    </div>
+                    <div class="step-item" id="st-step-confirm"><div class="step-dot"></div><span>确认</span></div>
                     <div class="step-line"></div>
-                    <div class="step-item" id="step-synthesize">
-                        <div class="step-dot"></div>
-                        <span>合成</span>
-                    </div>
+                    <div class="step-item" id="st-step-synthesize"><div class="step-dot"></div><span>合成</span></div>
                     <div class="step-line"></div>
-                    <div class="step-item" id="step-merge">
-                        <div class="step-dot"></div>
-                        <span>拼接</span>
-                    </div>
-                </div>
-                <!-- 进度步骤指示器 - 句子翻译模式 -->
-                <div class="steps-indicator hidden" id="steps-sentence-translate">
-                    <div class="step-item" id="st-step-download">
-                        <div class="step-dot"></div>
-                        <span>下载</span>
-                    </div>
-                    <div class="step-line"></div>
-                    <div class="step-item" id="st-step-transcribe">
-                        <div class="step-dot"></div>
-                        <span>转录</span>
-                    </div>
-                    <div class="step-line"></div>
-                    <div class="step-item" id="st-step-translate">
-                        <div class="step-dot"></div>
-                        <span>翻译</span>
-                    </div>
-                    <div class="step-line"></div>
-                    <div class="step-item" id="st-step-confirm">
-                        <div class="step-dot"></div>
-                        <span>确认</span>
-                    </div>
-                    <div class="step-line"></div>
-                    <div class="step-item" id="st-step-synthesize">
-                        <div class="step-dot"></div>
-                        <span>合成</span>
-                    </div>
-                    <div class="step-line"></div>
-                    <div class="step-item" id="st-step-mix">
-                        <div class="step-dot"></div>
-                        <span>拼接</span>
-                    </div>
-                </div>
-                <!-- 进度步骤指示器 - 智能翻译模式 -->
-                <div class="steps-indicator hidden" id="steps-smart-translate">
-                    <div class="step-item" id="sm-step-download">
-                        <div class="step-dot"></div>
-                        <span>下载</span>
-                    </div>
-                    <div class="step-line"></div>
-                    <div class="step-item" id="sm-step-transcribe">
-                        <div class="step-dot"></div>
-                        <span>转录</span>
-                    </div>
-                    <div class="step-line"></div>
-                    <div class="step-item" id="sm-step-identify">
-                        <div class="step-dot"></div>
-                        <span>识词</span>
-                    </div>
-                    <div class="step-line"></div>
-                    <div class="step-item" id="sm-step-translate">
-                        <div class="step-dot"></div>
-                        <span>翻译</span>
-                    </div>
-                    <div class="step-line"></div>
-                    <div class="step-item" id="sm-step-confirm">
-                        <div class="step-dot"></div>
-                        <span>确认</span>
-                    </div>
-                    <div class="step-line"></div>
-                    <div class="step-item" id="sm-step-synthesize">
-                        <div class="step-dot"></div>
-                        <span>合成</span>
-                    </div>
-                    <div class="step-line"></div>
-                    <div class="step-item" id="sm-step-mix">
-                        <div class="step-dot"></div>
-                        <span>拼接</span>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- ====== 生词确认区 ====== -->
-        <section id="confirm-section" class="confirm-section hidden">
-            <div class="confirm-card">
-                <!-- 步骤条 -->
-                <div class="pipeline-stepper" id="confirm-stepper">
-                    <div class="stepper-step done" data-step="transcribe">
-                        <div class="stepper-dot"><span>✓</span></div>
-                        <span class="stepper-label">下载转录</span>
-                    </div>
-                    <div class="stepper-line done"></div>
-                    <div class="stepper-step done" data-step="identify">
-                        <div class="stepper-dot"><span>✓</span></div>
-                        <span class="stepper-label">识别生词</span>
-                    </div>
-                    <div class="stepper-line active"></div>
-                    <div class="stepper-step active" data-step="confirm">
-                        <div class="stepper-dot"><span>3</span></div>
-                        <span class="stepper-label">确认生词</span>
-                    </div>
-                    <div class="stepper-line"></div>
-                    <div class="stepper-step" data-step="synthesize">
-                        <div class="stepper-dot"><span>4</span></div>
-                        <span class="stepper-label">语音合成</span>
-                    </div>
-                    <div class="stepper-line"></div>
-                    <div class="stepper-step" data-step="done">
-                        <div class="stepper-dot"><span>5</span></div>
-                        <span class="stepper-label">完成</span>
-                    </div>
-                </div>
-
-                <p class="confirm-subtitle">AI 已识别出以下生词，请确认、删除误标词，或在原文中标记新生词后继续。</p>
-
-                <!-- 左右分栏主体 -->
-                <div class="confirm-body">
-                    <!-- 左侧：原文转录区 -->
-                    <div class="confirm-left">
-                        <div class="confirm-transcript-card">
-                            <div class="confirm-transcript-header">
-                                <span class="confirm-transcript-title">📄 原文转录</span>
-                                <span class="confirm-transcript-hint">💡 点击单词标记为生词 · 拖选文本标记短语</span>
-                            </div>
-                            <!-- 词频筛选工具栏 -->
-                            <div class="confirm-filter-bar" id="confirm-filter-bar">
-                                <div class="filter-group">
-                                    <label class="filter-label">词频筛选</label>
-                                    <select id="filter-source" class="filter-select" onchange="onFilterSourceChange()">
-                                        <option value="bnc_coca" selected>BNC/COCA 词频</option>
-                                        <!-- 扩展: <option value="user_vocab">我的生词库</option> -->
-                                    </select>
-                                    <span class="filter-sep">≥</span>
-                                    <select id="filter-level" class="filter-select" onchange="onFilterLevelChange()">
-                                        <option value="3">3k（中级+）</option>
-                                        <option value="5" selected>5k（中高级+）</option>
-                                        <option value="8">8k（高级+）</option>
-                                        <option value="10">10k（专业+）</option>
-                                        <option value="15">15k</option>
-                                    </select>
-                                </div>
-                                <div class="filter-actions">
-                                    <button class="toolbar-btn filter-btn" id="freq-filter-btn" onclick="applyFrequencyFilter()" title="按词频批量标记">
-                                        <span class="toolbar-btn-icon">🎯</span>
-                                        <span class="btn-text">按词频标记</span>
-                                    </button>
-                                    <button class="toolbar-btn" onclick="toggleFreqHighlight()" id="freq-highlight-btn" title="显示/隐藏词频颜色">
-                                        <span class="toolbar-btn-icon">🌈</span>
-                                        <span class="toolbar-btn-text">词频着色</span>
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="confirm-transcript-container" id="confirm-transcript-container">
-                                <!-- 动态填充 -->
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- 右侧：生词列表 -->
-                    <div class="confirm-right">
-                        <div class="confirm-words-card">
-                            <div class="confirm-words-header">
-                                <span class="confirm-words-title" id="confirm-words-count">📚 已识别生词 (0)</span>
-                                <button class="confirm-words-clear-btn" onclick="clearAllConfirmWords()" title="清空所有">🗑</button>
-                            </div>
-                            <div class="confirm-words-list" id="confirm-words-list">
-                                <!-- 动态填充 -->
-                            </div>
-                            <!-- 手动添加 -->
-                            <div class="confirm-add-row">
-                                <input type="text" id="confirm-add-input" placeholder="输入单词或短语..." class="confirm-add-input"
-                                       onkeydown="if(event.key==='Enter') addConfirmWordManual()">
-                                <button class="confirm-add-btn" onclick="addConfirmWordManual()" title="添加">+</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 操作按钮 -->
-                <div class="confirm-actions-bar">
-                    <button class="btn-secondary" onclick="cancelFromConfirm()">
-                        ← 返回首页
-                    </button>
-                    <div class="confirm-actions-right">
-                        <button class="btn-skip" onclick="skipConfirmation()" title="跳过确认，直接使用AI识别的生词">
-                            ⏭ 跳过确认
-                        </button>
-                        <button class="btn-primary" id="confirm-continue-btn" onclick="submitConfirmation()">
-                            <span class="btn-icon">✅</span>
-                            <span class="btn-text">确认并继续生成</span>
-                        </button>
-                    </div>
+                    <div class="step-item" id="st-step-mix"><div class="step-dot"></div><span>拼接</span></div>
                 </div>
             </div>
         </section>
@@ -519,47 +304,23 @@
         <!-- ====== 句子翻译确认区 ====== -->
         <section id="sentence-confirm-section" class="confirm-section hidden">
             <div class="confirm-card">
-                <!-- 步骤条 -->
                 <div class="pipeline-stepper">
-                    <div class="stepper-step done">
-                        <div class="stepper-dot"><span>✓</span></div>
-                        <span class="stepper-label">转录</span>
-                    </div>
+                    <div class="stepper-step done"><div class="stepper-dot"><span>✓</span></div><span class="stepper-label">转录</span></div>
                     <div class="stepper-line done"></div>
-                    <div class="stepper-step done">
-                        <div class="stepper-dot"><span>✓</span></div>
-                        <span class="stepper-label">翻译</span>
-                    </div>
+                    <div class="stepper-step done"><div class="stepper-dot"><span>✓</span></div><span class="stepper-label">翻译</span></div>
                     <div class="stepper-line active"></div>
-                    <div class="stepper-step active">
-                        <div class="stepper-dot"><span>3</span></div>
-                        <span class="stepper-label">确认翻译</span>
-                    </div>
+                    <div class="stepper-step active"><div class="stepper-dot"><span>3</span></div><span class="stepper-label">确认翻译</span></div>
                     <div class="stepper-line"></div>
-                    <div class="stepper-step">
-                        <div class="stepper-dot"><span>4</span></div>
-                        <span class="stepper-label">完成</span>
-                    </div>
+                    <div class="stepper-step"><div class="stepper-dot"><span>4</span></div><span class="stepper-label">完成</span></div>
                 </div>
-
                 <p class="confirm-subtitle">AI 已将以下句子翻译为中文，请检查、编辑或取消不需要的翻译，然后继续。</p>
-
-                <!-- 翻译列表 -->
                 <div class="sentence-confirm-body">
-                    <div class="sentence-confirm-list" id="sentence-confirm-list">
-                        <!-- 动态填充 -->
-                    </div>
+                    <div class="sentence-confirm-list" id="sentence-confirm-list"></div>
                 </div>
-
-                <!-- 操作按钮 -->
                 <div class="confirm-actions-bar">
-                    <button class="btn-secondary" onclick="cancelFromConfirm()">
-                        ← 返回首页
-                    </button>
+                    <button class="btn-secondary" onclick="cancelFromConfirm()">← 返回首页</button>
                     <div class="confirm-actions-right">
-                        <button class="btn-skip" onclick="skipSentenceConfirmation()" title="跳过确认，直接使用AI翻译">
-                            ⏭ 跳过确认
-                        </button>
+                        <button class="btn-skip" onclick="skipSentenceConfirmation()" title="跳过确认，直接使用AI翻译">⏭ 跳过确认</button>
                         <button class="btn-primary" id="sentence-confirm-btn" onclick="submitSentenceConfirmation()">
                             <span class="btn-icon">✅</span>
                             <span class="btn-text">确认并继续生成</span>
@@ -571,8 +332,6 @@
 
         <!-- ====== 结果区 ====== -->
         <section id="result-section" class="result-section hidden">
-
-            <!-- 音频播放器 -->
             <div class="player-card">
                 <div class="player-header">
                     <h2 class="section-title">🎧 混合音频</h2>
@@ -581,174 +340,45 @@
                         <span class="badge" id="badge-duration">-- 秒</span>
                     </div>
                 </div>
-
                 <div class="audio-players">
                     <div class="audio-item">
-                        <label class="audio-label">
-                            <span class="label-dot original"></span>
-                            原始音频
-                        </label>
+                        <label class="audio-label"><span class="label-dot original"></span>原始音频</label>
                         <audio id="original-audio" controls preload="none"></audio>
                     </div>
                     <div class="audio-item" id="mixed-audio-item">
-                        <label class="audio-label">
-                            <span class="label-dot mixed"></span>
-                            中英混合音频
-                        </label>
+                        <label class="audio-label"><span class="label-dot mixed"></span>中英混合音频</label>
                         <audio id="mixed-audio" controls preload="none"></audio>
                     </div>
                 </div>
             </div>
-
-            <!-- 内容标签页 -->
             <div class="tabs-card">
                 <div class="tabs-header">
-                    <button class="tab-btn active" data-tab="transcript" onclick="switchTab('transcript')">
-                        📝 原文转录
-                    </button>
-                    <button class="tab-btn" data-tab="vocabulary" onclick="switchTab('vocabulary')">
-                        📚 生词本
-                    </button>
-                    <button class="tab-btn" data-tab="replacements" onclick="switchTab('replacements')">
-                        🔄 替换详情
-                    </button>
+                    <button class="tab-btn active" data-tab="transcript" onclick="switchTab('transcript')">📝 原文转录</button>
                 </div>
-
-                <!-- 转录内容 -->
                 <div class="tab-content active" id="tab-transcript">
                     <div class="transcript-toolbar">
                         <span class="transcript-toolbar-info" id="transcript-info"></span>
                         <div class="transcript-toolbar-actions">
                             <button class="toolbar-btn active" id="auto-scroll-btn" onclick="toggleAutoScroll()" title="自动跟随">
-                                <span class="toolbar-btn-icon">📍</span>
-                                <span class="toolbar-btn-text">自动跟随</span>
+                                <span class="toolbar-btn-icon">📍</span><span class="toolbar-btn-text">自动跟随</span>
                             </button>
                             <button class="toolbar-btn" id="fullscreen-btn" onclick="toggleTranscriptFullscreen()" title="全屏查看">
-                                <span class="toolbar-btn-icon">⛶</span>
-                                <span class="toolbar-btn-text">全屏</span>
+                                <span class="toolbar-btn-icon">⛶</span><span class="toolbar-btn-text">全屏</span>
                             </button>
                             <button class="toolbar-btn" onclick="copyTranscript()" title="复制字幕到剪贴板">
-                                <span class="toolbar-btn-icon">📋</span>
-                                <span class="toolbar-btn-text">复制</span>
+                                <span class="toolbar-btn-icon">📋</span><span class="toolbar-btn-text">复制</span>
                             </button>
                         </div>
                     </div>
-                    <div class="transcript-container" id="transcript-container">
-                        <!-- 动态填充 -->
-                    </div>
-                </div>
-
-                <!-- 生词本 -->
-                <div class="tab-content" id="tab-vocabulary">
-                    <div class="vocab-grid" id="vocab-grid">
-                        <!-- 动态填充 -->
-                    </div>
-                </div>
-
-                <!-- 替换详情 -->
-                <div class="tab-content" id="tab-replacements">
-                    <div class="replacements-list" id="replacements-list">
-                        <!-- 动态填充 -->
-                    </div>
+                    <div class="transcript-container" id="transcript-container"></div>
                 </div>
             </div>
-
-            <!-- 重新开始 -->
             <div class="restart-area">
-                <button class="btn-secondary" onclick="goHomeFromResult()">
-                    ← 处理新的音频
-                </button>
-                <button class="btn-next-episode" id="btn-next-episode" onclick="loadNextEpisode()" style="display:none;">
-                    <span class="btn-icon">⏭</span>
-                    <span class="btn-text">同一播客的其他单集</span>
-                </button>
+                <button class="btn-secondary" onclick="goHomeFromResult()">← 返回更新列表</button>
             </div>
         </section>
 
     </main>
-
-    <!-- ====== 历史任务抽屉 ====== -->
-    <div class="history-overlay" id="history-overlay" onclick="closeHistory()"></div>
-    <aside class="history-drawer" id="history-drawer">
-        <div class="drawer-header">
-            <h2 class="drawer-title">📋 历史任务</h2>
-            <button class="drawer-close" onclick="closeHistory()">✕</button>
-        </div>
-        <div class="drawer-body" id="history-list">
-            <div class="history-empty">
-                <p>暂无历史任务</p>
-            </div>
-        </div>
-        <!-- 历史任务内嵌音频播放器 -->
-        <audio id="history-audio" preload="none"></audio>
-    </aside>
-
-    <!-- ====== 生词库抽屉 ====== -->
-    <div class="vocab-overlay" id="vocab-overlay" onclick="closeVocabulary()"></div>
-    <aside class="vocab-drawer" id="vocab-drawer">
-        <div class="drawer-header">
-            <h2 class="drawer-title">📚 我的生词库</h2>
-            <button class="drawer-close" onclick="closeVocabulary()">✕</button>
-        </div>
-        <!-- 统计栏 -->
-        <div class="vocab-stats-bar" id="vocab-stats-bar">
-            <div class="vocab-stat-item">
-                <span class="vocab-stat-num" id="vocab-stat-total">0</span>
-                <span class="vocab-stat-label">总计</span>
-            </div>
-            <div class="vocab-stat-item">
-                <span class="vocab-stat-num" id="vocab-stat-unmastered" style="color:var(--primary);">0</span>
-                <span class="vocab-stat-label">未掌握</span>
-            </div>
-            <div class="vocab-stat-item">
-                <span class="vocab-stat-num" id="vocab-stat-mastered" style="color:var(--success, #22c55e);">0</span>
-                <span class="vocab-stat-label">已掌握</span>
-            </div>
-            <div class="vocab-stat-item">
-                <span class="vocab-stat-num" id="vocab-stat-recent">0</span>
-                <span class="vocab-stat-label">近7天</span>
-            </div>
-        </div>
-        <!-- 筛选/排序/搜索栏 -->
-        <div class="vocab-toolbar">
-            <div class="vocab-search-wrap">
-                <input type="text" class="vocab-search-input" id="vocab-search-input"
-                       placeholder="搜索单词或释义..." oninput="onVocabSearchInput()">
-            </div>
-            <div class="vocab-filters">
-                <select class="vocab-filter-select" id="vocab-filter-mastered" onchange="loadVocabulary()">
-                    <option value="all">全部</option>
-                    <option value="unmastered" selected>未掌握</option>
-                    <option value="mastered">已掌握</option>
-                </select>
-                <select class="vocab-filter-select" id="vocab-filter-type" onchange="loadVocabulary()">
-                    <option value="">全部类型</option>
-                    <option value="word">单词</option>
-                    <option value="phrase">短语</option>
-                    <option value="idiom">习语</option>
-                    <option value="collocation">搭配</option>
-                </select>
-                <select class="vocab-filter-select" id="vocab-sort-by" onchange="loadVocabulary()">
-                    <option value="last_seen_at">最近遇到</option>
-                    <option value="encounter_count">遇到次数</option>
-                    <option value="frequency_level">词频等级</option>
-                    <option value="english">字母排序</option>
-                </select>
-            </div>
-        </div>
-        <!-- 生词列表 -->
-        <div class="drawer-body" id="vocab-list">
-            <div class="history-empty">
-                <p>暂无生词记录</p>
-            </div>
-        </div>
-        <!-- 分页 -->
-        <div class="vocab-pagination" id="vocab-pagination" style="display:none;">
-            <button class="vocab-page-btn" id="vocab-prev-btn" onclick="vocabPrevPage()">← 上一页</button>
-            <span class="vocab-page-info" id="vocab-page-info">1 / 1</span>
-            <button class="vocab-page-btn" id="vocab-next-btn" onclick="vocabNextPage()">下一页 →</button>
-        </div>
-    </aside>
 
     <!-- ====== 设置抽屉 ====== -->
     <div class="settings-overlay" id="settings-overlay" onclick="closeSettings()"></div>
@@ -772,16 +402,49 @@
         </div>
     </aside>
 
-    <!-- ====== 短语标记浮层 ====== -->
-    <div class="phrase-popover" id="phrase-popover" style="display:none;">
-        <div class="phrase-popover-content">
-            <div class="phrase-popover-text" id="phrase-popover-text"></div>
-            <div class="phrase-popover-actions">
-                <button class="phrase-popover-btn confirm" onclick="confirmPhraseSelection()">标记为短语</button>
-                <button class="phrase-popover-btn cancel" onclick="closePhrasePopover()">取消</button>
+    <!-- ====== 生词库抽屉 ====== -->
+    <div class="vocab-overlay" id="vocab-overlay" onclick="closeVocabulary()"></div>
+    <aside class="vocab-drawer" id="vocab-drawer">
+        <div class="drawer-header">
+            <h2 class="drawer-title">📚 我的生词库</h2>
+            <button class="drawer-close" onclick="closeVocabulary()">✕</button>
+        </div>
+        <div class="vocab-stats-bar" id="vocab-stats-bar">
+            <div class="vocab-stat-item">
+                <span class="vocab-stat-num" id="vocab-stat-total">0</span>
+                <span class="vocab-stat-label">总计</span>
+            </div>
+            <div class="vocab-stat-item">
+                <span class="vocab-stat-num" id="vocab-stat-unmastered" style="color:var(--accent);">0</span>
+                <span class="vocab-stat-label">未掌握</span>
+            </div>
+            <div class="vocab-stat-item">
+                <span class="vocab-stat-num" id="vocab-stat-mastered" style="color:var(--success);">0</span>
+                <span class="vocab-stat-label">已掌握</span>
             </div>
         </div>
-    </div>
+        <div class="vocab-toolbar">
+            <div class="vocab-search-wrap">
+                <input type="text" class="vocab-search-input" id="vocab-search-input"
+                       placeholder="搜索单词或释义..." oninput="onVocabSearchInput()">
+            </div>
+            <div class="vocab-filters">
+                <select class="vocab-filter-select" id="vocab-filter-mastered" onchange="loadVocabulary()">
+                    <option value="all">全部</option>
+                    <option value="unmastered" selected>未掌握</option>
+                    <option value="mastered">已掌握</option>
+                </select>
+            </div>
+        </div>
+        <div class="drawer-body" id="vocab-list">
+            <div class="history-empty"><p>暂无生词记录</p></div>
+        </div>
+        <div class="vocab-pagination" id="vocab-pagination" style="display:none;">
+            <button class="vocab-page-btn" id="vocab-prev-btn" onclick="vocabPrevPage()">← 上一页</button>
+            <span class="vocab-page-info" id="vocab-page-info">1 / 1</span>
+            <button class="vocab-page-btn" id="vocab-next-btn" onclick="vocabNextPage()">下一页 →</button>
+        </div>
+    </aside>
 
     <!-- ====== 全屏转录覆盖层 ====== -->
     <div class="fullscreen-overlay" id="fullscreen-overlay">
@@ -789,12 +452,10 @@
             <h2 class="fullscreen-title" id="fullscreen-title">📝 原文转录</h2>
             <div class="fullscreen-actions">
                 <button class="toolbar-btn active" id="fs-auto-scroll-btn" onclick="toggleAutoScroll()" title="自动跟随">
-                    <span class="toolbar-btn-icon">📍</span>
-                    <span class="toolbar-btn-text">自动跟随</span>
+                    <span class="toolbar-btn-icon">📍</span><span class="toolbar-btn-text">自动跟随</span>
                 </button>
                 <button class="toolbar-btn" onclick="copyTranscript()" title="复制字幕到剪贴板">
-                    <span class="toolbar-btn-icon">📋</span>
-                    <span class="toolbar-btn-text">复制</span>
+                    <span class="toolbar-btn-icon">📋</span><span class="toolbar-btn-text">复制</span>
                 </button>
                 <button class="fullscreen-close-btn" onclick="toggleTranscriptFullscreen()" title="退出全屏">✕</button>
             </div>
@@ -802,20 +463,16 @@
         <div class="fullscreen-player">
             <audio id="fullscreen-audio" controls></audio>
         </div>
-        <div class="fullscreen-transcript" id="fullscreen-transcript">
-            <!-- 全屏转录内容将从原容器克隆 -->
-        </div>
+        <div class="fullscreen-transcript" id="fullscreen-transcript"></div>
     </div>
 
-    <!-- ====== Mini Player 底部播放条 ====== -->
+    <!-- ====== Mini Player ====== -->
     <div class="mini-player" id="mini-player" style="display:none;">
-        <!-- 进度条（可点击 seek） -->
         <div class="mini-player-progress-bar" id="mini-player-progress-bar">
             <div class="mini-player-progress-fill" id="mini-player-progress-fill">
                 <div class="mini-player-progress-thumb"></div>
             </div>
         </div>
-        <!-- 主体内容 -->
         <div class="mini-player-content" onclick="miniPlayerGoBack()">
             <div class="mini-player-left">
                 <button class="mini-player-play-btn" id="mini-player-play-btn" onclick="event.stopPropagation(); miniPlayerTogglePlay()" title="播放/暂停">
@@ -853,7 +510,7 @@
 
     <!-- ====== 底部 ====== -->
     <footer class="footer">
-        <p>Powered by BiliMix · Qwen · Edge-TTS</p>
+        <p>Powered by BiliMix · WhisperX · Ollama · Confucius4-TTS</p>
     </footer>
 
     <!-- JS 模块 — 按依赖顺序加载 -->
@@ -865,5 +522,6 @@
     <script src="js/confirm.js"></script>
     <script src="js/podcast.js"></script>
     <script src="js/settings.js"></script>
+    <script src="js/episodes.js"></script>
 </body>
 </html>

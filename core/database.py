@@ -8,10 +8,45 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
+from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 
 from core import config
 
 DB_PATH = config.DB_PATH
+
+
+def _parse_published_at_ts(date_str: str) -> float:
+    """
+    将 RSS pubDate（RFC 822 格式，如 "Wed, 31 Dec 2025 21:24:33 +0000"）
+    解析为 Unix 时间戳，用于正确的时间排序。解析失败返回 0。
+    """
+    if not date_str:
+        return 0.0
+    try:
+        dt = parsedate_to_datetime(date_str)
+        if dt is None:
+            return 0.0
+        return dt.timestamp()
+    except Exception:
+        return 0.0
+
+
+def _time_range_boundary_ts(time_range: str) -> float:
+    """
+    计算 time_range 对应的起始时间戳（本地时区，绝对 Unix 时间）。
+    用于按单集的实际发布时间（published_at_ts）过滤，而非抓取时间。
+    all（或未识别的值）返回 0，表示不限制。
+    """
+    now = datetime.now()
+    if time_range == "today":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return start.timestamp()
+    elif time_range == "week":
+        return (now - timedelta(days=7)).timestamp()
+    elif time_range == "month":
+        return (now - timedelta(days=30)).timestamp()
+    return 0.0
 
 # 线程局部存储：每个线程使用独立连接
 _local = threading.local()
@@ -37,6 +72,22 @@ def get_db():
     except Exception:
         conn.rollback()
         raise
+
+
+def _backfill_episode_timestamps(conn):
+    """
+    为历史遗留数据（published_at_ts 为 0 但 published_at 有值）回填解析后的时间戳。
+    仅在新增 published_at_ts 列后，对老数据做一次性修复。
+    """
+    rows = conn.execute(
+        "SELECT id, published_at FROM episodes "
+        "WHERE (published_at_ts IS NULL OR published_at_ts = 0) AND published_at != ''"
+    ).fetchall()
+    for row in rows:
+        ts = _parse_published_at_ts(row["published_at"])
+        if ts:
+            conn.execute("UPDATE episodes SET published_at_ts = ? WHERE id = ?",
+                         (ts, row["id"]))
 
 
 def init_db():
@@ -78,12 +129,37 @@ def init_db():
                 count      INTEGER DEFAULT 1,
                 updated_at TEXT DEFAULT (datetime('now', 'localtime'))
             );
+
+            -- 订阅源单集表
+            CREATE TABLE IF NOT EXISTS episodes (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                subscription_id INTEGER,
+                rss_url         TEXT NOT NULL,
+                guid            TEXT NOT NULL,
+                title           TEXT DEFAULT '',
+                description     TEXT DEFAULT '',
+                audio_url       TEXT DEFAULT '',
+                duration        TEXT DEFAULT '',
+                published_at    TEXT DEFAULT '',
+                published_at_ts REAL DEFAULT 0,
+                status          TEXT DEFAULT 'unread',
+                task_id         TEXT DEFAULT '',
+                discovered_at   TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at      TEXT DEFAULT (datetime('now', 'localtime')),
+                UNIQUE(rss_url, guid)
+            );
         """)
         # 向已有的 tasks 表添加 title 列（兼容旧数据库）
         try:
             conn.execute("ALTER TABLE tasks ADD COLUMN title TEXT DEFAULT ''")
         except sqlite3.OperationalError:
             pass  # 列已存在，忽略
+        # 向已有的 episodes 表添加 published_at_ts 列（兼容旧数据库）
+        try:
+            conn.execute("ALTER TABLE episodes ADD COLUMN published_at_ts REAL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # 列已存在，忽略
+        _backfill_episode_timestamps(conn)
 
 
 # ============================================================
@@ -536,6 +612,231 @@ def get_vocabulary_stats() -> dict:
         "by_frequency": by_freq,
         "recent_7days": recent,
     }
+
+
+# ============================================================
+# 订阅单集 (Episodes) CRUD
+# ============================================================
+
+def upsert_episodes(rss_url: str, episodes_data: list) -> int:
+    """
+    批量插入或更新单集（按 rss_url + guid 去重）。
+    episodes_data: [{"guid": "...", "title": "...", "description": "...",
+                      "audio_url": "...", "duration": "...", "published_at": "..."}]
+    返回新增的条数。
+    """
+    new_count = 0
+    with get_db() as conn:
+        for ep in episodes_data:
+            guid = ep.get("guid") or ep.get("audio_url") or ep.get("title")
+            if not guid:
+                continue
+            existing = conn.execute(
+                "SELECT id FROM episodes WHERE rss_url = ? AND guid = ?",
+                (rss_url, guid)
+            ).fetchone()
+            if existing:
+                # 已存在，仅更新音频URL等元数据（不改状态）
+                published_at = ep.get("published_at", "")
+                published_at_ts = _parse_published_at_ts(published_at)
+                conn.execute("""
+                    UPDATE episodes SET title = ?, description = ?, audio_url = ?,
+                               duration = ?, published_at = ?, published_at_ts = ?,
+                               updated_at = datetime('now', 'localtime')
+                    WHERE id = ?
+                """, (ep.get("title", ""), ep.get("description", ""),
+                      ep.get("audio_url", ""), ep.get("duration", ""),
+                      published_at, published_at_ts, existing["id"]))
+            else:
+                published_at = ep.get("published_at", "")
+                published_at_ts = _parse_published_at_ts(published_at)
+                conn.execute("""
+                    INSERT INTO episodes
+                        (rss_url, guid, title, description, audio_url, duration,
+                         published_at, published_at_ts, status, discovered_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'unread',
+                            datetime('now', 'localtime'))
+                """, (rss_url, guid, ep.get("title", ""), ep.get("description", ""),
+                      ep.get("audio_url", ""), ep.get("duration", ""),
+                      published_at, published_at_ts))
+                new_count += 1
+    return new_count
+
+
+def get_episodes(status_filter: str = "all", rss_url: str = "",
+                 time_range: str = "today", page: int = 1,
+                 page_size: int = 100) -> dict:
+    """
+    获取单集列表，支持筛选和分页。
+    status_filter: all | unread | read | transcribed | dismissed
+    rss_url: 筛选指定订阅源
+    time_range: today | week | month | all
+    """
+    conditions = []
+    params = []
+
+    if status_filter != "all":
+        conditions.append("e.status = ?")
+        params.append(status_filter)
+
+    if rss_url:
+        conditions.append("e.rss_url = ?")
+        params.append(rss_url)
+
+    # 按单集实际发布时间（published_at_ts）过滤，而非抓取时间，
+    # 这样"今日/本周/本月"才能反映节目本身的更新情况。
+    boundary_ts = _time_range_boundary_ts(time_range)
+    if boundary_ts > 0:
+        conditions.append("e.published_at_ts >= ?")
+        params.append(boundary_ts)
+
+    where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+    with get_db() as conn:
+        count_row = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM episodes e WHERE {where_clause}", params
+        ).fetchone()
+        total = count_row["cnt"]
+
+        offset = (page - 1) * page_size
+        rows = conn.execute(
+            f"""SELECT e.*, s.title as sub_title, s.image as sub_image, s.author as sub_author
+                FROM episodes e
+                LEFT JOIN subscriptions s ON e.rss_url = s.rss_url
+                WHERE {where_clause}
+                ORDER BY e.published_at_ts DESC, e.discovered_at DESC
+                LIMIT ? OFFSET ?""",
+            params + [page_size, offset]
+        ).fetchall()
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "episodes": [dict(r) for r in rows],
+    }
+
+
+def update_episode_status(episode_id: int, status: str, task_id: str = "") -> dict:
+    """更新单集状态。status: unread | read | transcribed | dismissed"""
+    with get_db() as conn:
+        if task_id:
+            conn.execute("""
+                UPDATE episodes SET status = ?, task_id = ?,
+                    updated_at = datetime('now', 'localtime')
+                WHERE id = ?
+            """, (status, task_id, episode_id))
+        else:
+            conn.execute("""
+                UPDATE episodes SET status = ?,
+                    updated_at = datetime('now', 'localtime')
+                WHERE id = ?
+            """, (status, episode_id))
+        row = conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone()
+    return dict(row) if row else {}
+
+
+def get_episode_stats(rss_url: str = "") -> dict:
+    """获取单集状态统计"""
+    conditions = []
+    params = []
+    if rss_url:
+        conditions.append("rss_url = ?")
+        params.append(rss_url)
+    where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+    with get_db() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM episodes WHERE {where_clause}", params
+        ).fetchone()["cnt"]
+        unread = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='unread'"
+            + (" AND " + where_clause if conditions else ""), params
+        ).fetchone()["cnt"] if not rss_url else conn.execute(
+            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='unread' AND {where_clause}", params
+        ).fetchone()["cnt"]
+        read = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='read'"
+            + (" AND " + where_clause if conditions else ""), params
+        ).fetchone()["cnt"] if not rss_url else conn.execute(
+            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='read' AND {where_clause}", params
+        ).fetchone()["cnt"]
+        transcribed = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='transcribed'"
+            + (" AND " + where_clause if conditions else ""), params
+        ).fetchone()["cnt"] if not rss_url else conn.execute(
+            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='transcribed' AND {where_clause}", params
+        ).fetchone()["cnt"]
+        dismissed = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='dismissed'"
+            + (" AND " + where_clause if conditions else ""), params
+        ).fetchone()["cnt"] if not rss_url else conn.execute(
+            f"SELECT COUNT(*) as cnt FROM episodes WHERE status='dismissed' AND {where_clause}", params
+        ).fetchone()["cnt"]
+
+    return {
+        "total": total,
+        "unread": unread,
+        "read": read,
+        "transcribed": transcribed,
+        "dismissed": dismissed,
+    }
+
+
+def get_unread_counts_by_subscription() -> list:
+    """获取每个订阅源的未读数与封面图，用于侧边栏列表。"""
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT s.rss_url, s.title, s.image, COUNT(e.id) as unread_count
+            FROM subscriptions s
+            LEFT JOIN episodes e ON s.rss_url = e.rss_url AND e.status = 'unread'
+            GROUP BY s.rss_url, s.title, s.image
+            ORDER BY s.created_at DESC
+        """).fetchall()
+    return [{"rss_url": r["rss_url"], "title": r["title"], "image": r["image"],
+             "unread": r["unread_count"]} for r in rows]
+
+
+def mark_all_episodes_read(rss_url: str = "", time_range: str = "all") -> int:
+    """
+    将符合条件的未读单集批量标记为已读。
+    rss_url: 限定订阅源，空则不限定
+    time_range: today | week | month | all，按单集实际发布时间（published_at_ts）限定范围
+    返回受影响的行数。
+    """
+    conditions = ["status = 'unread'"]
+    params = []
+
+    if rss_url:
+        conditions.append("rss_url = ?")
+        params.append(rss_url)
+
+    boundary_ts = _time_range_boundary_ts(time_range)
+    if boundary_ts > 0:
+        conditions.append("published_at_ts >= ?")
+        params.append(boundary_ts)
+
+    where_clause = " AND ".join(conditions)
+
+    with get_db() as conn:
+        cursor = conn.execute(
+            f"""UPDATE episodes SET status = 'read',
+                    updated_at = datetime('now', 'localtime')
+                WHERE {where_clause}""",
+            params
+        )
+        affected = cursor.rowcount
+    return affected
+
+
+def update_episode_status_by_task(task_id: str, status: str):
+    """根据 task_id 更新关联单集的状态（用于任务完成时回写）"""
+    with get_db() as conn:
+        conn.execute("""
+            UPDATE episodes SET status = ?,
+                updated_at = datetime('now', 'localtime')
+            WHERE task_id = ?
+        """, (status, task_id))
 
 
 # ============================================================

@@ -308,6 +308,7 @@ function clearRssSelectedEpisode() {
 
 async function loadQuickPanel() {
     const panel = document.getElementById('quick-panel');
+    if (!panel) return; // 新布局无 quick-panel
     let hasContent = false;
 
     // Favorites removed - skip favorites loading
@@ -373,6 +374,12 @@ async function removeSubscriptionAndRefresh(rssUrl) {
         showToast('📡 已取消订阅');
         loadQuickPanel();
         loadSavedSubscriptions();
+        // 如果取消的正是当前筛选的订阅源，重置为全部来源
+        if (typeof episodesRssFilter !== 'undefined' && episodesRssFilter === rssUrl) {
+            episodesRssFilter = '';
+        }
+        if (typeof loadSidebarSubscriptions === 'function') loadSidebarSubscriptions();
+        if (typeof loadEpisodes === 'function') loadEpisodes();
     } catch (e) {
         showToast('❌ 操作失败');
     }
@@ -487,12 +494,13 @@ async function toggleSubscription(rssUrl, title, author, image, btnEl) {
 // ============================================================
 
 async function loadSavedSubscriptions() {
+    // 新布局：订阅列表统一在左侧边栏展示，此函数保留兼容旧调用但不再渲染。
+    const panel = document.getElementById('rss-saved-subscriptions');
+    if (!panel) return;
     try {
         const resp = await fetch('/api/subscriptions');
         const data = await resp.json();
         const subs = data.subscriptions || [];
-
-        const panel = document.getElementById('rss-saved-subscriptions');
         const listDiv = document.getElementById('rss-saved-subscriptions-list');
 
         if (subs.length === 0) { panel.style.display = 'none'; return; }

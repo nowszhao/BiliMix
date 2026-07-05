@@ -8,37 +8,49 @@
 // ============================================================
 
 function showSection(section) {
-    const hero = document.getElementById('hero-section');
     const progress = document.getElementById('progress-section');
     const result = document.getElementById('result-section');
+    const confirmSec = document.getElementById('confirm-section');
+    const sentConfirm = document.getElementById('sentence-confirm-section');
 
-    if (hero) hero.style.display = 'none';
+    // 隐藏进度/结果/确认区
     if (progress) progress.classList.add('hidden');
     if (result) result.classList.add('hidden');
+    if (confirmSec) confirmSec.classList.add('hidden');
+    if (sentConfirm) sentConfirm.classList.add('hidden');
 
-    if (section === 'progress' && progress) progress.classList.remove('hidden');
-    else if (section === 'result' && result) result.classList.remove('hidden');
-    else if (hero) hero.style.display = '';
-
-    // 结果页显示"下一集"按钮
-    if (section === 'result') {
-        const btn = document.getElementById('btn-next-episode');
-        if (btn) btn.style.display = lastPodcastRssUrl ? 'inline-flex' : 'none';
+    if (section === 'progress' && progress) {
+        // 隐藏内容视图
+        document.querySelectorAll('.content-view').forEach(v => v.style.display = 'none');
+        progress.classList.remove('hidden');
+    } else if (section === 'result' && result) {
+        document.querySelectorAll('.content-view').forEach(v => v.style.display = 'none');
+        result.classList.remove('hidden');
+    } else if (section === 'confirm' && confirmSec) {
+        document.querySelectorAll('.content-view').forEach(v => v.style.display = 'none');
+        confirmSec.classList.remove('hidden');
+    } else if (section === 'sentence-confirm' && sentConfirm) {
+        document.querySelectorAll('.content-view').forEach(v => v.style.display = 'none');
+        sentConfirm.classList.remove('hidden');
+    } else {
+        // 返回内容视图（更新/发现/任务）
+        document.querySelectorAll('.content-view').forEach(v => {
+            if (v.id !== 'updates-view') v.style.display = 'none';
+        });
+        const updatesView = document.getElementById('updates-view');
+        if (updatesView) updatesView.style.display = '';
+        // 刷新数据
+        if (typeof loadEpisodes === 'function') loadEpisodes();
+        if (typeof loadSidebarSubscriptions === 'function') loadSidebarSubscriptions();
     }
 
-    // 切换到结果页时隐藏 Mini Player（因为结果页有完整播放器）
+    // 切换到结果页时隐藏 Mini Player
     if (section === 'result') {
         const mp = document.getElementById('mini-player');
         if (mp) {
             mp.style.display = 'none';
             document.body.classList.remove('mini-player-active');
         }
-    }
-
-    // 返回首页时刷新快捷面板
-    if (section === 'hero') {
-        loadQuickPanel();
-        loadSavedSubscriptions();
     }
 }
 
@@ -93,7 +105,7 @@ function resetAll() {
 
     if (isFullscreen) toggleTranscriptFullscreen();
 
-    closePodcastResults();
+    if (typeof closePodcastResults === 'function') closePodcastResults();
     const episodesPanel = document.getElementById('episodes-panel');
     if (episodesPanel) episodesPanel.style.display = 'none';
     const selectedEp = document.getElementById('selected-episode');
@@ -106,7 +118,7 @@ function resetAll() {
     if (searchInput) searchInput.value = '';
     const rssInput = document.getElementById('rss-url-input');
     if (rssInput) rssInput.value = '';
-    switchInputMode('search');
+    if (typeof switchInputMode === 'function') switchInputMode('url');
 
     segmentsData = [];
     activeSegmentIndex = -1;
@@ -137,11 +149,13 @@ function resetAll() {
     if (mixedAudio) mixedAudio.removeEventListener('timeupdate', onMixedAudioTimeUpdate);
 
     const btn = document.getElementById('generate-btn');
-    btn.disabled = false;
-    btn.querySelector('.btn-text').textContent = '开始生成';
+    if (btn) {
+        btn.disabled = false;
+        btn.querySelector('.btn-text').textContent = '开始生成';
+    }
 
     resetProgressUI();
-    switchTab('transcript');
+    if (typeof switchTab === 'function') switchTab('transcript');
     showSection('hero');
 
     const modeSelect = document.getElementById('mode-select');
@@ -367,6 +381,11 @@ async function deleteVocabWord(vocabId) {
 function toggleHistory() {
     const overlay = document.getElementById('history-overlay');
     const drawer = document.getElementById('history-drawer');
+    if (!overlay || !drawer) {
+        // 新布局：切换到任务页
+        switchView('tasks');
+        return;
+    }
     if (drawer.classList.contains('open')) {
         closeHistory();
     } else {
@@ -377,8 +396,10 @@ function toggleHistory() {
 }
 
 function closeHistory() {
-    document.getElementById('history-overlay').classList.remove('open');
-    document.getElementById('history-drawer').classList.remove('open');
+    const overlay = document.getElementById('history-overlay');
+    const drawer = document.getElementById('history-drawer');
+    if (overlay) overlay.classList.remove('open');
+    if (drawer) drawer.classList.remove('open');
     stopHistoryAudio();
 }
 
@@ -429,7 +450,10 @@ function toggleHistoryPlay(taskId, basename, audioUrl) {
 
 async function loadHistory() {
     const list = document.getElementById('history-list');
-    list.innerHTML = '<div class="history-empty"><div class="spinner" style="margin: 0 auto 12px;"></div><p>加载中...</p></div>';
+    const tasksContainer = document.getElementById('tasks-list-container');
+    const loadingHtml = '<div class="history-empty"><div class="spinner" style="margin: 0 auto 12px;"></div><p>加载中...</p></div>';
+    if (list) list.innerHTML = loadingHtml;
+    if (tasksContainer) tasksContainer.innerHTML = loadingHtml;
 
     try {
         const resp = await fetch('/api/tasks');
@@ -437,7 +461,9 @@ async function loadHistory() {
         const tasks = data.tasks || [];
 
         if (tasks.length === 0) {
-            list.innerHTML = '<div class="history-empty"><p>暂无历史任务</p></div>';
+            const emptyHtml = '<div class="history-empty"><p>暂无历史任务</p></div>';
+            if (list) list.innerHTML = emptyHtml;
+            if (tasksContainer) tasksContainer.innerHTML = emptyHtml;
             return;
         }
 
@@ -458,15 +484,12 @@ async function loadHistory() {
                 displayUrl = u.hostname + u.pathname.substring(u.pathname.lastIndexOf('/'));
             } catch(e) {}
 
-            // 优先使用任务标题（播客单集名称），fallback 到 URL 截取
             const displayName = t.title || displayUrl;
 
             let statsHtml = '';
-            if (t.status === 'completed' && (t.total_words || t.mixed_duration)) {
+            if (t.status === 'completed' && t.mixed_duration) {
                 statsHtml = `
                     <div class="history-card-stats">
-                        ${t.total_words ? `<span class="history-stat"><strong>${t.total_words}</strong> 生词</span>` : ''}
-                        ${t.total_replacements ? `<span class="history-stat"><strong>${t.total_replacements}</strong> 处替换</span>` : ''}
                         ${t.mixed_duration ? `<span class="history-stat"><strong>${t.mixed_duration}</strong>s 混合音频</span>` : ''}
                     </div>
                 `;
@@ -489,22 +512,25 @@ async function loadHistory() {
                     </div>
                     <div class="history-card-meta">
                         <span class="history-status ${statusClass}">${statusLabel}</span>
-                        <span class="history-card-info">${t.difficulty || ''}</span>
                         <span class="history-card-info">${t.created_at || ''}</span>
+                        ${t.status === 'processing' && t.progress ? `<span class="history-card-info">${t.progress}%</span>` : ''}
                     </div>
                     ${statsHtml}
                 </div>
             `;
         });
 
-        list.innerHTML = html;
+        if (list) list.innerHTML = html;
+        if (tasksContainer) tasksContainer.innerHTML = html;
     } catch (err) {
-        list.innerHTML = '<div class="history-empty"><p>加载失败: ' + err.message + '</p></div>';
+        const errHtml = '<div class="history-empty"><p>加载失败: ' + err.message + '</p></div>';
+        if (list) list.innerHTML = errHtml;
+        if (tasksContainer) tasksContainer.innerHTML = errHtml;
     }
 }
 
 async function viewHistoryTask(taskId, url) {
-    closeHistory();
+    if (typeof closeHistory === 'function') closeHistory();
 
     // 如果有 Mini Player 在播放，先关闭
     if (miniPlayerState) {
@@ -1095,8 +1121,8 @@ async function resetSettingsToDefault() {
 // ============================================================
 
 function goHome() {
-    const heroSection = document.getElementById('hero-section');
-    if (heroSection.style.display !== 'none') return;
+    const updatesView = document.getElementById('updates-view');
+    if (updatesView && updatesView.style.display !== 'none') return;
 
     // 检查是否有音频正在播放
     const originalAudio = document.getElementById('original-audio');
@@ -1106,21 +1132,13 @@ function goHome() {
     const isPlaying = (originalAudio && !originalAudio.paused) || (mixedAudio && !mixedAudio.paused);
 
     if (isOnResult && isPlaying) {
-        // 有音频播放 → 保存状态并激活 Mini Player
         activateMiniPlayer();
         showSection('hero');
-        initPageConfig();
     } else {
-        // 没有播放 → 常规 resetAll
         resetAll();
-        initPageConfig();
     }
 }
 
-/**
- * 从结果页点击"处理新的音频"时调用。
- * 如果有音频在播，激活 Mini Player 保持后台播放。
- */
 function goHomeFromResult() {
     const originalAudio = document.getElementById('original-audio');
     const mixedAudio = document.getElementById('mixed-audio');
@@ -1129,10 +1147,8 @@ function goHomeFromResult() {
     if (isPlaying) {
         activateMiniPlayer();
         showSection('hero');
-        initPageConfig();
     } else {
         resetAll();
-        initPageConfig();
     }
 }
 
@@ -1430,7 +1446,6 @@ function initMiniPlayerProgressSeek() {
 
 document.addEventListener('DOMContentLoaded', async () => {
     await initPageConfig();
-    loadQuickPanel();
     loadSavedSubscriptions();
     initMiniPlayerProgressSeek();
 });
