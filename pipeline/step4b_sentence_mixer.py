@@ -95,12 +95,15 @@ def mix_sentence_audio(
                 seg_len_ms = max(int(seg_dur_s * 1000), 500)
                 tts_clip = AudioSegment.silent(duration=seg_len_ms, frame_rate=target_sr)
             else:
-                tts_clip = AudioSegment.from_file(tts_path)
-                tts_clip = tts_clip.set_frame_rate(target_sr).set_channels(target_channels)
-                tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
-            tts_len_ms = len(tts_clip)
+            tts_clip = AudioSegment.from_file(tts_path)
+            tts_len_ms = len(tts_clip)  # 在重采样前取真实时长
+            # 统一到目标采样率和声道数（true resampling，不改播放速度）
+            tts_clip = tts_clip.set_channels(target_channels)
+            if tts_clip.frame_rate != target_sr:
+                tts_clip = tts_clip.set_frame_rate(target_sr)
+            tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
 
-            result += tts_clip
+        result += tts_clip
             chinese_text = translations.get(seg_idx, "")
             time_mapping.append({
                 "mixed_start": round(mixed_pos_ms / 1000.0, 3),
@@ -191,9 +194,11 @@ def mix_sentence_audio(
             tts_path = tts_audio_map[seg_idx]
             if os.path.exists(tts_path):
                 tts_clip = AudioSegment.from_file(tts_path)
-                tts_clip = tts_clip.set_frame_rate(target_sr).set_channels(target_channels)
+                tts_len_ms = len(tts_clip)  # 先取真实时长
+                tts_clip = tts_clip.set_channels(target_channels)
+                if tts_clip.frame_rate != target_sr:
+                    tts_clip = tts_clip.set_frame_rate(target_sr)
                 tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
-                tts_len_ms = len(tts_clip)
 
                 # 用中文 TTS 替换这个位置
                 result += tts_clip
