@@ -93,20 +93,20 @@ CONFUCIUS4_TTS_PYTHON = ""
 CONFUCIUS4_TTS_DEVICE = "cpu"
 # 单条 TTS 合成超时（秒），CPU 推理较慢，长句可能需要 60-120s
 CONFUCIUS4_TTS_PER_JOB_TIMEOUT = 6000
-# T2S 采样温度（0.0~1.0），越高输出越多样
-CONFUCIUS4_TTS_TEMPERATURE = 0.8
+# T2S 采样温度（0.0~1.0），越高输出越多样，越低越稳定。语音风格不一致时调低
+CONFUCIUS4_TTS_TEMPERATURE = 0.6
 # 核采样概率阈值
-CONFUCIUS4_TTS_TOP_P = 0.8
-# Top-k 采样参数
-CONFUCIUS4_TTS_TOP_K = 30
-# 束搜索宽度（1 = 贪心解码，更快更稳定）
+CONFUCIUS4_TTS_TOP_P = 0.9
+# Top-k 采样参数（0 表示不限制）
+CONFUCIUS4_TTS_TOP_K = 0
+# 束搜索宽度（1 = 贪心解码，确定性强）
 CONFUCIUS4_TTS_NUM_BEAMS = 1
 # 重复惩罚系数（越高重复越少）
 CONFUCIUS4_TTS_REPETITION_PENALTY = 10.0
 # 扩散步骤数（越高音质越好，25 为原始默认值）
 CONFUCIUS4_TTS_N_TIMESTEPS = 40
-# 无分类器引导强度（越高条件控制越强）
-CONFUCIUS4_TTS_INFERENCE_CFG_RATE = 0.7
+# 无分类器引导强度（越高越紧跟参考音频的语速/音量风格）
+CONFUCIUS4_TTS_INFERENCE_CFG_RATE = 0.9
 # 并行 Worker 数量（利用多核并行合成，1 = 串行，建议 2-3）
 CONFUCIUS4_TTS_NUM_WORKERS = 2
 
