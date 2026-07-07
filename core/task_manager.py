@@ -209,7 +209,7 @@ def restore_task_from_disk(task_id: str) -> dict:
                 "url": summary.get("url", ""),
                 "title": summary.get("title", ""),
                 "difficulty": saved.get("difficulty", summary.get("difficulty", "")),
-                "process_mode": process_mode,
+                "process_mode": saved.get("process_mode", summary.get("process_mode", "sentence_translate")),
                 "skip_confirmation": saved.get("skip_confirmation",
                                    summary.get("skip_confirmation",
                                    getattr(config, "SKIP_CONFIRMATION", True))),
