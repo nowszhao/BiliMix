@@ -56,7 +56,6 @@ async function loadResult() {
 
 function renderResult(data) {
     const result = data.result;
-    
 
     const streamPlayer = document.getElementById('stream-player');
     const mixedItem = document.getElementById('mixed-audio-item');
@@ -66,66 +65,25 @@ function renderResult(data) {
 
     timeMappingData = data.time_mapping || [];
 
-    const mode = currentProcessMode || data.process_mode;
+    const sentencePairs = data.sentence_pairs || [];
 
-    if (mode === 'sentence_translate') {
-        const sentencePairs = data.sentence_pairs || [];
+    document.getElementById('badge-words').textContent =
+        (result?.translated_segments || sentencePairs.length || 0) + ' 句翻译';
+    document.getElementById('badge-duration').textContent =
+        (result?.mixed_duration || '--') + ' 秒';
 
-        document.getElementById('badge-words').textContent =
-            (result?.translated_segments || sentencePairs.length || 0) + ' 句翻译';
-        document.getElementById('badge-duration').textContent =
-            (result?.mixed_duration || '--') + ' 秒';
-
-        if (result) {
-            const basename = result.basename;
-            const ext = getAudioExt();
-            setAudioSrcIfChanged('original-audio', `/api/audio/${basename}${ext}`);
-            setAudioSrcIfChanged('mixed-audio', `/api/audio/${basename}/${basename}_sentence.mp3`);
-        }
-
-        const mixedLabel2 = document.querySelector('.audio-item:last-child .audio-label');
-        if (mixedLabel2) {
-            const isFull = result && result.total_segments &&
-                           result.translated_segments >= result.total_segments;
-            mixedLabel2.innerHTML = isFull
-                ? '<span class="label-dot mixed"></span>中文配音音频'
-                : '<span class="label-dot mixed"></span>中英交替音频';
-        }
-
-        renderTranscriptSentenceMode(data.segments, sentencePairs, null);
-        renderSentencePairs(sentencePairs);
-        renderReplacements([]);
-
-        const vocabTabBtn2 = document.querySelector('[data-tab="vocabulary"]');
-        if (vocabTabBtn2) vocabTabBtn2.innerHTML = '🔄 中英对照';
-        const replTabBtn2 = document.querySelector('[data-tab="replacements"]');
-        if (replTabBtn2) replTabBtn2.innerHTML = '✨ 翻译详情';
-
-    } else {
-        document.getElementById('badge-words').textContent =
-            (data.difficult_words?.length || 0) + ' 个生词';
-        document.getElementById('badge-duration').textContent =
-            (result?.mixed_duration || '--') + ' 秒';
-
-        if (result) {
-            const basename = result.basename;
-            const ext = getAudioExt();
-            setAudioSrcIfChanged('original-audio', `/api/audio/${basename}${ext}`);
-            setAudioSrcIfChanged('mixed-audio', `/api/audio/${basename}/${basename}_mixed.mp3`);
-        }
-
-        const mixedLabel = document.querySelector('.audio-item:last-child .audio-label');
-        if (mixedLabel) mixedLabel.innerHTML = '<span class="label-dot mixed"></span>中英混合音频';
-
-        renderTranscript(data.segments, data.difficult_words);
-        renderVocabulary(data.difficult_words);
-        renderReplacements(data.replacements);
-
-        const vocabTabBtn = document.querySelector('[data-tab="vocabulary"]');
-        if (vocabTabBtn) vocabTabBtn.innerHTML = '📚 生词本';
-        const replTabBtn3 = document.querySelector('[data-tab="replacements"]');
-        if (replTabBtn3) replTabBtn3.innerHTML = '🔄 替换详情';
+    if (result) {
+        const basename = result.basename;
+        const ext = getAudioExt();
+        setAudioSrcIfChanged('original-audio', `/api/audio/${basename}${ext}`);
+        setAudioSrcIfChanged('mixed-audio', `/api/audio/${basename}/${basename}_sentence.mp3`);
     }
+
+    const mixedLabel = document.querySelector('.audio-item:last-child .audio-label');
+    if (mixedLabel) mixedLabel.innerHTML = '<span class="label-dot mixed"></span>中文配音音频';
+
+    renderTranscriptSentenceMode(data.segments, sentencePairs, null);
+}
 }
 
 // ============================================================

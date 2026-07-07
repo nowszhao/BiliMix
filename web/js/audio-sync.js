@@ -43,13 +43,7 @@ function onOriginalAudioTimeUpdate(e) {
 
 function onMixedAudioTimeUpdate(e) {
     const mixedTime = e.target.currentTime;
-    // 100% 翻译模式：time_mapping 中 orig_start/orig_end 全为 0，
-    // mixedTimeToOriginalTime 会失效，直接用 mixed_start/mixed_end 定位
-    const isFullTranslation = timeMappingData.length > 0 &&
-        timeMappingData.every(t => t.orig_start === 0 && t.orig_end === 0);
-    const newIndex = isFullTranslation
-        ? findSegmentByMixedTime(mixedTime)
-        : findSegmentByOriginalTime(mixedTimeToOriginalTime(mixedTime));
+    const newIndex = findSegmentByMixedTime(mixedTime);
     if (newIndex !== activeSegmentIndex && newIndex >= 0) {
         activeSegmentIndex = newIndex;
         highlightSegment(newIndex);
