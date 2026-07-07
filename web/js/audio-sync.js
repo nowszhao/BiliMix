@@ -43,11 +43,38 @@ function onOriginalAudioTimeUpdate(e) {
 
 function onMixedAudioTimeUpdate(e) {
     const mixedTime = e.target.currentTime;
-    const newIndex = findSegmentByOriginalTime(mixedTimeToOriginalTime(mixedTime));
+    // 100% 翻译模式：time_mapping 中 orig_start/orig_end 全为 0，
+    // mixedTimeToOriginalTime 会失效，直接用 mixed_start/mixed_end 定位
+    const isFullTranslation = timeMappingData.length > 0 &&
+        timeMappingData.every(t => t.orig_start === 0 && t.orig_end === 0);
+    const newIndex = isFullTranslation
+        ? findSegmentByMixedTime(mixedTime)
+        : findSegmentByOriginalTime(mixedTimeToOriginalTime(mixedTime));
     if (newIndex !== activeSegmentIndex && newIndex >= 0) {
         activeSegmentIndex = newIndex;
         highlightSegment(newIndex);
     }
+}
+
+/**
+ * 根据混合音频时间直接定位 segment 索引（100% 翻译模式专用）。
+ * 使用左闭右开区间 [mixed_start, mixed_end) 匹配，最后一项用闭区间。
+ */
+function findSegmentByMixedTime(mixedTime) {
+    if (!timeMappingData || timeMappingData.length === 0) return -1;
+    // 仅扫描 segment 类型的条目（type="tts_chinese"），跳过 gap
+    const lastIdx = timeMappingData.length - 1;
+    for (let i = 0; i <= lastIdx; i++) {
+        const t = timeMappingData[i];
+        if (t.type !== 'tts_chinese') continue;
+        const inRange = (i === lastIdx)
+            ? (mixedTime >= t.mixed_start && mixedTime <= t.mixed_end)
+            : (mixedTime >= t.mixed_start && mixedTime < t.mixed_end);
+        if (inRange) return t.segment_index;
+    }
+    // 落到 gap 或边界外时，返回最近的已合成 segment
+    if (mixedTime < timeMappingData[0].mixed_start) return 0;
+    return timeMappingData[lastIdx].segment_index;
 }
 
 /**

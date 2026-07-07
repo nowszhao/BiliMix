@@ -84,7 +84,13 @@ function renderResult(data) {
         }
 
         const mixedLabel2 = document.querySelector('.audio-item:last-child .audio-label');
-        if (mixedLabel2) mixedLabel2.innerHTML = '<span class="label-dot mixed"></span>中英交替音频';
+        if (mixedLabel2) {
+            const isFull = result && result.total_segments &&
+                           result.translated_segments >= result.total_segments;
+            mixedLabel2.innerHTML = isFull
+                ? '<span class="label-dot mixed"></span>中文配音音频'
+                : '<span class="label-dot mixed"></span>中英交替音频';
+        }
 
         renderTranscriptSentenceMode(data.segments, sentencePairs, null);
         renderSentencePairs(sentencePairs);
