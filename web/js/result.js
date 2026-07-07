@@ -84,7 +84,6 @@ function renderResult(data) {
 
     renderTranscriptSentenceMode(data.segments, sentencePairs, null);
 }
-}
 
 // ============================================================
 // Transcript Rendering — 单词替换模式
