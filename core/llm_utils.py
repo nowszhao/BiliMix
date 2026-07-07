@@ -6,7 +6,7 @@ import requests
 from core import config
 
 
-def call_ollama(prompt: str, temperature: float = None) -> str:
+def call_ollama(prompt: str, temperature: float = None, system: str = None) -> str:
     """Call Ollama API for LLM inference."""
     url = f"{config.OLLAMA_BASE_URL}/api/generate"
     num_predict = getattr(config, "LLM_NUM_PREDICT", 8192)
@@ -19,6 +19,8 @@ def call_ollama(prompt: str, temperature: float = None) -> str:
         "stream": False,
         "options": {"temperature": temperature, "num_predict": num_predict}
     }
+    if system:
+        payload["system"] = system
     try:
         resp = requests.post(url, json=payload, timeout=300)
         resp.raise_for_status()

@@ -80,6 +80,13 @@ _COLLOQUIAL_FIXUPS: dict[str, str] = {
     "absolutely": "绝对的",
     "definitely": "肯定的",
     "without a doubt": "毫无疑问",
+    # 否定/部分否定
+    "not exactly": "也不完全是",
+    "not really": "也不是",
+    "not necessarily": "不一定",
+    "not quite": "还差点意思",
+    "not at all": "完全没有",
+    "not even close": "差远了",
     # 惊讶/质疑
     "no way": "不会吧",
     "no kidding": "真的假的",
@@ -106,13 +113,16 @@ _COLLOQUIAL_FIXUPS: dict[str, str] = {
     # 口语填充/语气
     "you know": "你知道的",
     "i mean": "我是说",
-    "like": "",
     "sort of": "算是吧",
     "kind of": "有点",
     "pretty much": "差不多",
     "at the end of the day": "说到底",
     "to be honest": "说实话",
     "honestly": "说真的",
+    "basically": "基本上",
+    "literally": "简直",
+    "apparently": "显然",
+    "technically": "严格来说",
     # 转折/让步
     "that being said": "话虽如此",
     "having said that": "话虽这么说",
@@ -438,7 +448,21 @@ def parse_translation_response(response_text: str, expected_ids: list[int]) -> d
     return result
 
 
-def _call_llm(prompt: str, max_retries: int = _MAX_RETRIES) -> str:
+# 翻译专用 System Prompt，指导模型行为
+_TRANSLATE_SYSTEM = (
+    "你是一名专业的英中口语翻译。你的目标是输出母语级的地道中文口语，"
+    "彻底消除翻译腔和机翻味。核心原则：\n\n"
+    "1. 说人话：中文必须是口语对话里会出现的自然表达，不要书面语\n"
+    "2. 懂言外之意：习语、俚语、反讽要翻译出实际含义，不要字面直译\n"
+    "3. 纠错润色：原文可能含语音识别错误（如音近词错、漏词），"
+    "按真实语义翻译，不要照搬错误文本\n"
+    "4. 简洁有力：短应答就两个字搞定，长句保持语序流畅自然\n"
+    "5. 只输出中文翻译本身，绝对不要加「好的」「以下是翻译」这类确认语"
+)
+
+
+def _call_llm(prompt: str, max_retries: int = _MAX_RETRIES,
+             system: str = None) -> str:
     """
     带重试退避的 LLM 调用封装（使用翻译专用 temperature）。
 
@@ -449,6 +473,7 @@ def _call_llm(prompt: str, max_retries: int = _MAX_RETRIES) -> str:
     Args:
         prompt: 提示词
         max_retries: 最大重试次数
+        system: 可选的 system prompt
 
     Returns:
         str: 模型回复文本（全部失败时返回空串）
@@ -456,7 +481,7 @@ def _call_llm(prompt: str, max_retries: int = _MAX_RETRIES) -> str:
     translate_temp = float(getattr(config, "LLM_TRANSLATE_TEMPERATURE", 0.6))
     for attempt in range(1, max_retries + 1):
         try:
-            resp = call_ollama(prompt, temperature=translate_temp)
+            resp = call_ollama(prompt, temperature=translate_temp, system=system)
         except SystemExit:
             # call_ollama 连接失败触发 sys.exit，阻止其杀掉整个进程
             wait = _RETRY_BACKOFF * attempt
@@ -584,14 +609,14 @@ def translate_sentences(
                 snippet = snippet[:_PROMPT_SNIPPET_LEN] + "..."
             print(f"  {snippet}")
             print(f"  ---")
-        response = _call_llm(prompt)
+        response = _call_llm(prompt, system=_TRANSLATE_SYSTEM)
         batch_translations = parse_translation_response(response, expected_ids)
 
         # 检测元响应：若模型返回了确认语而非翻译，用极简 prompt 重试批次
         if not batch_translations and _is_meta_response(response):
             print(f"  [元响应检测] 模型返回了确认语而非翻译，使用极简 prompt 重试")
             direct_prompt = _build_direct_prompt(batch, prev_context)
-            response = _call_llm(direct_prompt)
+            response = _call_llm(direct_prompt, system=_TRANSLATE_SYSTEM)
             batch_translations = parse_translation_response(response, expected_ids)
 
         elapsed = time.time() - t0
@@ -612,11 +637,11 @@ def translate_sentences(
                 # 单句重试（使用单句 prompt）
                 print(f"  [重试] 句子 {actual_idx} 单句重试...")
                 retry_prompt = build_translation_prompt([(1, text)], prev_context)
-                retry_resp = _call_llm(retry_prompt)
+                retry_resp = _call_llm(retry_prompt, system=_TRANSLATE_SYSTEM)
                 # 检测元响应：若返回确认语，用极简 prompt 重试
                 if _is_meta_response(retry_resp):
                     print(f"    [元响应] 单句也返回了确认语，使用极简 prompt")
-                    retry_resp = _call_llm(_build_direct_prompt([(1, text)], prev_context))
+                    retry_resp = _call_llm(_build_direct_prompt([(1, text)], prev_context), system=_TRANSLATE_SYSTEM)
                 retry_text = _clean_pinyin(retry_resp.strip()) if retry_resp else ""
                 if retry_text:
                     retry_text = _apply_colloquial_fixup(text, retry_text)
