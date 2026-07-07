@@ -65,10 +65,25 @@ function renderResult(data) {
 
     timeMappingData = data.time_mapping || [];
 
-    const sentencePairs = data.sentence_pairs || [];
+    // 兼容老数据：sentence_pairs 缺失时，从 translations + translated_indices 现场重建
+    let sentencePairs = data.sentence_pairs || [];
+    if (sentencePairs.length === 0 && data.translations && data.translated_indices) {
+        const segments = data.segments || [];
+        const sortedIdx = [...data.translated_indices].sort((a, b) => a - b);
+        sentencePairs = sortedIdx
+            .filter(idx => idx < segments.length && data.translations[idx])
+            .map(idx => ({
+                index: idx,
+                english: (segments[idx].text || '').trim(),
+                chinese: data.translations[idx],
+                start: segments[idx].start || 0,
+                end: segments[idx].end || 0,
+            }));
+    }
 
-    document.getElementById('badge-words').textContent =
-        (result?.translated_segments || sentencePairs.length || 0) + ' 句翻译';
+    const translatedCount = result?.translated_segments || sentencePairs.length;
+
+    document.getElementById('badge-words').textContent = translatedCount + ' 句翻译';
     document.getElementById('badge-duration').textContent =
         (result?.mixed_duration || '--') + ' 秒';
 
@@ -81,6 +96,19 @@ function renderResult(data) {
 
     const mixedLabel = document.querySelector('.audio-item:last-child .audio-label');
     if (mixedLabel) mixedLabel.innerHTML = '<span class="label-dot mixed"></span>中文配音音频';
+
+    if (sentencePairs.length === 0) {
+        // 完全无翻译数据：显示原版英文转录 + 提示
+        const container = document.getElementById('transcript-container');
+        if (container) {
+            container.innerHTML = '<p style="color:var(--text-tertiary);padding:24px 0;">'
+                + '⚠️ 此任务无翻译数据（可能为旧任务或翻译失败）。<br>'
+                + '请在历史记录中重新提交或使用「重试」按钮重新处理。'
+                + '</p>';
+        }
+        segmentsData = [];
+        return;
+    }
 
     renderTranscriptSentenceMode(data.segments, sentencePairs, null);
 }
