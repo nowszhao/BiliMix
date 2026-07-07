@@ -407,6 +407,13 @@ function renderTaskDetail(container, task) {
     container.innerHTML = html;
 }
 
+function openTaskResultView(taskId, url) {
+    // 切换到完整结果页（带回播放器+字幕同步）
+    currentTaskId = taskId;
+    tasks_url = url || '';
+    if (typeof loadResult === 'function') loadResult();
+}
+
 function renderProcessingTaskDetail(task) {
     const progress = task.progress || 0;
     const message = task.message || '';
@@ -442,6 +449,22 @@ function renderProcessingTaskDetail(task) {
     `;
 }
 
+function _resolveAudioUrl(serverPath) {
+    if (!serverPath) return '';
+    // 服务端返回的绝对路径 → 映射为 /api/audio/ 端点
+    const markers = ['/data/results/', '/data/downloads/', '\\data\\results\\', '\\data\\downloads\\'];
+    for (const m of markers) {
+        const idx = serverPath.indexOf(m);
+        if (idx !== -1) {
+            const rel = serverPath.substring(idx + m.length).replace(/\\/g, '/');
+            return `/api/audio/${rel}`;
+        }
+    }
+    // fallback: 直接拼 basename
+    const basename = serverPath.split('/').pop().split('\\').pop();
+    return `/api/audio/${basename}`;
+}
+
 function renderCompletedTaskDetail(task) {
     const basename = task.basename || (task.result && task.result.basename) || '';
     const mixedAudio = task.result && task.result.mixed_audio ? task.result.mixed_audio : '';
@@ -451,17 +474,25 @@ function renderCompletedTaskDetail(task) {
     if (basename) {
         playerHtml = `<div class="task-audio-inline">`;
         if (mixedAudio) {
-            playerHtml += `<div class="task-audio-item"><span class="task-audio-label">混合</span><audio controls preload="none" src="${escapeAttr(mixedAudio)}"></audio></div>`;
+            const mixedUrl = _resolveAudioUrl(mixedAudio);
+            playerHtml += `<div class="task-audio-item"><span class="task-audio-label">混合</span><audio controls preload="none" src="${escapeAttr(mixedUrl)}"></audio></div>`;
         }
         if (originalAudio) {
-            playerHtml += `<div class="task-audio-item"><span class="task-audio-label">原始</span><audio controls preload="none" src="${escapeAttr(originalAudio)}"></audio></div>`;
+            const origUrl = _resolveAudioUrl(originalAudio);
+            playerHtml += `<div class="task-audio-item"><span class="task-audio-label">原始</span><audio controls preload="none" src="${escapeAttr(origUrl)}"></audio></div>`;
         }
         playerHtml += `</div>`;
     }
 
+    const taskId = task.task_id || currentTaskId;
+    const url = task.url || tasks_url || '';
+
     return `
         ${playerHtml}
         <div class="task-detail-end">✅ 已完成 · ${(task.mixed_duration || 0)}s 混合音频</div>
+        <div class="task-detail-actions" style="margin-top:10px;">
+            <button class="ep-btn-primary ep-btn" onclick="event.stopPropagation(); openTaskResultView('${taskId}', '${escapeAttr(url)}')">查看字幕</button>
+        </div>
     `;
 }
 
