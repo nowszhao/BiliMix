@@ -378,3 +378,47 @@ def mix_sentence_audio(
         "english_segments": en_count,
         "time_mapping": time_mapping,
     }
+
+
+def build_segments_with_mixed_time(segments: list, translations: dict,
+                                   time_mapping: list) -> list:
+    """
+    将原始 WhisperX segments 的时间戳替换为混合音频时间轴上的位置。
+
+    从 time_mapping 中提取每个 segment 在混合音频中的 mixed_start，
+    构建新的 segments 列表供前端字幕渲染和 seek 定位使用。
+
+    Args:
+        segments: 原始 WhisperX segments [{text, start, end, ...}, ...]
+        translations: {segment_index: chinese_text}
+        time_mapping: mix_sentence_audio 返回的 time_mapping
+
+    Returns:
+        list[dict]: segments 副本，start/end 替换为混合音频时间轴上的值
+    """
+    seg_to_mixed = {}
+    for entry in time_mapping:
+        if entry.get("type") == "tts_chinese" and entry.get("segment_index", -1) >= 0:
+            sidx = entry["segment_index"]
+            if sidx not in seg_to_mixed:
+                seg_to_mixed[sidx] = {
+                    "start": round(entry["mixed_start"], 3),
+                    "end": round(entry["mixed_end"], 3),
+                }
+
+    result = []
+    for i, seg in enumerate(segments):
+        s = {
+            "text": seg.get("text", "").strip(),
+            "speaker": seg.get("speaker", ""),
+        }
+        if i in seg_to_mixed:
+            s["start"] = seg_to_mixed[i]["start"]
+            s["end"] = seg_to_mixed[i]["end"]
+            if i in translations:
+                s["chinese"] = translations[i]
+        else:
+            s["start"] = round(seg.get("start", 0), 3)
+            s["end"] = round(seg.get("end", 0), 3)
+        result.append(s)
+    return result

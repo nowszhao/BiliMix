@@ -56,7 +56,7 @@ from pipeline.step2b_translate_sentences import (
     select_sentences_to_translate,
     translate_sentences,
 )
-from pipeline.step4b_sentence_mixer import mix_sentence_audio
+from pipeline.step4b_sentence_mixer import mix_sentence_audio, build_segments_with_mixed_time
 
 # Flask 静态文件目录使用绝对路径（web_app.py 已移至 services/ 子目录）
 _web_dir = os.path.join(config.BASE_DIR, "web")
@@ -592,15 +592,19 @@ def continue_after_sentence_confirmation(task_id: str):
             "process_mode": task.get("process_mode", "sentence_translate"),
         }
 
+        # 构建混合时间轴的 segments（start/end 替换为混合音频上的位置）
+        segments_mixed = build_segments_with_mixed_time(
+            segments, translations, mix_result["time_mapping"])
+
         sentence_pairs = []
         for seg_idx in translated_indices:
-            if seg_idx in translations and seg_idx < len(segments):
+            if seg_idx in translations and seg_idx < len(segments_mixed):
                 sentence_pairs.append({
                     "index": seg_idx,
-                    "english": segments[seg_idx].get("text", "").strip(),
+                    "english": segments_mixed[seg_idx].get("text", "").strip(),
                     "chinese": translations[seg_idx],
-                    "start": segments[seg_idx].get("start", 0),
-                    "end": segments[seg_idx].get("end", 0),
+                    "start": segments_mixed[seg_idx].get("start", 0),
+                    "end": segments_mixed[seg_idx].get("end", 0),
                 })
 
         mode = "sentence_translate"
@@ -608,7 +612,8 @@ def continue_after_sentence_confirmation(task_id: str):
         update_task(task_id, status="completed", step="done", progress=100,
                     message="全部完成！", result=result_data,
                     sentence_pairs=sentence_pairs,
-                    time_mapping=mix_result["time_mapping"])
+                    time_mapping=mix_result["time_mapping"],
+                    segments_mixed=segments_mixed)
 
         # 回写关联单集状态为已转录
         try:
@@ -621,6 +626,7 @@ def continue_after_sentence_confirmation(task_id: str):
             "process_mode": "sentence_translate",
             "transcription_text": full_text,
             "segments": segments,
+            "segments_mixed": segments_mixed,
             "difficult_words": task.get("difficult_words", []),
             "translations": translations,
             "translated_indices": translated_indices,
@@ -1499,21 +1505,26 @@ def retry_sentence_synthesis(task_id):
         "process_mode": task.get("process_mode", "sentence_translate"),
     }
 
+    # 构建混合时间轴的 segments
+    segments_mixed = build_segments_with_mixed_time(
+        segments, translations, mix_result["time_mapping"])
+
     sentence_pairs = []
     for seg_idx in translated_indices:
-        if seg_idx in translations and seg_idx < len(segments):
+        if seg_idx in translations and seg_idx < len(segments_mixed):
             sentence_pairs.append({
                 "index": seg_idx,
-                "english": segments[seg_idx].get("text", "").strip(),
+                "english": segments_mixed[seg_idx].get("text", "").strip(),
                 "chinese": translations[seg_idx],
-                "start": segments[seg_idx].get("start", 0),
-                "end": segments[seg_idx].get("end", 0),
+                "start": segments_mixed[seg_idx].get("start", 0),
+                "end": segments_mixed[seg_idx].get("end", 0),
             })
 
     update_task(task_id, status="completed", step="done", progress=100,
                 message="全部完成！", result=result_data,
                 sentence_pairs=sentence_pairs,
                 time_mapping=mix_result["time_mapping"],
+                segments_mixed=segments_mixed,
                 tts_audio_map=tts_audio_map)
 
     save_task_result_to_disk(result_dir, {
@@ -1521,6 +1532,7 @@ def retry_sentence_synthesis(task_id):
         "process_mode": task.get("process_mode", "sentence_translate"),
         "transcription_text": full_text,
         "segments": segments,
+        "segments_mixed": segments_mixed,
         "translations": translations,
         "translated_indices": translated_indices,
         "sentence_pairs": sentence_pairs,
@@ -1699,7 +1711,7 @@ def get_task_result(task_id):
         "process_mode": task.get("process_mode", "word_replace"),
         "title": task.get("title", ""),
         "transcription_text": task.get("transcription_text", ""),
-        "segments": task.get("segments", []),
+        "segments": task.get("segments_mixed") or task.get("segments", []),
         "difficult_words": task.get("difficult_words", []),
         "replacements": task.get("replacements", []),
         "translations": task.get("translations", {}),

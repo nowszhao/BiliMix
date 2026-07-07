@@ -195,22 +195,18 @@ function updateSegmentHighlight(container, index) {
 }
 
 function seekToSegment(startTime) {
-    const mixedTime = originalTimeToMixedTime(startTime);
+    // segments 已包含混合音频时间戳，直接 seek 即可
     if (isFullscreen) {
         const fsAudio = document.getElementById('fullscreen-audio');
         if (fsAudio) {
-            if (fullscreenAudioSource === 'mixed') {
-                fsAudio.currentTime = mixedTime;
-            } else {
-                fsAudio.currentTime = startTime;
-            }
+            fsAudio.currentTime = startTime;
             if (fsAudio.paused) fsAudio.play().catch(() => {});
         }
     } else {
         const originalAudio = document.getElementById('original-audio');
         const mixedAudio = document.getElementById('mixed-audio');
         if (mixedAudio && !mixedAudio.paused) {
-            mixedAudio.currentTime = mixedTime;
+            mixedAudio.currentTime = startTime;
         } else if (originalAudio) {
             originalAudio.currentTime = startTime;
             if (originalAudio.paused) originalAudio.play().catch(() => {});
