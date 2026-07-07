@@ -191,28 +191,22 @@ def _apply_colloquial_fixup(english: str, chinese: str) -> str:
 # few-shot 示范：理解真实语义后翻译为地道中文，而非直译错误。
 _DIALOGUE_FEWSHOT = (
     "示例（原文可能有转录错误，翻译时修正；展示地道中文口语 vs 错误直译）：\n"
+    "输入：\n"
     "[1] I was like wait are you serious right now.\n"
     "[2] Yeah a hundred percent I'm not joking.\n"
     "[3] I new there was something off about that.\n"
-    "→ [1] 我当时心想，等等，你说真的吗。\n"
-    "  ✗ 直译错误示范：「我就像等等你现在是认真的吗」\n"
-    "→ [2] 对，百分之百，我没跟你开玩笑。\n"
-    "→ [3] 我就知道这事儿有蹊跷。\n\n"
-    "[4] They was saying its gonna be huge.\n"
-    "[5] But to be honest I don't buy it.\n"
-    "[6] Fair enough I get your point.\n"
-    "→ [4] 他们说这事儿会搞得很大。\n"
-    "  ✗ 直译错误示范：「他们说它将会是巨大的」\n"
-    "→ [5] 但说实话，我不太信。\n"
-    "  ✗ 直译错误示范：「但是说实话我不买它」\n"
-    "→ [6] 也是，我明白你的意思。\n\n"
+    "输出（严格按此格式，每行只有 [N] + 中文翻译）：\n"
+    "[1] 我当时心想，等等，你说真的吗。\n"
+    "[2] 对，百分之百，我没跟你开玩笑。\n"
+    "[3] 我就知道这事儿有蹊跷。\n\n"
+    "输入：\n"
     "[7] That's literally insane how much they charge for this.\n"
     "[8] Right like at the end of the day it's not worth it.\n"
     "[9] I mean if you're on a budget you gotta cut corners somewhere.\n"
-    "→ [7] 他们收这个价也太离谱了吧，真的。\n"
-    "  ✗ 直译错误示范：「那从字面上是疯狂的他们收多少钱」\n"
-    "→ [8] 对，说到底就不值那个价。\n"
-    "→ [9] 我是说，手头紧的话，总得在哪儿省一省。\n"
+    "输出：\n"
+    "[7] 他们收这个价也太离谱了吧，真的。\n"
+    "[8] 对，说到底就不值那个价。\n"
+    "[9] 我是说，手头紧的话，总得在哪儿省一省。\n"
 )
 
 _SINGLE_FEWSHOT = (
@@ -377,26 +371,48 @@ def _build_direct_prompt(
 
 def _clean_pinyin(text: str) -> str:
     """
-    去除翻译文本末尾的拼音注释。
-
-    模型有时会输出如：
-      "我没有藏起你的骆驼，恰恰。 (Wǒ méiyǒu cáng qǐ nǐ de luòtuo, Qiàqià.)"
-    需要去掉括号内的拼音部分，只保留中文。
-
-    Args:
-        text: 可能含拼音注释的翻译文本
-
-    Returns:
-        str: 清洗后的纯中文翻译
+    清洗翻译文本：
+    1. 去除翻译文本末尾的拼音注释（括号内的拉丁字母）
+    2. 剥除前缀 `英文：` / `中文：` 等角色标签（防止模型延续交替对话模式）
+    3. 剥除前缀 `→` 箭头
+    4. 剥除前缀 `✗` 错误标记
     """
     if not text:
         return text
 
-    # 去除末尾括号中的拼音/英文注释
+    # 1. 剥除「英文：」「中文：」「→」「✗」等前缀（多轮或几行都剥）
+    text = re.sub(
+        r'^\s*(?:'
+        r'英文\s*[：:]\s*'    # 英文：
+        r'|中文\s*[：:]\s*'    # 中文：
+        r'|英\s*[：:]\s*'      # 英：
+        r'|中\s*[：:]\s*'      # 中：
+        r'|→\s*'              # 箭头
+        r'|✗\s*'              # 错误标记
+        r')+',
+        '', text
+    )
+
+    # 2. 剥除内部的「英文：... 中文：」交替污染行（保留最末尾的中文段）
+    # 模型有时会输出多对英文/中文交替行（错误续写了几轮）
+    # 切割后只保留每行包含中文的段，过滤掉"英文：xxx"行
+    if '\n' in text:
+        lines = text.split('\n')
+        zh_lines = []
+        for ln in lines:
+            ln = ln.strip()
+            if not ln:
+                continue
+            # 跳过 英文/中文 前缀交替模式中的"原文"行（保留只有中文的行）
+            if re.match(r'^(英文|英|英文：|英：)\s*', ln):
+                continue
+            zh_lines.append(ln)
+        if zh_lines:
+            text = '\n'.join(zh_lines)
+
+    # 3. 去除末尾括号中的拼音/英文注释
     # 括号内以拉丁字母（含拼音声调符号）开头才视为拼音注释并移除
-    # 模式1: "中文 (Wǒ méiyǒu...)" → 去掉末尾圆括号及括号内内容
     text = re.sub(r'\s*\(' + _LATIN_RE + r'[^)]*\)\s*$', '', text)
-    # 模式2: "中文 [Wǒ méiyǒu...]" → 去掉末尾方括号
     text = re.sub(r'\s*\[' + _LATIN_RE + r'[^\]]*\]\s*$', '', text)
     return text.strip()
 
@@ -448,7 +464,6 @@ def parse_translation_response(response_text: str, expected_ids: list[int]) -> d
     return result
 
 
-# 翻译专用 System Prompt，指导模型行为
 _TRANSLATE_SYSTEM = (
     "你是一名专业的英中口语翻译。你的目标是输出母语级的地道中文口语，"
     "彻底消除翻译腔和机翻味。核心原则：\n\n"
@@ -457,7 +472,12 @@ _TRANSLATE_SYSTEM = (
     "3. 纠错润色：原文可能含语音识别错误（如音近词错、漏词），"
     "按真实语义翻译，不要照搬错误文本\n"
     "4. 简洁有力：短应答就两个字搞定，长句保持语序流畅自然\n"
-    "5. 只输出中文翻译本身，绝对不要加「好的」「以下是翻译」这类确认语"
+    "5. 输出格式铁律：\n"
+    "   - 每行严格以 [N] 开头（N 是句号序号），后接中文翻译\n"
+    "   - 绝对不要加「英文：」「中文：」「→」「以下是翻译」等任何标签或前缀\n"
+    "   - 不要重复输出原文，不要续写多对英文/中文交替\n"
+    "   - 不要加确认语、解释、注释或任何非翻译内容\n"
+    "   - 输入 N 句就输出 N 行，缺一行视为错误"
 )
 
 
