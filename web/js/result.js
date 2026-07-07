@@ -93,7 +93,7 @@ function renderResult(data) {
         const vocabTabBtn2 = document.querySelector('[data-tab="vocabulary"]');
         if (vocabTabBtn2) vocabTabBtn2.innerHTML = '🔄 中英对照';
         const replTabBtn2 = document.querySelector('[data-tab="replacements"]');
-        if (replTabBtn2) replTabBtn2.innerHTML = '🔄 替换详情';
+        if (replTabBtn2) replTabBtn2.innerHTML = '✨ 翻译详情';
 
     } else {
         document.getElementById('badge-words').textContent =
@@ -263,6 +263,7 @@ function renderVocabulary(words) {
 
 function renderReplacements(replacements) {
     const list = document.getElementById('replacements-list');
+    if (!list) return;
     if (!replacements || replacements.length === 0) {
         list.innerHTML = '<p style="color:var(--text-tertiary)">暂无替换记录</p>';
         return;
@@ -298,6 +299,7 @@ function renderReplacements(replacements) {
 function renderSentencePairs(sentencePairs, targetContainerId) {
     const containerId = targetContainerId || 'vocab-grid';
     const container = document.getElementById(containerId);
+    if (!container) return;
     if (!sentencePairs || sentencePairs.length === 0) {
         container.innerHTML = '<p style="color:var(--text-tertiary)">暂无翻译对照</p>';
         return;
