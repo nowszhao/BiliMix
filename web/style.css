@@ -5373,3 +5373,195 @@ body {
         font-size: 22px;
     }
 }
+
+/* ============================================================
+   Video Mode — 视频配音 UI 样式
+   ============================================================ */
+
+/* 顶层模式面板 */
+.top-mode-panel {
+    display: none;
+}
+
+.top-mode-panel.active {
+    display: block;
+}
+
+.top-mode-tabs .input-mode-tab {
+    font-size: 14px;
+    padding: 14px 12px;
+}
+
+/* 子模式标签（比主标签小一级） */
+.sub-mode-tabs {
+    margin-top: 4px;
+    border-bottom: none;
+}
+
+.sub-mode-tabs .input-mode-tab {
+    font-size: 13px;
+    padding: 10px 8px;
+    color: var(--text-secondary);
+    border-bottom: 2px solid transparent;
+}
+
+.sub-mode-tabs .input-mode-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.sub-mode-tabs .input-mode-tab:hover {
+    color: var(--accent);
+    background: var(--accent-light);
+}
+
+/* 视频选项面板 */
+.video-options {
+    margin-top: 16px;
+    padding: 16px;
+    background: var(--bg-hover);
+    border-radius: var(--radius-sm);
+}
+
+.video-option-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.video-option-row:last-child {
+    margin-bottom: 0;
+}
+
+.video-option-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    min-width: 56px;
+    flex-shrink: 0;
+}
+
+.video-option-choices {
+    display: flex;
+    gap: 16px;
+}
+
+.video-radio {
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.video-radio input[type="radio"] {
+    accent-color: var(--accent);
+}
+
+.video-option-select {
+    padding: 6px 10px;
+    font-size: 13px;
+    font-family: var(--font);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.video-option-select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+/* YouTube 预览 */
+.video-url-preview {
+    margin-top: 12px;
+    padding: 12px;
+    background: var(--bg-hover);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+/* 步骤条 — 视频专属步骤（默认隐藏，视频任务时显示） */
+.video-step {
+    display: none;
+}
+
+.video-step.show {
+    display: flex;
+}
+
+/* ============================================================
+   Video Result — 视频结果区
+   ============================================================ */
+
+.video-player-card {
+    margin-bottom: 20px;
+}
+
+/* 视频播放器保持 16:9 比例 */
+.video-player-wrapper {
+    position: relative;
+    width: 100%;
+    background: #000;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    margin-bottom: 16px;
+}
+
+.dubbed-video {
+    width: 100%;
+    display: block;
+    max-height: 480px;
+    background: #000;
+    outline: none;
+}
+
+.dubbed-video:focus {
+    outline: none;
+}
+
+/* 下载按钮栏 */
+.video-download-bar {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.video-download-bar .btn-primary,
+.video-download-bar .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    text-decoration: none;
+    transition: var(--transition);
+}
+
+.video-download-bar .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+}
+
+.video-download-bar .btn-primary:hover {
+    background: #0077ED;
+}
+
+.video-download-bar .btn-secondary {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+}
+
+.video-download-bar .btn-secondary:hover {
+    background: var(--border-light);
+    border-color: var(--text-tertiary);
+}

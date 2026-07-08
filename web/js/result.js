@@ -43,15 +43,137 @@ async function loadResult() {
             currentTaskTitle = data.title;
         }
 
-        renderResult(data);
-
-        const resultSection = document.getElementById('result-section');
-        if (resultSection && resultSection.classList.contains('hidden')) {
-            showSection('result');
+        // 检查是否为视频任务
+        if (data.process_mode === 'video' || data.video_result) {
+            isVideoTask = true;
+            renderVideoResult(data);
+            const videoSection = document.getElementById('video-result-section');
+            if (videoSection && videoSection.classList.contains('hidden')) {
+                showSection('video-result');
+            }
+        } else {
+            renderResult(data);
+            const resultSection = document.getElementById('result-section');
+            if (resultSection && resultSection.classList.contains('hidden')) {
+                showSection('result');
+            }
         }
     } catch (err) {
         console.error('Load result error:', err);
     }
+}
+
+async function renderVideoResult(data) {
+    const result = data.result;
+    const videoResult = data.video_result || {};
+
+    timeMappingData = data.time_mapping || [];
+
+    let sentencePairs = data.sentence_pairs || [];
+    if (sentencePairs.length === 0 && data.translations && data.translated_indices) {
+        const segments = data.segments || [];
+        const sortedIdx = [...data.translated_indices].sort((a, b) => a - b);
+        sentencePairs = sortedIdx
+            .filter(idx => idx < segments.length && data.translations[idx])
+            .map(idx => ({
+                index: idx,
+                english: (segments[idx].text || '').trim(),
+                chinese: data.translations[idx],
+                start: segments[idx].start || 0,
+                end: segments[idx].end || 0,
+            }));
+    }
+
+    const translatedCount = result?.translated_segments || sentencePairs.length;
+
+    document.getElementById('vbadge-words').textContent = translatedCount + ' 句翻译';
+    document.getElementById('vbadge-duration').textContent =
+        (result?.mixed_duration || '--') + ' 秒';
+
+    // 视频播放器
+    const videoEl = document.getElementById('dubbed-video');
+    if (videoEl && videoResult.video_url) {
+        videoEl.src = videoResult.video_url;
+        videoEl.load();
+    }
+
+    // 下载按钮
+    const dlVideoBtn = document.getElementById('download-video-btn');
+    if (dlVideoBtn && videoResult.video_url) {
+        dlVideoBtn.href = videoResult.video_url;
+        dlVideoBtn.download = (data.title || 'dubbed_video') + '.mp4';
+    }
+
+    const dlSrtBtn = document.getElementById('download-srt-btn');
+    if (dlSrtBtn && videoResult.srt_url) {
+        dlSrtBtn.href = videoResult.srt_url;
+        dlSrtBtn.download = (data.title || 'subtitles') + '.srt';
+    }
+
+    // 双语字幕渲染
+    if (sentencePairs.length > 0) {
+        renderVideoTranscript(data.segments, sentencePairs);
+    }
+}
+
+function renderVideoTranscript(segments, sentencePairs) {
+    const container = document.getElementById('vtranscript-container');
+    if (!container) return;
+
+    segmentsData = (segments || []).map(s => ({ ...s }));
+
+    const translationMap = {};
+    if (sentencePairs) {
+        sentencePairs.forEach(p => { translationMap[p.index] = p.chinese; });
+    }
+
+    const infoEl = document.getElementById('vtranscript-info');
+    if (infoEl) {
+        infoEl.textContent = `共 ${(segments || []).length} 个句子，${sentencePairs?.length || 0} 句翻译`;
+    }
+
+    let html = '';
+    (segments || []).forEach((seg, idx) => {
+        const time = formatTime(seg.start);
+        const english = (seg.text || '').trim();
+        const chinese = translationMap[idx] || '';
+        segmentsData[idx] = segmentsData[idx] || {};
+        segmentsData[idx]._chinese = chinese;
+
+        html += `
+            <div class="transcript-segment ${chinese ? 'has-translation' : ''}"
+                 data-index="${idx}" data-start="${seg.start}" data-end="${seg.end}"
+                 onclick="seekVideoToSegment(${seg.start})">
+                <span class="segment-time">${time}</span>
+                <div class="segment-content">
+                    <span class="segment-text">${escapeHtml(english)}</span>
+                    ${chinese ? `<span class="segment-chinese">${escapeHtml(chinese)}</span>` : ''}
+                </div>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+
+function seekVideoToSegment(time) {
+    const video = document.getElementById('dubbed-video');
+    if (video) {
+        video.currentTime = time;
+        video.play().catch(() => {});
+    }
+}
+
+function showSection(sectionId) {
+    // 隐藏所有 section
+    ['progress-section', 'result-section', 'video-result-section',
+     'sentence-confirm-section'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+    });
+    // 显示目标 section
+    const target = document.getElementById(sectionId);
+    if (target) target.classList.remove('hidden');
 }
 
 function renderResult(data) {

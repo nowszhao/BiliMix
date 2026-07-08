@@ -57,6 +57,8 @@ from pipeline.step2b_translate_sentences import (
     translate_sentences,
 )
 from pipeline.step4b_sentence_mixer import mix_sentence_audio, build_segments_with_mixed_time
+from pipeline.step0_video_prepare import prepare_video
+from pipeline.step5_video_assemble import generate_bilingual_srt, assemble_video
 
 # Flask 静态文件目录使用绝对路径（web_app.py 已移至 services/ 子目录）
 _web_dir = os.path.join(config.BASE_DIR, "web")
@@ -987,7 +989,8 @@ def upload_audio():
 
     # 校验文件扩展名
     ext = os.path.splitext(f.filename)[1].lower()
-    allowed = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"}
+    allowed = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac",
+               ".mp4", ".mkv", ".mov", ".avi", ".webm"}
     if ext not in allowed:
         return jsonify({"error": f"不支持的文件格式: {ext}，支持 {', '.join(sorted(allowed))}"}), 400
 
@@ -1016,28 +1019,48 @@ def upload_audio():
 
 @app.route("/api/submit", methods=["POST"])
 def submit_task():
-    """提交音频处理任务"""
+    """提交音频/视频处理任务"""
     data = request.get_json()
     if not data:
         return jsonify({"error": "请提供数据"}), 400
 
+    task_type = data.get("type", "audio")  # "audio" | "video"
     local_path = data.get("local_path", "").strip()
     audio_url = data.get("url", "").strip()
+    video_url = data.get("video_url", "").strip()
 
-    if not local_path and not audio_url:
-        return jsonify({"error": "请提供音频URL或上传本地文件"}), 400
+    # 视频任务
+    if task_type == "video":
+        if not local_path and not video_url:
+            return jsonify({"error": "请提供视频URL或上传本地视频文件"}), 400
+        if local_path:
+            if not os.path.isfile(local_path):
+                return jsonify({"error": f"文件不存在: {local_path}"}), 400
+            source = f"file://{local_path}"
+        else:
+            if not video_url.startswith(("http://", "https://")):
+                return jsonify({"error": "请提供有效的HTTP/HTTPS URL"}), 400
+            source = video_url
 
-    # 优先使用本地文件路径
-    if local_path:
-        if not os.path.isfile(local_path):
-            return jsonify({"error": f"文件不存在: {local_path}"}), 400
-        # 本地文件：用文件路径构造虚拟 URL 作为任务标识
-        audio_url = f"file://{local_path}"
-    elif not audio_url.startswith(("http://", "https://")):
-        return jsonify({"error": "请提供有效的HTTP/HTTPS URL"}), 400
+        subtitle_mode = data.get("subtitle_mode", "bilingual")
+        subtitle_font_size = data.get("subtitle_font_size", 20)
+    else:
+        # 音频任务（兼容旧版无 type 字段）
+        if not local_path and not audio_url:
+            return jsonify({"error": "请提供音频URL或上传本地文件"}), 400
+        if local_path:
+            if not os.path.isfile(local_path):
+                return jsonify({"error": f"文件不存在: {local_path}"}), 400
+            source = f"file://{local_path}"
+        elif not audio_url.startswith(("http://", "https://")):
+            return jsonify({"error": "请提供有效的HTTP/HTTPS URL"}), 400
+        else:
+            source = audio_url
+        subtitle_mode = "bilingual"
+        subtitle_font_size = 20
 
     # Always use sentence_translate mode with 100% translation
-    process_mode = "sentence_translate"
+    process_mode = "video" if task_type == "video" else "sentence_translate"
     skip_confirmation = data.get("skip_confirmation",
                                  getattr(config, "SKIP_CONFIRMATION", True))
     title = data.get("title", "").strip()
@@ -1057,7 +1080,7 @@ def submit_task():
         except ValueError:
             pass
 
-    task_id = generate_task_id(audio_url + str(time.time()))
+    task_id = generate_task_id(source + str(time.time()))
 
     cancel_flags[task_id] = threading.Event()
 
@@ -1065,14 +1088,15 @@ def submit_task():
     with tasks_lock:
         tasks[task_id] = {
             "task_id": task_id,
-            "url": audio_url,
+            "url": source,
             "title": title,
             "process_mode": process_mode,
+            "type": task_type,
             "skip_confirmation": skip_confirmation,
             "status": "downloading",
             "step": "download",
             "progress": 0,
-            "message": "任务已创建，准备下载...",
+            "message": "任务已创建，准备下载..." if task_type != "video" else "准备下载视频...",
             "created_at": created_at,
             "original_duration": pre_duration,
             "transcription_text": "",
@@ -1082,15 +1106,19 @@ def submit_task():
             "translations": {},
             "translated_indices": [],
             "result": None,
+            "video_result": None,
             "_basename": "",
             "_audio_path": "",
+            "_video_path": "",
+            "_subtitle_mode": subtitle_mode,
+            "_subtitle_font_size": subtitle_font_size,
         }
 
     # 任务创建后立即持久化到 SQLite，避免进程中途退出后历史记录丢失
     try:
         save_task_to_index(task_id, {
             "task_id": task_id,
-            "url": audio_url,
+            "url": source,
             "title": title,
             "process_mode": process_mode,
             "status": "downloading",
@@ -1131,7 +1159,7 @@ def submit_task():
                 return
             update_task(task_id, status="processing",
                         message="开始处理…")
-            _run_worker(task_id, audio_url)
+            _run_worker(task_id, source)
         finally:
             # 执行完成（或异常退出），从队列移除并通知下一个等待者
             with _queue_condition:
@@ -1139,23 +1167,85 @@ def submit_task():
                     _queue_waiters.remove(task_id)
                 _queue_condition.notify_all()
 
-    def _run_worker(task_id, audio_url):
-        # 处理 file:// 协议（用户上传的本地文件）
-        is_file_url = audio_url.startswith("file://")
+    def _run_worker(task_id, source_url):
+        # ---- 视频任务：先下载/提取视频 ----
+        if task_type == "video":
+            is_local = source_url.startswith("file://")
+            if is_local:
+                local_path = source_url[len("file://"):]
+                if not os.path.isfile(local_path):
+                    update_task(task_id, status="error",
+                                message=f"文件不存在: {local_path}")
+                    return
+                video_source = local_path
+            else:
+                video_source = source_url
+
+            # 视频缓存目录
+            video_cache_dir = os.path.join(config.DOWNLOAD_DIR, "video_cache")
+            os.makedirs(video_cache_dir, exist_ok=True)
+
+            update_task(task_id, step="download", progress=1,
+                        message="正在下载/提取视频...")
+            prep = prepare_video(video_source, video_cache_dir, title=title)
+            if not prep.get("ok"):
+                update_task(task_id, status="error",
+                            message=f"视频准备失败: {prep.get('error', '未知错误')}")
+                return
+
+            video_path = prep["video_path"]
+            audio_file = prep["audio_path"]
+            real_title = prep.get("title", title) or os.path.basename(video_path)
+            update_task(task_id, _video_path=video_path,
+                        _basename=os.path.splitext(os.path.basename(audio_file))[0],
+                        _audio_path=audio_file,
+                        title=real_title,
+                        progress=5,
+                        message=f"视频就绪: {os.path.basename(video_path)}")
+
+            # 更新任务标题到数据库
+            try:
+                save_task_to_index(task_id, {
+                    "task_id": task_id, "url": source_url,
+                    "title": real_title, "process_mode": "video",
+                    "status": "processing", "progress": 5,
+                    "message": "视频准备完成",
+                })
+            except Exception:
+                pass
+
+            # 重新从 task 读取更新后的值
+            current_task = get_task(task_id)
+            if not current_task:
+                return
+            audio_path_for_pipeline = audio_file
+        else:
+            audio_path_for_pipeline = _prepare_audio(task_id, source_url)
+            if not audio_path_for_pipeline:
+                return
+
+        # 执行核心管道（转录 → 翻译 → TTS → 混音）
+        process_audio_sentence_mode(task_id, audio_path_for_pipeline)
+
+        # ---- 视频任务：追加字幕和组装 ----
+        if task_type == "video":
+            _do_video_post_process(task_id)
+
+    def _prepare_audio(task_id, source_url):
+        """准备音频文件（下载或使用本地），返回音频路径。"""
+        is_file_url = source_url.startswith("file://")
         if is_file_url:
-            local_path = audio_url[len("file://"):]
+            local_path = source_url[len("file://"):]
             if os.path.isfile(local_path):
                 local_file = local_path
             else:
                 update_task(task_id, status="error",
                             message=f"文件不存在: {local_path}")
-                return
+                return None
         else:
-            # 尝试解析本地 HTTP URL 到本地文件路径（避免 401 认证）
-            local_file = _try_resolve_local_url(audio_url)
+            local_file = _try_resolve_local_url(source_url)
 
         if local_file:
-            # 本地文件，跳过下载
             basename = os.path.splitext(os.path.basename(local_file))[0]
             audio_path = local_file
             update_task(task_id, _basename=basename, _audio_path=audio_path)
@@ -1163,22 +1253,97 @@ def submit_task():
             update_task(task_id, progress=5,
                         message=f"使用本地音频文件 ({size_mb:.1f} MB)")
         else:
-            basename = hashlib.md5(audio_url.encode()).hexdigest()
-            ext = os.path.splitext(audio_url.split("?")[0])[-1] or ".mp3"
+            basename = hashlib.md5(source_url.encode()).hexdigest()
+            ext = os.path.splitext(source_url.split("?")[0])[-1] or ".mp3"
             if ext not in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"):
                 ext = ".mp3"
             audio_path = os.path.join(config.DOWNLOAD_DIR, f"{basename}{ext}")
             update_task(task_id, _basename=basename, _audio_path=audio_path)
 
             if os.path.exists(audio_path):
-                update_task(task_id, progress=5, message="音频文件已存在，跳过下载")
+                update_task(task_id, progress=5, message="文件已存在，跳过下载")
             else:
-                if not download_audio(audio_url, audio_path, task_id):
-                    return
+                if not download_audio(source_url, audio_path, task_id):
+                    return None
+        return audio_path
 
-        task = get_task(task_id)
-        mode = "sentence_translate"
-        process_audio_sentence_mode(task_id, audio_path)
+    def _do_video_post_process(task_id):
+        """视频任务后处理：生成字幕 + 组装视频。"""
+        try:
+            task = get_task(task_id)
+            if not task:
+                return
+            result = task.get("result", {})
+            if not result:
+                print(f"[Video] 无混音结果，跳过后处理")
+                return
+
+            mode = task.get("_subtitle_mode", "bilingual")
+            basename = task.get("_basename", "")
+            video_path = task.get("_video_path", "")
+            mixed_audio = result.get("mixed_audio", "")
+            result_dir = os.path.join(config.RESULT_DIR, basename)
+
+            if not video_path or not os.path.isfile(video_path):
+                print(f"[Video] 视频文件缺失: {video_path}")
+                return
+            if not mixed_audio or not os.path.isfile(mixed_audio):
+                print(f"[Video] 混音文件缺失: {mixed_audio}")
+                return
+
+            # Step 5a: 生成双语 SRT
+            update_task(task_id, step="subtitle", progress=93,
+                        message="正在生成字幕...")
+            segments = task.get("segments", [])
+            translations = task.get("translations", {})
+            time_mapping = task.get("time_mapping", [])
+            srt_path = os.path.join(result_dir, f"{basename}.srt")
+            srt_result = generate_bilingual_srt(
+                segments, translations, time_mapping, srt_path,
+                subtitle_mode=mode)
+            if not srt_result:
+                print(f"[Video] 字幕生成失败")
+                return
+
+            # Step 5b: 组装视频
+            update_task(task_id, step="assemble", progress=96,
+                        message="正在合成视频（可能需要几分钟）...")
+            output_video = os.path.join(result_dir, f"{basename}_dubbed.mp4")
+            font_size = int(task.get("_subtitle_font_size", 20))
+            sub_style = (
+                f"FontName=Arial,"
+                f"FontSize={font_size},"
+                f"PrimaryColour=&H00FFFFFF,"
+                f"OutlineColour=&H00000000,"
+                f"Outline=2,Shadow=1,"
+                f"MarginV=40"
+            )
+            assembled = assemble_video(
+                video_path, mixed_audio, srt_path, output_video,
+                subtitle_style=sub_style)
+
+            if not assembled:
+                update_task(task_id, status="error",
+                            message="视频组装失败，请检查 ffmpeg 和磁盘空间")
+                return
+
+            # 存储视频结果
+            video_result = {
+                "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",
+                "srt_url": f"/api/audio/{basename}/{basename}.srt",
+                "video_path": output_video,
+                "srt_path": srt_path,
+            }
+            update_task(task_id, status="completed", step="done", progress=100,
+                        message="视频配音完成！",
+                        video_result=video_result)
+
+        except InterruptedError:
+            update_task(task_id, status="cancelled", message="任务已被终止")
+        except Exception as e:
+            traceback.print_exc()
+            update_task(task_id, status="error",
+                        message=f"视频后处理出错: {str(e)}")
 
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
@@ -1719,16 +1884,19 @@ def get_task_result(task_id):
         "sentence_pairs": task.get("sentence_pairs", []),
         "result": task.get("result"),
         "time_mapping": task.get("time_mapping", []),
+        "video_result": task.get("video_result"),
     })
 
 
 @app.route("/api/audio/<path:filename>")
 def serve_audio(filename):
-    """服务音频文件"""
+    """服务音频/视频文件"""
     mime_map = {
         ".mp3": "audio/mpeg", ".wav": "audio/wav",
         ".m4a": "audio/mp4", ".ogg": "audio/ogg",
         ".flac": "audio/flac", ".aac": "audio/aac",
+        ".mp4": "video/mp4", ".mkv": "video/x-matroska",
+        ".srt": "text/plain; charset=utf-8",
     }
     ext = os.path.splitext(filename)[1].lower()
     mime = mime_map.get(ext, "audio/mpeg")

@@ -7,14 +7,110 @@
 // Input Mode Switching
 // ============================================================
 
+function switchTopMode(mode) {
+    currentTopMode = mode;
+    document.querySelectorAll('.top-mode-tabs .input-mode-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.topmode === mode);
+    });
+    document.querySelectorAll('.top-mode-panel').forEach(panel => {
+        panel.classList.toggle('active', panel.id === `topmode-${mode}`);
+    });
+    // 切换时更新按钮文案
+    const btn = document.getElementById('generate-btn');
+    if (btn) {
+        btn.querySelector('.btn-text').textContent = mode === 'video' ? '🎬 开始配音' : '开始生成';
+    }
+}
+
 function switchInputMode(mode) {
     currentInputMode = mode;
-    document.querySelectorAll('.input-mode-tab').forEach(tab => {
+    document.querySelectorAll('#topmode-audio .input-mode-tab').forEach(tab => {
         tab.classList.toggle('active', tab.dataset.mode === mode);
     });
-    document.querySelectorAll('.input-mode-content').forEach(content => {
+    document.querySelectorAll('#topmode-audio .input-mode-content').forEach(content => {
         content.classList.toggle('active', content.id === `input-mode-${mode}`);
     });
+}
+
+function switchVideoMode(mode) {
+    currentVideoMode = mode;
+    document.querySelectorAll('#topmode-video .input-mode-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.vmode === mode);
+    });
+    document.querySelectorAll('#topmode-video .input-mode-content').forEach(content => {
+        content.classList.toggle('active', content.id === `video-mode-${mode}`);
+    });
+}
+
+function updateVideoOptions() {
+    // 占位：视频选项变更时更新内部状态
+    // 实际值在 submitTask 时读取
+}
+
+// ============================================================
+// Video File Upload
+// ============================================================
+
+async function onVideoFileSelected(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    const allowed = ['.mp4', '.mkv', '.mov', '.avi', '.webm'];
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    if (!allowed.includes(ext)) {
+        showToast('❌ 不支持的视频格式，支持: ' + allowed.join(', '));
+        input.value = '';
+        return;
+    }
+
+    const infoEl = document.getElementById('video-upload-info');
+    const nameEl = document.getElementById('video-upload-name');
+    const sizeEl = document.getElementById('video-upload-size');
+    const labelEl = document.getElementById('video-upload-label');
+
+    infoEl.style.display = 'flex';
+    nameEl.textContent = '⏳ 上传中...';
+    sizeEl.textContent = formatFileSize(file.size);
+    labelEl.textContent = '正在上传...';
+
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const resp = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData,
+        });
+        const data = await resp.json();
+
+        if (!resp.ok || !data.ok) {
+            showToast('❌ ' + (data.error || '上传失败'));
+            infoEl.style.display = 'none';
+            labelEl.textContent = '选择或拖拽视频文件';
+            input.value = '';
+            return;
+        }
+
+        videoUploadedPath = data.local_path;
+        videoUploadedName = data.filename;
+        nameEl.textContent = '✅ ' + data.filename;
+        sizeEl.textContent = formatFileSize(file.size);
+        labelEl.textContent = '上传完成，点击可重新选择';
+        showToast('✅ 上传成功 (' + data.size_mb + ' MB)');
+    } catch (err) {
+        showToast('❌ 上传失败: ' + err.message);
+        infoEl.style.display = 'none';
+        labelEl.textContent = '选择或拖拽视频文件';
+        input.value = '';
+    }
+}
+
+function clearVideoUpload() {
+    videoUploadedPath = '';
+    videoUploadedName = '';
+    document.getElementById('video-upload-info').style.display = 'none';
+    document.getElementById('video-upload-input').value = '';
+    document.getElementById('video-upload-label').textContent = '选择或拖拽视频文件';
 }
 
 // ============================================================
@@ -108,12 +204,24 @@ async function submitTask() {
         miniPlayerClose();
     }
 
+    const isVideo = currentTopMode === 'video';
+    isVideoTask = isVideo;
+
+    if (isVideo) {
+        // ========== 视频配音模式 ==========
+        await submitVideoTask(btn);
+    } else {
+        // ========== 音频转录模式 ==========
+        await submitAudioTask(btn);
+    }
+}
+
+async function submitAudioTask(btn) {
     let url = '';
     let title = '';
     let localPath = '';
 
     if (currentInputMode === 'file') {
-        // 文件模式：独立提交流程
         if (!uploadedFilePath) {
             showToast('❗ 请先选择一个音频文件上传');
             return;
@@ -121,7 +229,6 @@ async function submitTask() {
         localPath = uploadedFilePath;
         title = uploadedFileName;
     } else {
-        // URL 模式：独立提交流程
         const urlInput = document.getElementById('audio-url');
         if (!urlInput) { showToast('❗ 请输入音频 URL'); return; }
         url = urlInput.value.trim();
@@ -139,10 +246,10 @@ async function submitTask() {
     btn.querySelector('.btn-text').textContent = '提交中...';
 
     try {
-        // 始终跳过确认
         const body = {
             title: title,
             skip_confirmation: true,
+            type: 'audio',
         };
         if (localPath) {
             body.local_path = localPath;
@@ -163,9 +270,7 @@ async function submitTask() {
             return;
         }
         currentTaskId = data.task_id;
-        // 提交成功后清除文件状态，下次回来不会残留
         if (currentInputMode === 'file') clearUploadedFile();
-        // 跳转到任务页，新任务自动展开详情
         showToast('✅ 任务已提交');
         if (typeof switchView === 'function') switchView('tasks');
         setTimeout(() => {
@@ -177,6 +282,84 @@ async function submitTask() {
         alert('网络错误: ' + err.message);
         btn.disabled = false;
         btn.querySelector('.btn-text').textContent = '开始生成';
+    }
+}
+
+async function submitVideoTask(btn) {
+    let url = '';
+    let title = '';
+    let localPath = '';
+
+    if (currentVideoMode === 'local') {
+        if (!videoUploadedPath) {
+            showToast('❗ 请先选择一个视频文件上传');
+            return;
+        }
+        localPath = videoUploadedPath;
+        title = videoUploadedName;
+    } else {
+        const urlInput = document.getElementById('video-url');
+        if (!urlInput) { showToast('❗ 请输入视频 URL'); return; }
+        url = urlInput.value.trim();
+        if (!url) { shakeElement(urlInput); urlInput.focus(); return; }
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            showToast('❗ 请输入有效的 HTTP/HTTPS 链接');
+            return;
+        }
+    }
+
+    // 读取字幕选项
+    const subModeEl = document.querySelector('input[name="sub_mode"]:checked');
+    const subMode = subModeEl ? subModeEl.value : 'bilingual';
+    const fontSizeEl = document.getElementById('sub-font-size');
+    const fontSize = fontSizeEl ? fontSizeEl.value : '20';
+
+    tasks_url = url || ('file://' + localPath);
+    currentTaskTitle = title;
+    currentProcessMode = 'sentence_translate';
+    isVideoTask = true;
+    btn.disabled = true;
+    btn.querySelector('.btn-text').textContent = '提交中...';
+
+    try {
+        const body = {
+            title: title,
+            skip_confirmation: true,
+            type: 'video',
+            subtitle_mode: subMode,
+            subtitle_font_size: parseInt(fontSize),
+        };
+        if (localPath) {
+            body.local_path = localPath;
+        } else {
+            body.video_url = url;
+        }
+
+        const resp = await fetch('/api/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            alert(data.error || '提交失败');
+            btn.disabled = false;
+            btn.querySelector('.btn-text').textContent = '🎬 开始配音';
+            return;
+        }
+        currentTaskId = data.task_id;
+        if (currentVideoMode === 'local') clearVideoUpload();
+        showToast('✅ 视频任务已提交');
+        if (typeof switchView === 'function') switchView('tasks');
+        setTimeout(() => {
+            if (typeof toggleTaskDetail === 'function') {
+                toggleTaskDetail(data.task_id, tasks_url);
+            }
+        }, 800);
+    } catch (err) {
+        alert('网络错误: ' + err.message);
+        btn.disabled = false;
+        btn.querySelector('.btn-text').textContent = '🎬 开始配音';
     }
 }
 
@@ -353,27 +536,37 @@ function updateProgress(data) {
     const sentSteps = document.getElementById('steps-sentence-translate');
     if (sentSteps) sentSteps.classList.remove('hidden');
 
-    const stepsConfig = {
-        steps: ['download', 'transcribe', 'translate', 'confirm', 'synthesize', 'mix'],
-        stepOrder: {
-            'download': 0, 'downloading': 0, 'transcribe': 1, 'translate': 2,
-            'confirm_sentence': 3, 'confirm': 3, 'synthesize': 4,
-            'merge': 5, 'vocabulary': 5, 'done': 6,
-        },
-        prefix: 'st-step-', container: sentSteps,
-    };
+    // 视频步骤显示/隐藏
+    const videoSteps = document.querySelectorAll('.video-step');
+    if (isVideoTask) {
+        videoSteps.forEach(el => el.classList.add('show'));
+    } else {
+        videoSteps.forEach(el => el.classList.remove('show'));
+    }
 
-    const currentStep = stepsConfig.stepOrder[data.step] ?? -1;
-    stepsConfig.steps.forEach((step, i) => {
-        const el = document.getElementById(stepsConfig.prefix + step);
+    const baseSteps = isVideoTask
+        ? ['download', 'transcribe', 'translate', 'confirm', 'synthesize', 'mix', 'subtitle', 'assemble']
+        : ['download', 'transcribe', 'translate', 'confirm', 'synthesize', 'mix'];
+
+    const stepOrder = isVideoTask
+        ? { 'download': 0, 'downloading': 0, 'transcribe': 1, 'translate': 2,
+            'confirm_sentence': 3, 'confirm': 3, 'synthesize': 4,
+            'merge': 5, 'mix': 5, 'subtitle': 6, 'assemble': 7, 'done': 8 }
+        : { 'download': 0, 'downloading': 0, 'transcribe': 1, 'translate': 2,
+            'confirm_sentence': 3, 'confirm': 3, 'synthesize': 4,
+            'merge': 5, 'vocabulary': 5, 'done': 6 };
+
+    const currentStep = stepOrder[data.step] ?? -1;
+    baseSteps.forEach((step, i) => {
+        const el = document.getElementById('st-step-' + step);
         if (!el) return;
         el.classList.remove('active', 'done');
         if (i < currentStep) el.classList.add('done');
         else if (i === currentStep) el.classList.add('active');
     });
 
-    if (stepsConfig.container) {
-        stepsConfig.container.querySelectorAll('.step-line').forEach((line, i) => {
+    if (sentSteps) {
+        sentSteps.querySelectorAll('.step-line').forEach((line, i) => {
             line.classList.remove('done');
             if (i < currentStep) line.classList.add('done');
         });

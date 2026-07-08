@@ -8,6 +8,8 @@ let currentProcessMode = 'sentence_translate';
 let pollTimer = null;
 let tasks_url = '';
 let currentInputMode = 'search';
+let currentTopMode = 'audio';         // 'audio' | 'video'  顶层模式
+let currentVideoMode = 'youtube';     // 'youtube' | 'local' 视频子模式
 let selectedEpisodeUrl = '';
 let selectedEpisodeTitle = '';
 let rssSelectedEpisodeUrl = '';
@@ -65,6 +67,11 @@ let searchSuggestionTimer = null;
 // Mini Player 播放状态
 let miniPlayerState = null;
 // { taskId, title, audioType: 'original'|'mixed', url, savedProcessMode }
+
+// 视频任务状态
+let isVideoTask = false;               // 当前任务是否为视频模式
+let videoUploadedPath = '';
+let videoUploadedName = '';
 
 // 词频筛选策略
 const filterStrategies = {
