@@ -272,16 +272,15 @@ def build_translation_prompt(
 
     if is_dialogue:
         # ---- 多句（对话/段落）模式 ----
-        # 不使用「你是...」等角色扮演开头，translategemma 容易将其理解为元指令并回复确认语
         return (
-            f"将以下 {len(sentences)} 行英文播客口语翻译为地道中文口语。直接输出，不要确认语。\n\n"
-            f"提示：原文来自语音识别，可能含转录错误。理解真实语义后再翻译。\n\n"
+            f"翻译以下 {len(sentences)} 句英文播客对话为中文配音稿。\n"
+            f"翻译结果将交给配音演员朗读，必须适合口语表达。\n\n"
             f"{context_section}"
-            f"要求：\n"
-            f"1. 地道中文：用母语者日常聊天的表达方式，不要书面语或翻译腔\n"
-            f"2. 习语意译：口语习语翻实际含义，不字面直译\n"
-            f"3. 纠错润色：识别转录错误（如发音相近词、漏词），按正确意思翻译，不要直译错误\n"
-            f"4. 应答短句简短（如\"A hundred percent.\"→\"百分之百确定。\"），叙述长句完整自然\n\n"
+            f"要点：\n"
+            f"- 口语自然：像朋友聊天一样说话，不用书面语\n"
+            f"- 意译习语：不字面硬翻，翻出实际意思\n"
+            f"- 修正错误：原文可能有语音识别错误，按正确语义翻译\n"
+            f"- 可朗读：每句完整、节奏顺畅，配音演员能一口气读完\n\n"
             f"{_DIALOGUE_FEWSHOT}"
             f"按 [N] 中文翻译 格式输出：\n\n"
             f"{numbered}"
@@ -289,8 +288,8 @@ def build_translation_prompt(
     else:
         # ---- 单句模式 ----
         return (
-            f"将以下英文翻译为地道中文口语。只输出中文翻译，不要确认语。\n\n"
-            f"提示：原文可能有转录错误，理解真实语义后翻译。\n\n"
+            f"将这句英文播客口语翻译为中文配音稿。\n"
+            f"只输出中文翻译，不要加任何前缀或解释。\n\n"
             f"{context_section}"
             f"{_SINGLE_FEWSHOT}"
             f"英文：{sentences[0][1]}\n"
@@ -363,7 +362,7 @@ def _build_direct_prompt(
     context_section = _build_context_section(prev_context, simple=True)
 
     return (
-        f"将以下英文翻译为地道中文口语。原文可能有转录错误，理解真实语义后翻译，直接输出结果，不要确认语。\n\n"
+        f"翻译以下英文播客口语为中文配音稿。原文可能有转录错误，理解真实语义后翻译。直接输出结果。\n\n"
         f"{context_section}"
         f"{numbered}\n"
     )
@@ -411,13 +410,35 @@ def _clean_pinyin(text: str) -> str:
         if zh_lines:
             text = '\n'.join(zh_lines)
 
-    # 3. 去除末尾括号中的拼音/英文注释 以及 LLM 的元注释（如「句子不完整，无法翻译」）
-    # 括号内以拉丁字母（含拼音声调符号）或中文开头
+    # 3. 去除末尾括号中的拼音/英文注释 以及 LLM 的元注释
     text = re.sub(r'\s*\(' + _LATIN_RE + r'[^)]*\)\s*$', '', text)
     text = re.sub(r'\s*\[' + _LATIN_RE + r'[^\]]*\]\s*$', '', text)
-    # LLM 可能在翻译不完整句子时添加元注释 (句子不完整，无法翻译)
     text = re.sub(r'[（(]句子不完整[，,].*?[)）]\s*$', '', text)
     return text.strip()
+
+
+def _polish_for_voice(text: str) -> str:
+    """
+    配音后处理：让翻译结果更适合朗读。
+
+    1. 去掉口语填充词（嗯、那个、就是说 等），配音不需要
+    2. 补全句末标点（方便 TTS 分段和语调控制）
+    3. 合并连续重复的标点
+    """
+    if not text:
+        return text
+
+    # 去掉句首口语填充词
+    text = re.sub(r'^(嗯[，,。.]?|那个[，,。.]?|就是说[，,。.]?|额[，,。.]?)\s*', '', text)
+
+    # 句末无标点时补句号
+    if text and not re.search(r'[。！？.!?]$', text):
+        text += '。'
+
+    # 合并连续重复标点
+    text = re.sub(r'([。！？.!?])\1+', r'\1', text)
+
+    return text
 
 
 def parse_translation_response(response_text: str, expected_ids: list[int]) -> dict[int, str]:
@@ -474,19 +495,16 @@ def parse_translation_response(response_text: str, expected_ids: list[int]) -> d
 
 
 _TRANSLATE_SYSTEM = (
-    "你是一名专业的英中口语翻译。你的目标是输出母语级的地道中文口语，"
-    "彻底消除翻译腔和机翻味。核心原则：\n\n"
-    "1. 说人话：中文必须是口语对话里会出现的自然表达，不要书面语\n"
-    "2. 懂言外之意：习语、俚语、反讽要翻译出实际含义，不要字面直译\n"
-    "3. 纠错润色：原文可能含语音识别错误（如音近词错、漏词），"
-    "按真实语义翻译，不要照搬错误文本\n"
-    "4. 简洁有力：短应答就两个字搞定，长句保持语序流畅自然\n"
-    "5. 输出格式铁律：\n"
-    "   - 每行严格以 [N] 开头（N 是句号序号），后接中文翻译\n"
-    "   - 绝对不要加「英文：」「中文：」「→」「以下是翻译」等任何标签或前缀\n"
-    "   - 不要重复输出原文，不要续写多对英文/中文交替\n"
-    "   - 不要加确认语、解释、注释或任何非翻译内容\n"
-    "   - 输入 N 句就输出 N 行，缺一行视为错误"
+    "你是一名专业的播客中文化配音翻译。你的英文播客原文将交给中文配音演员朗读，"
+    "因此翻译必须朗朗上口、适合口语朗读。\n\n"
+    "核心准则：\n"
+    "1. 说人话：必须是中国人日常聊天会说的自然口语，不要书面语、不要翻译腔\n"
+    "2. 照顾听众：句子不要太长（过长的拆成短句），节奏顺畅，听一遍就懂\n"
+    "3. 意译优先：习语、俚语、反讽翻译实际含义，绝不要字面硬翻\n"
+    "4. 纠错润色：原文可能有语音识别错误，理解真实语义后翻译，不要照搬错误原文\n"
+    "5. 完整表达：每句翻译必须是完整的、可独立朗读的中文句子\n"
+    "6. 输出铁律：严格按 [N] 中文翻译 格式输出，"
+    "绝不加「英文：」「中文：」「→」等标签或解释"
 )
 
 
@@ -657,9 +675,10 @@ def translate_sentences(
         for seq_id, text in batch:
             actual_idx = seq_to_idx[seq_id]
             if seq_id in batch_translations and batch_translations[seq_id]:
-                # 口语习语兜底修正（拼音已在 parse 阶段清洗）
+                # 口语习语兜底修正 → 配音后处理
                 translation = batch_translations[seq_id]
                 translation = _apply_colloquial_fixup(text, translation)
+                translation = _polish_for_voice(translation)
                 all_translations[actual_idx] = translation
                 batch_english_chi.append((text, translation))
             else:
@@ -674,6 +693,7 @@ def translate_sentences(
                 retry_text = _clean_pinyin(retry_resp.strip()) if retry_resp else ""
                 if retry_text:
                     retry_text = _apply_colloquial_fixup(text, retry_text)
+                    retry_text = _polish_for_voice(retry_text)
                     all_translations[actual_idx] = retry_text
                     batch_english_chi.append((text, retry_text))
                 else:
