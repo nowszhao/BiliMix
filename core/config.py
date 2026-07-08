@@ -104,7 +104,7 @@ CONFUCIUS4_TTS_NUM_BEAMS = 1
 # 重复惩罚系数（越高重复越少）
 CONFUCIUS4_TTS_REPETITION_PENALTY = 10.0
 # 扩散步骤数（越高音质越好，25 为原始默认值）
-CONFUCIUS4_TTS_N_TIMESTEPS = 40
+CONFUCIUS4_TTS_N_TIMESTEPS = 25
 # 无分类器引导强度（越高越紧跟参考音频的语速/音量风格）
 CONFUCIUS4_TTS_INFERENCE_CFG_RATE = 0.9
 # 并行 Worker 数量（利用多核并行合成，1 = 串行，建议 2-3）
