@@ -380,7 +380,7 @@ def _clean_pinyin(text: str) -> str:
     if not text:
         return text
 
-    # 1. 剥除「英文：」「中文：」「→」「✗」等前缀（多轮或几行都剥）
+    # 1. 剥除「英文：」「中文：」「→」「✗」「[N] 编号」等前缀
     text = re.sub(
         r'^\s*(?:'
         r'英文\s*[：:]\s*'    # 英文：
@@ -389,6 +389,7 @@ def _clean_pinyin(text: str) -> str:
         r'|中\s*[：:]\s*'      # 中：
         r'|→\s*'              # 箭头
         r'|✗\s*'              # 错误标记
+        r'|\[\d+\]\s*'        # [N] 编号前缀（单句重试时仍可能返回）
         r')+',
         '', text
     )
