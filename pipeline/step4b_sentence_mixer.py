@@ -16,6 +16,29 @@ from pydub import AudioSegment
 
 from core import config
 
+# TTS 音频目标响度（dBFS），统一所有句子的音量
+# Confucius4-TTS 输出音量受参考音频影响，不同句子参考音频原始音量不同，
+# 导致 TTS 输出忽高忽低。归一化到统一 dBFS 消除此差异。
+_TTS_TARGET_DBFS = -20.0
+
+
+def _normalize_tts_audio(audio: AudioSegment,
+                         target_dbfs: float = _TTS_TARGET_DBFS) -> AudioSegment:
+    """
+    将 TTS 音频统一到目标响度，消除不同句子之间的音量差异。
+
+    Args:
+        audio: 待归一化的音频片段
+        target_dbfs: 目标响度（dBFS），默认 -20.0
+
+    Returns:
+        AudioSegment: 归一化后的音频
+    """
+    if audio.dBFS == float('-inf'):
+        return audio  # 纯静音，无法归一化
+    gain = target_dbfs - audio.dBFS
+    return audio.apply_gain(gain)
+
 
 def mix_sentence_audio(
     audio_path: str,
@@ -101,6 +124,7 @@ def mix_sentence_audio(
                 tts_clip = tts_clip.set_channels(target_channels)
                 if tts_clip.frame_rate != target_sr:
                     tts_clip = tts_clip.set_frame_rate(target_sr)
+                tts_clip = _normalize_tts_audio(tts_clip)
                 tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
 
             result += tts_clip
@@ -198,6 +222,7 @@ def mix_sentence_audio(
                 tts_clip = tts_clip.set_channels(target_channels)
                 if tts_clip.frame_rate != target_sr:
                     tts_clip = tts_clip.set_frame_rate(target_sr)
+                tts_clip = _normalize_tts_audio(tts_clip)
                 tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
 
                 # 用中文 TTS 替换这个位置

@@ -70,7 +70,7 @@ LLM_NUM_PREDICT = 8192
 # 生词识别任务（JSON 输出）: 偏低更稳定，避免输出格式错误
 # 翻译任务（口语地道性）: 偏高让译文更自然灵活，但过高会引入幻觉
 LLM_IDENTIFY_TEMPERATURE = 0.3   # LLM 推理用
-LLM_TRANSLATE_TEMPERATURE = 0.6  # 翻译用（提高口语自然度）
+LLM_TRANSLATE_TEMPERATURE = 0.3  # 翻译用（降低幻觉，口语自然度靠 prompt 保证）
 
 # ========================
 # 难度等级配置
@@ -94,7 +94,7 @@ CONFUCIUS4_TTS_DEVICE = "cpu"
 # 单条 TTS 合成超时（秒），CPU 推理较慢，长句可能需要 60-120s
 CONFUCIUS4_TTS_PER_JOB_TIMEOUT = 6000
 # T2S 采样温度（0.0~1.0），越高输出越多样，越低越稳定。语音风格不一致时调低
-CONFUCIUS4_TTS_TEMPERATURE = 0.6
+CONFUCIUS4_TTS_TEMPERATURE = 0.3
 # 核采样概率阈值
 CONFUCIUS4_TTS_TOP_P = 0.9
 # Top-k 采样参数（0 表示不限制）

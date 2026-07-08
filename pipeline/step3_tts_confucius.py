@@ -337,6 +337,14 @@ def synthesize_sentences_with_confucius_tts(
     worker_task = {
         "config_path": config_path,
         "device": getattr(config, "CONFUCIUS4_TTS_DEVICE", "cpu"),
+        "temperature": getattr(config, "CONFUCIUS4_TTS_TEMPERATURE", 0.8),
+        "top_p": getattr(config, "CONFUCIUS4_TTS_TOP_P", 0.8),
+        "top_k": getattr(config, "CONFUCIUS4_TTS_TOP_K", 30),
+        "num_beams": getattr(config, "CONFUCIUS4_TTS_NUM_BEAMS", 3),
+        "repetition_penalty": getattr(config, "CONFUCIUS4_TTS_REPETITION_PENALTY", 10.0),
+        "n_timesteps": getattr(config, "CONFUCIUS4_TTS_N_TIMESTEPS", 25),
+        "inference_cfg_rate": getattr(config, "CONFUCIUS4_TTS_INFERENCE_CFG_RATE", 0.7),
+        "verbose": False,
         "jobs": [
             {
                 "text": j["text"],

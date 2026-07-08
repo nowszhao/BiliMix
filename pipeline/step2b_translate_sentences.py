@@ -272,15 +272,16 @@ def build_translation_prompt(
 
     if is_dialogue:
         # ---- 多句（对话/段落）模式 ----
+        # 不使用「你是...」等角色扮演开头，translategemma 容易将其理解为元指令并回复确认语
         return (
-            f"翻译以下 {len(sentences)} 句英文播客对话为中文配音稿。\n"
-            f"翻译结果将交给配音演员朗读，必须适合口语表达。\n\n"
+            f"将以下 {len(sentences)} 行英文播客口语翻译为地道中文口语。直接输出，不要确认语。\n\n"
+            f"提示：原文来自语音识别，可能含转录错误。理解真实语义后再翻译。\n\n"
             f"{context_section}"
-            f"要点：\n"
-            f"- 口语自然：像朋友聊天一样说话，不用书面语\n"
-            f"- 意译习语：不字面硬翻，翻出实际意思\n"
-            f"- 修正错误：原文可能有语音识别错误，按正确语义翻译\n"
-            f"- 可朗读：每句完整、节奏顺畅，配音演员能一口气读完\n\n"
+            f"要求：\n"
+            f"1. 地道中文：用母语者日常聊天的表达方式，不要书面语或翻译腔\n"
+            f"2. 习语意译：口语习语翻实际含义，不字面直译\n"
+            f"3. 纠错润色：识别转录错误（如发音相近词、漏词），按正确意思翻译，不要直译错误\n"
+            f"4. 应答短句简短（如\"A hundred percent.\"→\"百分之百确定。\"），叙述长句完整自然\n\n"
             f"{_DIALOGUE_FEWSHOT}"
             f"按 [N] 中文翻译 格式输出：\n\n"
             f"{numbered}"
@@ -288,8 +289,8 @@ def build_translation_prompt(
     else:
         # ---- 单句模式 ----
         return (
-            f"将这句英文播客口语翻译为中文配音稿。\n"
-            f"只输出中文翻译，不要加任何前缀或解释。\n\n"
+            f"将以下英文翻译为地道中文口语。只输出中文翻译，不要确认语。\n\n"
+            f"提示：原文可能有转录错误，理解真实语义后翻译。\n\n"
             f"{context_section}"
             f"{_SINGLE_FEWSHOT}"
             f"英文：{sentences[0][1]}\n"
@@ -362,7 +363,7 @@ def _build_direct_prompt(
     context_section = _build_context_section(prev_context, simple=True)
 
     return (
-        f"翻译以下英文播客口语为中文配音稿。原文可能有转录错误，理解真实语义后翻译。直接输出结果。\n\n"
+        f"将以下英文翻译为地道中文口语。原文可能有转录错误，理解真实语义后翻译，直接输出结果，不要确认语。\n\n"
         f"{context_section}"
         f"{numbered}\n"
     )
@@ -371,10 +372,11 @@ def _build_direct_prompt(
 def _clean_pinyin(text: str) -> str:
     """
     清洗翻译文本：
-    1. 去除翻译文本末尾的拼音注释（括号内的拉丁字母）
-    2. 剥除前缀 `英文：` / `中文：` 等角色标签（防止模型延续交替对话模式）
-    3. 剥除前缀 `→` 箭头
-    4. 剥除前缀 `✗` 错误标记
+    1. 剥除前缀 `英文：` / `中文：` / `→` / `✗` / `[N]` 等角色标签
+    2. 多行响应只取第一条有效翻译行（避免模型返回多条混入）
+    3. 去除末尾括号中的拼音/英文注释（半角和全角括号）
+    4. 去除末尾 LLM 元注释（宽泛匹配「不完整」「无法翻译」等关键词）
+    5. 去除模型自行添加的尾部省略号（... / …）
     """
     if not text:
         return text
@@ -382,63 +384,50 @@ def _clean_pinyin(text: str) -> str:
     # 1. 剥除「英文：」「中文：」「→」「✗」「[N] 编号」等前缀
     text = re.sub(
         r'^\s*(?:'
-        r'英文\s*[：:]\s*'    # 英文：
-        r'|中文\s*[：:]\s*'    # 中文：
-        r'|英\s*[：:]\s*'      # 英：
-        r'|中\s*[：:]\s*'      # 中：
-        r'|→\s*'              # 箭头
-        r'|✗\s*'              # 错误标记
-        r'|\[\d+\]\s*'        # [N] 编号前缀（单句重试时仍可能返回）
+        r'英文\s*[：:]\s*'
+        r'|中文\s*[：:]\s*'
+        r'|英\s*[：:]\s*'
+        r'|中\s*[：:]\s*'
+        r'|→\s*'
+        r'|✗\s*'
+        r'|\[\d+\]\s*'
         r')+',
         '', text
     )
 
-    # 2. 剥除内部的「英文：... 中文：」交替污染行（保留最末尾的中文段）
-    # 模型有时会输出多对英文/中文交替行（错误续写了几轮）
-    # 切割后只保留每行包含中文的段，过滤掉"英文：xxx"行
+    # 2. 多行响应：只取第一条有效翻译行（过滤「英文：」开头的原文行）
+    #    避免模型返回多条 [N] 翻译时全部混入一条结果
     if '\n' in text:
-        lines = text.split('\n')
-        zh_lines = []
-        for ln in lines:
+        for ln in text.split('\n'):
             ln = ln.strip()
             if not ln:
                 continue
-            # 跳过 英文/中文 前缀交替模式中的"原文"行（保留只有中文的行）
-            if re.match(r'^(英文|英|英文：|英：)\s*', ln):
+            if re.match(r'^(英文|英)\s*[：:]\s*', ln):
                 continue
-            zh_lines.append(ln)
-        if zh_lines:
-            text = '\n'.join(zh_lines)
+            text = ln
+            break
+        else:
+            return ""
 
-    # 3. 去除末尾括号中的拼音/英文注释 以及 LLM 的元注释
-    text = re.sub(r'\s*\(' + _LATIN_RE + r'[^)]*\)\s*$', '', text)
-    text = re.sub(r'\s*\[' + _LATIN_RE + r'[^\]]*\]\s*$', '', text)
-    text = re.sub(r'[（(]句子不完整[，,].*?[)）]\s*$', '', text)
+    # 3. 去除末尾括号中的拼音/英文注释（半角和全角括号，以拉丁字母开头）
+    text = re.sub(r'\s*[（(]\s*' + _LATIN_RE + r'[^)）]*[)）]\s*$', '', text)
+    text = re.sub(r'\s*[【\[]\s*' + _LATIN_RE + r'[^】\]]*[】\]]\s*$', '', text)
+
+    # 4. 去除末尾 LLM 元注释（宽泛匹配含关键词的括号注释）
+    #    覆盖「句子不完整」「无法翻译」「此处省略」「被截断」等各种措辞
+    text = re.sub(
+        r'\s*[（(][^)）]*'
+        r'(?:不完整|无法翻译|不能翻译|无法完成|此处省略|待补充|'
+        r'未完成|被截断|已截断|句子中断|内容缺失|翻译不了)'
+        r'[^)）]*[)）]\s*$',
+        '', text
+    )
+
+    # 5. 去除模型自行添加的尾部省略号
+    text = re.sub(r'\s*\.{2,}\s*$', '', text)
+    text = re.sub(r'\s*…\s*$', '', text)
+
     return text.strip()
-
-
-def _polish_for_voice(text: str) -> str:
-    """
-    配音后处理：让翻译结果更适合朗读。
-
-    1. 去掉口语填充词（嗯、那个、就是说 等），配音不需要
-    2. 补全句末标点（方便 TTS 分段和语调控制）
-    3. 合并连续重复的标点
-    """
-    if not text:
-        return text
-
-    # 去掉句首口语填充词
-    text = re.sub(r'^(嗯[，,。.]?|那个[，,。.]?|就是说[，,。.]?|额[，,。.]?)\s*', '', text)
-
-    # 句末无标点时补句号
-    if text and not re.search(r'[。！？.!?]$', text):
-        text += '。'
-
-    # 合并连续重复标点
-    text = re.sub(r'([。！？.!?])\1+', r'\1', text)
-
-    return text
 
 
 def parse_translation_response(response_text: str, expected_ids: list[int]) -> dict[int, str]:
@@ -483,7 +472,12 @@ def parse_translation_response(response_text: str, expected_ids: list[int]) -> d
         else:
             cleaned = _clean_pinyin(line)
             if cleaned:
-                non_prefixed_lines.append(cleaned)
+                # 截断行内残留 [N] 编号（同前缀行处理）
+                trunc = inline_id.search(cleaned)
+                if trunc:
+                    cleaned = cleaned[:trunc.start()].strip()
+                if cleaned:
+                    non_prefixed_lines.append(cleaned)
 
     # 第二轮：前缀匹配缺失的 id，用非前缀行按位置顺序补充
     missing_ids = [sid for sid in expected_ids if sid not in result]
@@ -494,17 +488,55 @@ def parse_translation_response(response_text: str, expected_ids: list[int]) -> d
     return result
 
 
+def _is_valid_translation(english: str, chinese: str) -> bool:
+    """
+    校验翻译结果是否合理，拦截明显的异常输出。
+
+    检查项：
+    1. 不应残留 [N] 编号标记（说明模型返回了多条翻译混在一起）
+    2. 翻译长度不应远超原文（中文有效字符数 / 英文词数 <= 15）
+    3. 翻译不应为空或纯空白
+
+    Args:
+        english: 英文原文
+        chinese: 待校验的中文翻译
+
+    Returns:
+        bool: True 表示翻译合理
+    """
+    if not chinese or not chinese.strip():
+        return False
+    chinese = chinese.strip()
+
+    # 1. 残留 [N] 标记 → 模型返回了多条翻译混在一起
+    if re.search(r'\[\d+\]', chinese):
+        return False
+
+    # 2. 长度比异常（中文有效字符数 / 英文词数）
+    eng_words = len(english.split()) if english and english.strip() else 1
+    chi_chars = len(re.sub(r'[\s\W]', '', chinese, flags=re.UNICODE))
+    if chi_chars == 0:
+        return False
+    if chi_chars / max(eng_words, 1) > 15:
+        return False
+
+    return True
+
+
 _TRANSLATE_SYSTEM = (
-    "你是一名专业的播客中文化配音翻译。你的英文播客原文将交给中文配音演员朗读，"
-    "因此翻译必须朗朗上口、适合口语朗读。\n\n"
-    "核心准则：\n"
-    "1. 说人话：必须是中国人日常聊天会说的自然口语，不要书面语、不要翻译腔\n"
-    "2. 照顾听众：句子不要太长（过长的拆成短句），节奏顺畅，听一遍就懂\n"
-    "3. 意译优先：习语、俚语、反讽翻译实际含义，绝不要字面硬翻\n"
-    "4. 纠错润色：原文可能有语音识别错误，理解真实语义后翻译，不要照搬错误原文\n"
-    "5. 完整表达：每句翻译必须是完整的、可独立朗读的中文句子\n"
-    "6. 输出铁律：严格按 [N] 中文翻译 格式输出，"
-    "绝不加「英文：」「中文：」「→」等标签或解释"
+    "你是一名专业的英中口语翻译。你的目标是输出母语级的地道中文口语，"
+    "彻底消除翻译腔和机翻味。核心原则：\n\n"
+    "1. 说人话：中文必须是口语对话里会出现的自然表达，不要书面语\n"
+    "2. 懂言外之意：习语、俚语、反讽要翻译出实际含义，不要字面直译\n"
+    "3. 纠错润色：原文可能含语音识别错误（如音近词错、漏词），"
+    "按真实语义翻译，不要照搬错误文本\n"
+    "4. 简洁有力：短应答就两个字搞定，长句保持语序流畅自然\n"
+    "5. 输出格式铁律：\n"
+    "   - 每行严格以 [N] 开头（N 是句号序号），后接中文翻译\n"
+    "   - 绝对不要加「英文：」「中文：」「→」「以下是翻译」等任何标签或前缀\n"
+    "   - 不要重复输出原文，不要续写多对英文/中文交替\n"
+    "   - 不要加确认语、解释、注释或任何非翻译内容\n"
+    "   - 输入 N 句就输出 N 行，缺一行视为错误"
 )
 
 
@@ -674,30 +706,41 @@ def translate_sentences(
         batch_english_chi: list[tuple[str, str]] = []  # 本批所有翻译的结果
         for seq_id, text in batch:
             actual_idx = seq_to_idx[seq_id]
-            if seq_id in batch_translations and batch_translations[seq_id]:
-                # 口语习语兜底修正 → 配音后处理
-                translation = batch_translations[seq_id]
+            translation = batch_translations.get(seq_id, "")
+
+            # 校验批次翻译结果：缺失或异常则转单句重试
+            if translation and _is_valid_translation(text, translation):
                 translation = _apply_colloquial_fixup(text, translation)
-                translation = _polish_for_voice(translation)
                 all_translations[actual_idx] = translation
                 batch_english_chi.append((text, translation))
+                continue
+
+            if translation:
+                print(f"  [校验] 句子 {actual_idx} 翻译异常，转单句重试")
+            print(f"  [重试] 句子 {actual_idx} 单句重试...")
+            # 单句重试不传 prev_context，避免模型受前文诱导续写无关内容
+            retry_prompt = build_translation_prompt([(1, text)], None)
+            retry_resp = _call_llm(retry_prompt, system=_TRANSLATE_SYSTEM)
+            # 检测元响应：若返回确认语，用极简 prompt 重试
+            if _is_meta_response(retry_resp):
+                print(f"    [元响应] 单句也返回了确认语，使用极简 prompt")
+                retry_resp = _call_llm(_build_direct_prompt([(1, text)], None), system=_TRANSLATE_SYSTEM)
+
+            # 用 parse_translation_response 正确解析，只取第一条翻译
+            retry_parsed = parse_translation_response(retry_resp, [1])
+            retry_text = retry_parsed.get(1, "")
+            if not retry_text and retry_resp:
+                # fallback: 取首行清洗
+                retry_text = _clean_pinyin(retry_resp.strip().split('\n')[0])
+
+            if retry_text and _is_valid_translation(text, retry_text):
+                retry_text = _apply_colloquial_fixup(text, retry_text)
+                all_translations[actual_idx] = retry_text
+                batch_english_chi.append((text, retry_text))
+            elif retry_text:
+                print(f"  [校验失败] 句子 {actual_idx} 重试结果仍异常，跳过: {retry_text[:60]}...")
             else:
-                # 单句重试（使用单句 prompt）
-                print(f"  [重试] 句子 {actual_idx} 单句重试...")
-                retry_prompt = build_translation_prompt([(1, text)], prev_context)
-                retry_resp = _call_llm(retry_prompt, system=_TRANSLATE_SYSTEM)
-                # 检测元响应：若返回确认语，用极简 prompt 重试
-                if _is_meta_response(retry_resp):
-                    print(f"    [元响应] 单句也返回了确认语，使用极简 prompt")
-                    retry_resp = _call_llm(_build_direct_prompt([(1, text)], prev_context), system=_TRANSLATE_SYSTEM)
-                retry_text = _clean_pinyin(retry_resp.strip()) if retry_resp else ""
-                if retry_text:
-                    retry_text = _apply_colloquial_fixup(text, retry_text)
-                    retry_text = _polish_for_voice(retry_text)
-                    all_translations[actual_idx] = retry_text
-                    batch_english_chi.append((text, retry_text))
-                else:
-                    print(f"  [失败] 句子 {actual_idx} 翻译失败，跳过")
+                print(f"  [失败] 句子 {actual_idx} 翻译失败，跳过")
 
         # 更新跨 batch 上下文：取本批最后 N 条翻译
         if batch_english_chi:
