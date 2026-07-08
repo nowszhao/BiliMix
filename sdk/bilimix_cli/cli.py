@@ -309,12 +309,29 @@ def cmd_auth_status(args, client):
 
 def cmd_task_submit(args, client):
     body = {}
-    if args.local_path:
-        body["local_path"] = args.local_path
-    elif args.url:
-        body["url"] = args.url
+    task_type = getattr(args, "type", "audio")
+
+    if task_type == "video":
+        body["type"] = "video"
+        if args.video_url:
+            body["video_url"] = args.video_url
+        elif args.server_path:
+            body["local_path"] = args.server_path
+        elif args.local_path:
+            body["local_path"] = args.local_path
+        else:
+            raise CLIError("必须提供 --video-url、--server-path 或 --local-path")
+        if hasattr(args, 'subtitle_mode') and args.subtitle_mode:
+            body["subtitle_mode"] = args.subtitle_mode
+        if hasattr(args, 'subtitle_font_size') and args.subtitle_font_size:
+            body["subtitle_font_size"] = args.subtitle_font_size
     else:
-        raise CLIError("必须提供 --url 或 --local-path")
+        if args.local_path:
+            body["local_path"] = args.local_path
+        elif args.url:
+            body["url"] = args.url
+        else:
+            raise CLIError("必须提供 --url 或 --local-path")
 
     # difficulty removed
     pass  # process_mode fixed to sentence_translate
@@ -837,11 +854,19 @@ def build_parser():
     p_task = add_cmd(sub, "task", help="任务管理")
     task_sub = p_task.add_subparsers(dest="subcommand", required=True)
 
-    p = add_cmd(task_sub, "submit", help="提交音频处理任务")
-    g = p.add_mutually_exclusive_group(required=True)
+    p = add_cmd(task_sub, "submit", help="提交音频/视频处理任务")
+    p.add_argument("--type", choices=["audio", "video"], default="audio",
+                   help="任务类型 (默认 audio)")
+    g = p.add_mutually_exclusive_group()
     g.add_argument("--url", help="音频文件 URL")
     g.add_argument("--local-path", help="本地文件路径 (需先 audio upload)")
+    g.add_argument("--video-url", help="YouTube 视频 URL (--type video)")
+    g.add_argument("--server-path", help="服务端视频绝对路径 (--type video)")
     p.add_argument("--mode", choices=["sentence_translate"], help="处理模式（固定为句子翻译）")
+    p.add_argument("--subtitle-mode", choices=["bilingual", "chinese_only", "none"],
+                   default="bilingual", help="字幕模式 (--type video, 默认 bilingual)")
+    p.add_argument("--subtitle-font-size", type=int, default=20,
+                   help="字幕字号 (--type video, 默认 20)")
     g2 = p.add_mutually_exclusive_group()
     g2.add_argument("--skip-confirm", action="store_true",
                     help="跳过确认环节 (默认行为)")
@@ -914,8 +939,8 @@ def build_parser():
     p_audio = add_cmd(sub, "audio", help="音频文件")
     audio_sub = p_audio.add_subparsers(dest="subcommand", required=True)
 
-    p = add_cmd(audio_sub, "upload", help="上传本地音频")
-    p.add_argument("file", help="本地音频文件路径")
+    p = add_cmd(audio_sub, "upload", help="上传本地音频/视频")
+    p.add_argument("file", help="本地音频/视频文件路径")
     p.set_defaults(func=cmd_audio_upload)
 
     p = add_cmd(audio_sub, "download", help="下载音频")
@@ -934,6 +959,24 @@ def build_parser():
     g.add_argument("--path")
     p.add_argument("--type", choices=["mixed", "original"], default="mixed")
     p.set_defaults(func=cmd_audio_url)
+
+    # ---- video ----
+    p_vid = add_cmd(sub, "video", help="视频文件")
+    vid_sub = p_vid.add_subparsers(dest="subcommand", required=True)
+
+    p = add_cmd(vid_sub, "download", help="下载配音视频")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--task-id", help="通过任务 ID 解析视频路径")
+    g.add_argument("--path", help="直接指定 URL 路径 (如 basename/basename_dubbed.mp4)")
+    p.add_argument("-o", "--output", help="输出文件名")
+    p.set_defaults(func=cmd_audio_download)
+
+    p = add_cmd(vid_sub, "download-srt", help="下载字幕文件")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--task-id", help="通过任务 ID 解析 SRT 路径")
+    g.add_argument("--path", help="直接指定 SRT URL 路径")
+    p.add_argument("-o", "--output", help="输出文件名")
+    p.set_defaults(func=cmd_audio_download)
 
     # ---- translate ----
     p_tr = add_cmd(sub, "translate", help="翻译工具")

@@ -79,10 +79,12 @@ def transcribe(audio_path: str, output_dir: str = None) -> dict:
 
     print(f"[Step1] 执行命令: {' '.join(cmd)}")
 
-    # 设置线程数相关的环境变量
-    # OMP_NUM_THREADS / MKL_NUM_THREADS 控制 PyTorch 与 CTranslate2 底层 OpenMP 线程
-    # 与 --threads 参数互补，避免底层只用默认 4 线程
+    # 设置环境变量
+    # - OMP_NUM_THREADS 等控制 PyTorch / CTranslate2 底层 OpenMP 线程
+    # - PyTorch >= 2.6 默认 torch.load(weights_only=True)，
+    #   pyannote VAD 模型需要 weights_only=False 才能加载
     env = os.environ.copy()
+    env["PYTORCH_ENABLE_WEIGHTS_ONLY_LOAD"] = "0"
     threads = getattr(config, "WHISPERX_THREADS", 0)
     if threads and threads > 0:
         for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",

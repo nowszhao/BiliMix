@@ -31,7 +31,7 @@ for _d in (DATA_DIR, OUTPUT_DIR, TTS_CACHE_DIR, RESULT_DIR, DOWNLOAD_DIR):
 # ========================
 # whisperx 可执行文件路径（conda 环境中的绝对路径，避免 PATH 找不到）
 WHISPERX_BIN = "/root/miniconda3/envs/whisperx_new/bin/whisperx"
-WHISPERX_MODEL = "medium"
+WHISPERX_MODEL = "tiny"
 WHISPERX_DEVICE = "cpu"
 WHISPERX_COMPUTE_TYPE = "int8"
 WHISPERX_BATCH_SIZE = 10
@@ -39,7 +39,7 @@ WHISPERX_LANGUAGE = "en"
 # CPU 推理线程数：whisperx 默认只用 4 个线程，多核机器应调大
 # 建议设为物理核数或略少（留 1-2 核给系统），0 表示用 whisperx 默认值(4)
 # 注意：超过物理核数收益递减，且会增加内存占用
-WHISPERX_THREADS = 12
+WHISPERX_THREADS = 8
 
 # --- WhisperX 说话人分离（Diarization）---
 # 启用后每个 segment 会带 speaker 标签，用于精确匹配克隆音色
@@ -58,7 +58,7 @@ WHISPERX_MAX_SPEAKERS = 0
 # Ollama 配置
 # ========================
 OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL = "translategemma:12b"
+OLLAMA_MODEL = "translategemma:4b"
 # 生词识别时每批合并的句子数量（越大越快，但过大可能降低识别精度）
 # 建议范围: 5~15，默认 8
 LLM_BATCH_SIZE = 5
@@ -179,7 +179,7 @@ SENTENCE_TTS_VOICE_CLONE = True
 # 登录认证配置
 # ========================
 # 是否启用登录认证（False 则所有人可直接访问，无需登录）
-AUTH_ENABLED = True
+AUTH_ENABLED = False
 # 登录用户名
 AUTH_USERNAME = "admin"
 # 登录密码（明文存储在配置文件中，部署时请修改为强密码）
