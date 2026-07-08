@@ -113,102 +113,12 @@
             <div class="content-header">
                 <div>
                     <h1 class="content-title">任务</h1>
-                    <p class="content-subtitle">提交音频 + 处理历史</p>
+                    <p class="content-subtitle">处理历史</p>
                 </div>
-            </div>
-
-            <!-- 提交区 -->
-            <div class="discover-card task-submit-card">
-                <!-- 顶层模式标签：音频转录 / 视频配音 -->
-                <div class="input-mode-tabs task-mode-tabs top-mode-tabs">
-                    <button class="input-mode-tab active" data-topmode="audio" onclick="switchTopMode('audio')">🎵 音频转录</button>
-                    <button class="input-mode-tab" data-topmode="video" onclick="switchTopMode('video')">🎬 视频配音</button>
-                </div>
-
-                <!-- ========== 音频转录子模式 ========== -->
-                <div class="top-mode-panel active" id="topmode-audio">
-                    <div class="input-mode-tabs task-mode-tabs sub-mode-tabs">
-                        <button class="input-mode-tab active" data-mode="url" onclick="switchInputMode('url')">链接</button>
-                        <button class="input-mode-tab" data-mode="file" onclick="switchInputMode('file')">文件</button>
-                    </div>
-
-                    <!-- URL 模式 -->
-                    <div class="input-mode-content active" id="input-mode-url">
-                        <div class="input-row">
-                            <input type="url" id="audio-url" placeholder="粘贴音频 URL（支持 mp3, wav, m4a...）" spellcheck="false">
-                        </div>
-                    </div>
-
-                    <!-- 文件模式 -->
-                    <div class="input-mode-content" id="input-mode-file">
-                        <div class="file-upload-row task-file-upload" id="file-upload-area">
-                            <span class="file-upload-label-text" id="file-upload-label">选择或拖拽音频文件</span>
-                            <span class="file-upload-hint">支持 mp3, wav, m4a, ogg, flac, aac</span>
-                            <input type="file" id="file-upload-input" accept=".mp3,.wav,.m4a,.ogg,.flac,.aac" onchange="onFileSelected(this)">
-                        </div>
-                        <div class="file-upload-info" id="file-upload-info" style="display:none;">
-                            <span class="file-upload-icon">✅</span>
-                            <span class="file-upload-name" id="file-upload-name"></span>
-                            <span class="file-upload-size" id="file-upload-size"></span>
-                            <button class="file-upload-clear" onclick="clearUploadedFile()" title="移除文件">✕</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ========== 视频配音子模式 ========== -->
-                <div class="top-mode-panel" id="topmode-video">
-                    <div class="input-mode-tabs task-mode-tabs sub-mode-tabs">
-                        <button class="input-mode-tab active" data-vmode="youtube" onclick="switchVideoMode('youtube')">YouTube 链接</button>
-                        <button class="input-mode-tab" data-vmode="local" onclick="switchVideoMode('local')">本地文件</button>
-                    </div>
-
-                    <!-- YouTube URL 子模式 -->
-                    <div class="input-mode-content active" id="video-mode-youtube">
-                        <div class="input-row">
-                            <input type="url" id="video-url" placeholder="粘贴 YouTube 视频地址..." spellcheck="false">
-                        </div>
-                        <div class="video-url-preview" id="video-url-preview" style="display:none;"></div>
-                    </div>
-
-                    <!-- 本地视频子模式 -->
-                    <div class="input-mode-content" id="video-mode-local">
-                        <div class="file-upload-row task-file-upload" id="video-upload-area">
-                            <span class="file-upload-label-text" id="video-upload-label">选择或拖拽视频文件</span>
-                            <span class="file-upload-hint">支持 mp4, mkv, mov, avi, webm</span>
-                            <input type="file" id="video-upload-input" accept=".mp4,.mkv,.mov,.avi,.webm" onchange="onVideoFileSelected(this)">
-                        </div>
-                        <div class="file-upload-info" id="video-upload-info" style="display:none;">
-                            <span class="file-upload-icon">✅</span>
-                            <span class="file-upload-name" id="video-upload-name"></span>
-                            <span class="file-upload-size" id="video-upload-size"></span>
-                            <button class="file-upload-clear" onclick="clearVideoUpload()" title="移除文件">✕</button>
-                        </div>
-                    </div>
-
-                    <!-- 字幕选项 -->
-                    <div class="video-options" id="video-options">
-                        <div class="video-option-row">
-                            <span class="video-option-label">字幕</span>
-                            <div class="video-option-choices">
-                                <label class="video-radio"><input type="radio" name="sub_mode" value="bilingual" checked onchange="updateVideoOptions()"> 双语</label>
-                                <label class="video-radio"><input type="radio" name="sub_mode" value="chinese_only" onchange="updateVideoOptions()"> 仅中文</label>
-                                <label class="video-radio"><input type="radio" name="sub_mode" value="none" onchange="updateVideoOptions()"> 无字幕</label>
-                            </div>
-                        </div>
-                        <div class="video-option-row">
-                            <span class="video-option-label">字体大小</span>
-                            <select class="video-option-select" id="sub-font-size" onchange="updateVideoOptions()">
-                                <option value="16">小</option>
-                                <option value="20" selected>中</option>
-                                <option value="26">大</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="task-submit-bar">
-                    <button id="generate-btn" class="btn-primary" onclick="submitTask()">
-                        <span class="btn-text">开始生成</span>
+                <div class="content-header-actions">
+                    <button class="btn-primary btn-new-task" onclick="openNewTaskModal()">
+                        <span class="btn-icon">+</span>
+                        <span class="btn-text">新建任务</span>
                     </button>
                 </div>
             </div>
@@ -515,6 +425,127 @@
                         <line x1="6" y1="6" x2="18" y2="18"/>
                     </svg>
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ====== 新建任务 Modal ====== -->
+    <div class="modal-overlay task-modal-overlay" id="new-task-modal" onclick="closeNewTaskModal()">
+        <div class="modal-card task-modal-card" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h2 class="modal-title">新建任务</h2>
+                <button class="modal-close" onclick="closeNewTaskModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <!-- 模式选择器 -->
+                <div class="mode-selector">
+                    <div class="mode-card active" data-topmode="audio" onclick="switchTopMode('audio')">
+                        <div class="mode-card-icon">🎵</div>
+                        <div class="mode-card-text">
+                            <div class="mode-card-title">音频转录</div>
+                            <div class="mode-card-desc">英文音频 → 中文翻译 + 配音</div>
+                        </div>
+                        <div class="mode-card-check">✓</div>
+                    </div>
+                    <div class="mode-card" data-topmode="video" onclick="switchTopMode('video')">
+                        <div class="mode-card-icon">🎬</div>
+                        <div class="mode-card-text">
+                            <div class="mode-card-title">视频配音</div>
+                            <div class="mode-card-desc">YouTube/本地视频 → 中文字幕 + 配音</div>
+                        </div>
+                        <div class="mode-card-check">✓</div>
+                    </div>
+                </div>
+
+                <!-- 音频转录表单 -->
+                <div class="top-mode-panel active" id="topmode-audio">
+                    <div class="form-group">
+                        <label class="form-label">输入方式</label>
+                        <div class="segmented-control">
+                            <button class="segment active" data-mode="url" onclick="switchInputMode('url')"><span>🔗 链接</span></button>
+                            <button class="segment" data-mode="file" onclick="switchInputMode('file')"><span>📁 本地上传</span></button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">音频源</label>
+                        <div class="input-mode-content active" id="input-mode-url">
+                            <input type="url" id="audio-url" class="form-input" placeholder="粘贴音频 URL（mp3, wav, m4a...）" spellcheck="false">
+                        </div>
+                        <div class="input-mode-content" id="input-mode-file">
+                            <div class="file-upload-row task-file-upload" id="file-upload-area">
+                                <span class="file-upload-label-text" id="file-upload-label">选择或拖拽音频文件</span>
+                                <span class="file-upload-hint">支持 mp3, wav, m4a, ogg, flac, aac</span>
+                                <input type="file" id="file-upload-input" accept=".mp3,.wav,.m4a,.ogg,.flac,.aac" onchange="onFileSelected(this)">
+                            </div>
+                            <div class="file-upload-info" id="file-upload-info" style="display:none;">
+                                <span class="file-upload-icon">✅</span>
+                                <span class="file-upload-name" id="file-upload-name"></span>
+                                <span class="file-upload-size" id="file-upload-size"></span>
+                                <button class="file-upload-clear" onclick="clearUploadedFile()" title="移除文件">✕</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 视频配音表单 -->
+                <div class="top-mode-panel" id="topmode-video">
+                    <div class="form-group">
+                        <label class="form-label">输入方式</label>
+                        <div class="segmented-control">
+                            <button class="segment active" data-vmode="youtube" onclick="switchVideoMode('youtube')"><span>▶️ YouTube</span></button>
+                            <button class="segment" data-vmode="local" onclick="switchVideoMode('local')"><span>📁 本地上传</span></button>
+                            <button class="segment" data-vmode="server" onclick="switchVideoMode('server')"><span>🖥 服务端路径</span></button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">视频源</label>
+                        <div class="input-mode-content active" id="video-mode-youtube">
+                            <input type="url" id="video-url" class="form-input" placeholder="粘贴 YouTube 视频地址..." spellcheck="false">
+                        </div>
+                        <div class="input-mode-content" id="video-mode-local">
+                            <div class="file-upload-row task-file-upload" id="video-upload-area">
+                                <span class="file-upload-label-text" id="video-upload-label">选择或拖拽视频文件</span>
+                                <span class="file-upload-hint">支持 mp4, mkv, mov, avi, webm</span>
+                                <input type="file" id="video-upload-input" accept=".mp4,.mkv,.mov,.avi,.webm" onchange="onVideoFileSelected(this)">
+                            </div>
+                            <div class="file-upload-info" id="video-upload-info" style="display:none;">
+                                <span class="file-upload-icon">✅</span>
+                                <span class="file-upload-name" id="video-upload-name"></span>
+                                <span class="file-upload-size" id="video-upload-size"></span>
+                                <button class="file-upload-clear" onclick="clearVideoUpload()" title="移除文件">✕</button>
+                            </div>
+                        </div>
+                        <div class="input-mode-content" id="video-mode-server">
+                            <input type="text" id="video-server-path" class="form-input" placeholder="输入服务端视频绝对路径，如 /data/videos/my_video.mp4" spellcheck="false">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">字幕设置</label>
+                        <div class="video-options" id="video-options">
+                            <div class="video-option-row">
+                                <span class="video-option-label">样式</span>
+                                <div class="video-option-choices">
+                                    <label class="video-radio"><input type="radio" name="sub_mode" value="bilingual" checked> 双语</label>
+                                    <label class="video-radio"><input type="radio" name="sub_mode" value="chinese_only"> 仅中文</label>
+                                    <label class="video-radio"><input type="radio" name="sub_mode" value="none"> 无字幕</label>
+                                </div>
+                            </div>
+                            <div class="video-option-row">
+                                <span class="video-option-label">字号</span>
+                                <select class="video-option-select" id="sub-font-size">
+                                    <option value="16">小</option><option value="20" selected>中</option><option value="26">大</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="task-submit-bar" style="border-top:none;padding-top:0;margin-top:20px;">
+                    <button class="btn-secondary" onclick="closeNewTaskModal()" style="margin-right:auto;">取消</button>
+                    <button id="generate-btn" class="btn-primary btn-submit" onclick="submitTask()">
+                        <span class="btn-icon">✨</span><span class="btn-text">开始生成</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>

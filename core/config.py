@@ -194,3 +194,13 @@ SECRET_KEY = "bilimix-secret-key-change-me"
 OUTPUT_FORMAT = "mp3"
 # 输出音频比特率
 OUTPUT_BITRATE = "192k"
+
+# ========================
+# 本地配置覆盖（不影响服务端默认值）
+# ========================
+# 若存在 core/config_local.py，则用其覆盖上方所有变量。
+# config_local.py 应加入 .gitignore，不提交到仓库。
+try:
+    from core.config_local import *  # noqa: F403, E402
+except ImportError:
+    pass

@@ -7,10 +7,26 @@
 // Input Mode Switching
 // ============================================================
 
+// ============================================================
+// 任务 Modal 开关
+// ============================================================
+
+function openNewTaskModal() {
+    document.getElementById('new-task-modal').classList.add('open');
+    // 默认切换到音频模式
+    switchTopMode('audio');
+    switchInputMode('url');
+    document.getElementById('audio-url')?.focus();
+}
+
+function closeNewTaskModal() {
+    document.getElementById('new-task-modal').classList.remove('open');
+}
+
 function switchTopMode(mode) {
     currentTopMode = mode;
-    document.querySelectorAll('.top-mode-tabs .input-mode-tab').forEach(tab => {
-        tab.classList.toggle('active', tab.dataset.topmode === mode);
+    document.querySelectorAll('.mode-card').forEach(card => {
+        card.classList.toggle('active', card.dataset.topmode === mode);
     });
     document.querySelectorAll('.top-mode-panel').forEach(panel => {
         panel.classList.toggle('active', panel.id === `topmode-${mode}`);
@@ -18,14 +34,15 @@ function switchTopMode(mode) {
     // 切换时更新按钮文案
     const btn = document.getElementById('generate-btn');
     if (btn) {
-        btn.querySelector('.btn-text').textContent = mode === 'video' ? '🎬 开始配音' : '开始生成';
+        const txt = btn.querySelector('.btn-text');
+        if (txt) txt.textContent = mode === 'video' ? '开始配音' : '开始生成';
     }
 }
 
 function switchInputMode(mode) {
     currentInputMode = mode;
-    document.querySelectorAll('#topmode-audio .input-mode-tab').forEach(tab => {
-        tab.classList.toggle('active', tab.dataset.mode === mode);
+    document.querySelectorAll('#topmode-audio .segment').forEach(seg => {
+        seg.classList.toggle('active', seg.dataset.mode === mode);
     });
     document.querySelectorAll('#topmode-audio .input-mode-content').forEach(content => {
         content.classList.toggle('active', content.id === `input-mode-${mode}`);
@@ -34,8 +51,8 @@ function switchInputMode(mode) {
 
 function switchVideoMode(mode) {
     currentVideoMode = mode;
-    document.querySelectorAll('#topmode-video .input-mode-tab').forEach(tab => {
-        tab.classList.toggle('active', tab.dataset.vmode === mode);
+    document.querySelectorAll('#topmode-video .segment').forEach(seg => {
+        seg.classList.toggle('active', seg.dataset.vmode === mode);
     });
     document.querySelectorAll('#topmode-video .input-mode-content').forEach(content => {
         content.classList.toggle('active', content.id === `video-mode-${mode}`);
@@ -271,13 +288,9 @@ async function submitAudioTask(btn) {
         }
         currentTaskId = data.task_id;
         if (currentInputMode === 'file') clearUploadedFile();
+        closeNewTaskModal();
         showToast('✅ 任务已提交');
-        if (typeof switchView === 'function') switchView('tasks');
-        setTimeout(() => {
-            if (typeof toggleTaskDetail === 'function') {
-                toggleTaskDetail(data.task_id, tasks_url);
-            }
-        }, 800);
+        if (typeof loadHistory === 'function') loadHistory();
     } catch (err) {
         alert('网络错误: ' + err.message);
         btn.disabled = false;
@@ -297,6 +310,13 @@ async function submitVideoTask(btn) {
         }
         localPath = videoUploadedPath;
         title = videoUploadedName;
+    } else if (currentVideoMode === 'server') {
+        const pathInput = document.getElementById('video-server-path');
+        if (!pathInput) { showToast('❗ 请输入路径'); return; }
+        const serverPath = pathInput.value.trim();
+        if (!serverPath) { shakeElement(pathInput); pathInput.focus(); return; }
+        localPath = serverPath;
+        title = serverPath.split('/').pop() || serverPath;
     } else {
         const urlInput = document.getElementById('video-url');
         if (!urlInput) { showToast('❗ 请输入视频 URL'); return; }
@@ -344,22 +364,18 @@ async function submitVideoTask(btn) {
         if (!resp.ok) {
             alert(data.error || '提交失败');
             btn.disabled = false;
-            btn.querySelector('.btn-text').textContent = '🎬 开始配音';
+            btn.querySelector('.btn-text').textContent = '开始配音';
             return;
         }
         currentTaskId = data.task_id;
         if (currentVideoMode === 'local') clearVideoUpload();
+        closeNewTaskModal();
         showToast('✅ 视频任务已提交');
-        if (typeof switchView === 'function') switchView('tasks');
-        setTimeout(() => {
-            if (typeof toggleTaskDetail === 'function') {
-                toggleTaskDetail(data.task_id, tasks_url);
-            }
-        }, 800);
+        if (typeof loadHistory === 'function') loadHistory();
     } catch (err) {
         alert('网络错误: ' + err.message);
         btn.disabled = false;
-        btn.querySelector('.btn-text').textContent = '🎬 开始配音';
+        btn.querySelector('.btn-text').textContent = '开始配音';
     }
 }
 

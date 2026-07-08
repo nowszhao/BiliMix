@@ -261,89 +261,215 @@ function toggleHistoryPlay(taskId, basename, audioUrl) {
 let taskExpandedId = null;
 let taskPollInterval = null;
 
+// 任务列表筛选/排序状态
+let taskFilterStatus = 'all';       // all | processing | completed | error | cancelled
+let taskFilterType = 'all';         // all | audio | video
+let taskSearchQuery = '';
+let taskSortField = 'created_at';   // created_at | title | status | duration
+let taskSortDir = 'desc';           // asc | desc
+let allTasksCache = [];             // 全部任务缓存
+
+// ============================================================
+// 任务列表 — 表格式视图 + 筛选 / 排序 / 搜索
+// ============================================================
+
 async function loadHistory() {
-    const list = document.getElementById('history-list');
-    const tasksContainer = document.getElementById('tasks-list-container');
-    const loadingHtml = '<div class="history-empty"><div class="spinner" style="margin: 0 auto 12px;"></div><p>加载中...</p></div>';
-    if (list) list.innerHTML = loadingHtml;
-    if (tasksContainer) tasksContainer.innerHTML = loadingHtml;
+    const container = document.getElementById('tasks-list-container');
+    if (!container) return;
+    container.innerHTML = '<div class="history-empty"><div class="spinner" style="margin: 0 auto 12px;"></div><p>加载中...</p></div>';
 
     try {
-        const resp = await fetch('/api/tasks?limit=20');
+        const resp = await fetch('/api/tasks?limit=50');
         const data = await resp.json();
-        const tasks = data.tasks || [];
-
-        if (tasks.length === 0) {
-            const emptyHtml = '<div class="history-empty"><p>暂无历史任务</p></div>';
-            if (list) list.innerHTML = emptyHtml;
-            if (tasksContainer) tasksContainer.innerHTML = emptyHtml;
-            return;
-        }
-
-        let html = '';
-        tasks.forEach(t => {
-            html += renderTaskCard(t);
-        });
-
-        if (list) list.innerHTML = html;
-        if (tasksContainer) tasksContainer.innerHTML = html;
+        allTasksCache = data.tasks || [];
+        renderTaskTable();
     } catch (err) {
-        const errHtml = '<div class="history-empty"><p>加载失败: ' + err.message + '</p></div>';
-        if (list) list.innerHTML = errHtml;
-        if (tasksContainer) tasksContainer.innerHTML = errHtml;
+        container.innerHTML = '<div class="history-empty"><p>加载失败: ' + err.message + '</p></div>';
     }
 }
 
-function renderTaskCard(t) {
-    const statusMap = {
-        'completed': '已完成', 'processing': '处理中', 'downloading': '下载中',
-        'queued': '排队中',
-        'awaiting_confirmation': '待确认', 'awaiting_sentence_confirmation': '待确认翻译',
-        'error': '出错', 'cancelled': '已终止',
-    };
-    const statusLabel = statusMap[t.status] || t.status;
-    const statusClass = t.status || 'processing';
-    const isExpanded = taskExpandedId === t.task_id;
+function getFilteredTasks() {
+    let tasks = [...allTasksCache];
 
-    let displayUrl = t.url || '--';
-    try {
-        const u = new URL(displayUrl);
-        displayUrl = u.hostname + u.pathname.substring(u.pathname.lastIndexOf('/'));
-    } catch(e) {}
-    const displayName = t.title || displayUrl;
+    // 状态筛选
+    if (taskFilterStatus !== 'all') {
+        tasks = tasks.filter(t => t.status === taskFilterStatus);
+    }
 
-    let html = `<div class="history-card ${statusClass} ${isExpanded ? 'expanded' : ''}" onclick="toggleTaskDetail('${t.task_id}', '${escapeAttr(t.url)}')">`;
-    html += `<div class="history-card-header">`;
-    html += `<div class="history-card-url">${escapeHtml(displayName)}</div>`;
-    html += `<div class="history-card-actions">`;
-    if (t.basename) {
-        html += `<button class="history-play-btn" onclick="event.stopPropagation(); toggleHistoryPlay('${t.task_id}', '${escapeAttr(t.basename)}', '${escapeAttr(t.url)}')" title="播放原始音频">▶</button>`;
+    // 类型筛选
+    if (taskFilterType !== 'all') {
+        tasks = tasks.filter(t => {
+            const pm = t.process_mode || '';
+            if (taskFilterType === 'video') return pm === 'video';
+            return pm !== 'video';
+        });
     }
-    html += `<button class="history-delete-btn" onclick="event.stopPropagation(); confirmDeleteTask('${t.task_id}', '${escapeAttr(displayName)}')" title="删除任务">✕</button>`;
-    html += `</div></div>`;
-    html += `<div class="history-card-meta">`;
-    html += `<span class="history-status ${statusClass}">${statusLabel}</span>`;
-    html += `<span class="history-card-info">${t.created_at || ''}</span>`;
-    if (t.status === 'processing' && t.progress) {
-        html += `<span class="history-card-info">${t.progress}%</span>`;
-    }
-    if (t.original_duration) {
-        html += `<span class="history-card-info">${formatTime(t.original_duration)}</span>`;
-    }
-    if (t.status === 'completed' && t.mixed_duration) {
-        html += `<span class="history-card-info">${t.mixed_duration}s</span>`;
-    }
-    html += `</div>`;
 
-    // 展开详情占位区（由 toggleTaskDetail 异步填充）
-    html += `<div class="history-card-detail" id="task-detail-${t.task_id}">`;
-    if (isExpanded) {
-        html += `<div style="text-align:center;padding:16px;color:var(--text-tertiary);">加载中...</div>`;
+    // 搜索
+    if (taskSearchQuery) {
+        const q = taskSearchQuery.toLowerCase();
+        tasks = tasks.filter(t =>
+            (t.title || '').toLowerCase().includes(q) ||
+            (t.url || '').toLowerCase().includes(q)
+        );
     }
-    html += `</div>`;
 
-    html += `</div>`;
-    return html;
+    // 排序
+    tasks.sort((a, b) => {
+        let va, vb;
+        switch (taskSortField) {
+            case 'title':
+                va = (a.title || a.url || '').toLowerCase();
+                vb = (b.title || b.url || '').toLowerCase();
+                break;
+            case 'status':
+                const order = { processing: 0, downloading: 0, queued: 1, completed: 2, error: 3, cancelled: 4 };
+                va = order[a.status] ?? 9; vb = order[b.status] ?? 9;
+                break;
+            case 'duration':
+                va = a.original_duration || 0; vb = b.original_duration || 0;
+                break;
+            default: // created_at
+                va = a.created_at || ''; vb = b.created_at || '';
+        }
+        if (va < vb) return taskSortDir === 'asc' ? -1 : 1;
+        if (va > vb) return taskSortDir === 'asc' ? 1 : -1;
+        return 0;
+    });
+
+    return tasks;
+}
+
+function renderTaskTable() {
+    const container = document.getElementById('tasks-list-container');
+    if (!container) return;
+
+    const tasks = getFilteredTasks();
+
+    // 统计
+    const counts = { all: allTasksCache.length, processing: 0, completed: 0, error: 0, cancelled: 0 };
+    allTasksCache.forEach(t => {
+        if (t.status === 'processing' || t.status === 'downloading' || t.status === 'queued') counts.processing++;
+        else if (t.status in counts) counts[t.status]++;
+    });
+
+    let html = '';
+
+    // ---- 筛选栏 ----
+    html += '<div class="task-filter-bar">';
+    html += '<div class="task-filter-tabs">';
+    const statuses = [
+        { key: 'all', label: '全部', count: counts.all },
+        { key: 'processing', label: '处理中', count: counts.processing },
+        { key: 'completed', label: '已完成', count: counts.completed },
+        { key: 'error', label: '出错', count: counts.error },
+        { key: 'cancelled', label: '已终止', count: counts.cancelled },
+    ];
+    statuses.forEach(s => {
+        const active = taskFilterStatus === s.key ? ' active' : '';
+        html += `<button class="task-filter-btn${active}" onclick="taskFilterStatus='${s.key}';renderTaskTable()">${s.label}<span class="task-filter-count">${s.count}</span></button>`;
+    });
+    html += '</div>';
+
+    html += '<div class="task-filter-right">';
+    // 类型下拉
+    html += '<select class="task-filter-select" onchange="taskFilterType=this.value;renderTaskTable()">';
+    html += `<option value="all"${taskFilterType === 'all' ? ' selected' : ''}>全部类型</option>`;
+    html += `<option value="audio"${taskFilterType === 'audio' ? ' selected' : ''}>音频转录</option>`;
+    html += `<option value="video"${taskFilterType === 'video' ? ' selected' : ''}>视频配音</option>`;
+    html += '</select>';
+    // 搜索
+    html += `<input type="text" class="task-filter-search" placeholder="搜索标题或URL..." value="${escapeAttr(taskSearchQuery)}" oninput="taskSearchQuery=this.value;renderTaskTable()">`;
+    html += '</div>';
+    html += '</div>';
+
+    // ---- 空态 ----
+    if (tasks.length === 0) {
+        html += '<div class="task-table-empty">暂无匹配的任务</div>';
+        container.innerHTML = html;
+        return;
+    }
+
+    // ---- 表格 ----
+    html += '<div class="task-table-wrap"><table class="task-table">';
+
+    // 表头
+    const cols = [
+        { key: 'title', label: '名称', class: 'col-title' },
+        { key: 'status', label: '状态', class: 'col-status' },
+        { key: 'duration', label: '时长', class: 'col-dur' },
+        { key: 'created_at', label: '创建时间', class: 'col-time' },
+    ];
+    html += '<thead><tr>';
+    cols.forEach(c => {
+        const active = taskSortField === c.key ? ` sorted-${taskSortDir}` : '';
+        html += `<th class="${c.class}${active}" onclick="toggleTaskSort('${c.key}')">${c.label}<span class="sort-arrow"></span></th>`;
+    });
+    html += '<th class="col-actions"></th></tr></thead>';
+
+    // 表体
+    html += '<tbody>';
+    tasks.forEach(t => {
+        const status = t.status || '';
+        const statusMap = {
+            'processing': '处理中', 'downloading': '下载中', 'queued': '排队中',
+            'completed': '已完成', 'error': '出错', 'cancelled': '已终止',
+            'awaiting_confirmation': '待确认', 'awaiting_sentence_confirmation': '待确认翻译',
+        };
+        const statusLabel = statusMap[status] || status;
+        const statusClass = status || 'processing';
+        const isExpanded = taskExpandedId === t.task_id;
+
+        // 名称+类型
+        let nameHtml = '';
+        const displayName = t.title || t.url || '--';
+        const typeIcon = (t.process_mode === 'video') ? ' 🎬' : ' 🎵';
+        const typeLabel = (t.process_mode === 'video') ? '<span class="task-type-badge video">视频</span>'
+                       : '<span class="task-type-badge audio">音频</span>';
+        nameHtml = `${typeLabel} <span class="task-name-text">${escapeHtml(displayName)}</span>`;
+
+        // 时长
+        let durHtml = '--';
+        if (t.original_duration) durHtml = formatTime(t.original_duration);
+        else if (t.status === 'completed' && t.mixed_duration) durHtml = formatTime(t.mixed_duration);
+
+        // 时间
+        let timeHtml = t.created_at || '--';
+        if (timeHtml.length > 16) timeHtml = timeHtml.substring(0, 16);
+
+        html += `<tr class="task-row ${statusClass} ${isExpanded ? 'expanded' : ''}" onclick="toggleTaskDetail('${t.task_id}', '${escapeAttr(t.url)}')">`;
+        html += `<td class="col-title">${nameHtml}</td>`;
+        html += `<td class="col-status"><span class="task-status-dot ${statusClass}"></span>${statusLabel}</td>`;
+        html += `<td class="col-dur">${durHtml}</td>`;
+        html += `<td class="col-time">${timeHtml}</td>`;
+        html += `<td class="col-actions" onclick="event.stopPropagation()">`;
+
+        if (t.basename) {
+            html += `<button class="task-row-btn" onclick="event.stopPropagation(); toggleHistoryPlay('${t.task_id}', '${escapeAttr(t.basename)}', '${escapeAttr(t.url)}')" title="播放">▶</button>`;
+        }
+        html += `<button class="task-row-btn del" onclick="event.stopPropagation(); confirmDeleteTask('${t.task_id}', '${escapeAttr(displayName)}')" title="删除">✕</button>`;
+
+        html += '</td></tr>';
+
+        // 展开详情行
+        html += `<tr class="task-detail-row" id="task-detail-row-${t.task_id}" style="${isExpanded ? '' : 'display:none'}">`;
+        html += `<td colspan="5"><div class="task-detail-inner" id="task-detail-${t.task_id}">`;
+        if (isExpanded) html += '<div class="task-detail-loading">加载中...</div>';
+        html += '</div></td></tr>';
+    });
+    html += '</tbody></table></div>';
+
+    container.innerHTML = html;
+}
+
+function toggleTaskSort(field) {
+    if (taskSortField === field) {
+        taskSortDir = taskSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        taskSortField = field;
+        taskSortDir = 'desc';
+    }
+    renderTaskTable();
 }
 
 async function toggleTaskDetail(taskId, url) {
@@ -352,10 +478,10 @@ async function toggleTaskDetail(taskId, url) {
 
     // 折叠上一个展开的
     if (prevExpanded && prevExpanded !== taskId) {
-        const prevCard = document.querySelector(`.history-card[onclick*="${prevExpanded}"]`);
-        if (prevCard) prevCard.classList.remove('expanded');
-        const prevDetail = document.getElementById(`task-detail-${prevExpanded}`);
-        if (prevDetail) prevDetail.innerHTML = '';
+        const prevDetailRow = document.getElementById(`task-detail-row-${prevExpanded}`);
+        if (prevDetailRow) prevDetailRow.style.display = 'none';
+        const prevRow = document.querySelector(`.task-row[onclick*="${prevExpanded}"]`);
+        if (prevRow) prevRow.classList.remove('expanded');
         stopTaskPoll();
     }
 
@@ -364,13 +490,17 @@ async function toggleTaskDetail(taskId, url) {
         return;
     }
 
+    // 展开当前行
+    const detailRow = document.getElementById(`task-detail-row-${taskId}`);
+    const taskRow = document.querySelector(`.task-row[onclick*="${taskId}"]`);
+    if (taskRow) taskRow.classList.add('expanded');
+    if (detailRow) detailRow.style.display = '';
+
     // 加载并渲染详情
     const detailEl = document.getElementById(`task-detail-${taskId}`);
-    const card = document.querySelector(`.history-card[onclick*="${taskId}"]`);
-    if (card) card.classList.add('expanded');
     if (!detailEl) return;
 
-    detailEl.innerHTML = '<div style="text-align:center;padding:16px;color:var(--text-tertiary);">加载中...</div>';
+    detailEl.innerHTML = '<div class="task-detail-loading">加载中...</div>';
 
     try {
         const resp = await fetch(`/api/task/${taskId}`);

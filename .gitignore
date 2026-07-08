@@ -37,4 +37,4 @@ data/transcripts/
 data/tts_cache/
 
 # bilimix 本地配置
-~/.bilimix/
+core/config_local.py
