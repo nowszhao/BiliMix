@@ -411,10 +411,12 @@ def _clean_pinyin(text: str) -> str:
         if zh_lines:
             text = '\n'.join(zh_lines)
 
-    # 3. 去除末尾括号中的拼音/英文注释
-    # 括号内以拉丁字母（含拼音声调符号）开头才视为拼音注释并移除
+    # 3. 去除末尾括号中的拼音/英文注释 以及 LLM 的元注释（如「句子不完整，无法翻译」）
+    # 括号内以拉丁字母（含拼音声调符号）或中文开头
     text = re.sub(r'\s*\(' + _LATIN_RE + r'[^)]*\)\s*$', '', text)
     text = re.sub(r'\s*\[' + _LATIN_RE + r'[^\]]*\]\s*$', '', text)
+    # LLM 可能在翻译不完整句子时添加元注释 (句子不完整，无法翻译)
+    text = re.sub(r'[（(]句子不完整[，,].*?[)）]\s*$', '', text)
     return text.strip()
 
 
@@ -440,6 +442,7 @@ def parse_translation_response(response_text: str, expected_ids: list[int]) -> d
 
     # 第一轮：按 [N] 前缀匹配（同一 id 只保留首次出现的翻译）
     id_prefix = re.compile(r'^\[(\d+)\]\s*(.*)')
+    inline_id = re.compile(r'\[\d+\]')  # 行内残留编号检测
     non_prefixed_lines: list[str] = []
     for line in lines:
         line = line.strip()
@@ -449,6 +452,11 @@ def parse_translation_response(response_text: str, expected_ids: list[int]) -> d
         if m:
             sid = int(m.group(1))
             translation = _clean_pinyin(m.group(2).strip())
+            # 截断行内残留 [N] 编号（LLM 有时返回 "[1] 翻译A [2] 翻译B" 的单行）
+            if translation:
+                trunc = inline_id.search(translation)
+                if trunc:
+                    translation = translation[:trunc.start()].strip()
             if translation and sid not in result:
                 result[sid] = translation
         else:
