@@ -21,6 +21,9 @@ function switchView(view) {
         const el = document.getElementById(v);
         if (el) el.style.display = (v === view + '-view') ? '' : 'none';
     });
+    // 隐藏详情页
+    const detail = document.getElementById('task-detail-view');
+    if (detail) detail.style.display = 'none';
 
     // 更新侧边栏高亮
     document.querySelectorAll('.sidebar-nav-item').forEach(item => {
@@ -422,7 +425,9 @@ function viewEpisodeResult(taskId) {
 function setEpisodeStatusFilter(status) {
     episodesStatusFilter = status;
     episodesExpandedId = null;
-    // 客户端即时过滤，不再请求网络
+    document.querySelectorAll('.seg-control-item[data-status]').forEach(el => {
+        el.classList.toggle('active', el.dataset.status === status);
+    });
     renderFilteredEpisodes();
 }
 

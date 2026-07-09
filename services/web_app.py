@@ -508,59 +508,66 @@ def continue_after_sentence_confirmation(task_id: str):
             raise InterruptedError("任务已被用户终止")
 
         voice_clone = getattr(config, "SENTENCE_TTS_VOICE_CLONE", True)
+        skip_tts = getattr(config, "SKIP_TTS", False)
 
         update_task(task_id, status="processing", step="synthesize", progress=60,
-                    message="Step 3/4: 合成中文语音...")
+                    message="Step 3/4: 合成中文语音..." if not skip_tts else "跳过 TTS，使用原声")
 
         tts_audio_map = {}
 
-        # Confucius4-TTS-CPU: 零样本多语言声音克隆
-        confucius_cache_dir = os.path.join(result_dir, "tts_confucius_cache")
-        confucius_ref_dir = os.path.join(confucius_cache_dir, "ref_audio")
-        os.makedirs(confucius_ref_dir, exist_ok=True)
+        if skip_tts:
+            print(f"[TTS] SKIP_TTS=True，跳过语音合成")
+        else:
+            # Confucius4-TTS-CPU: 零样本多语言声音克隆
+            confucius_cache_dir = os.path.join(result_dir, "tts_confucius_cache")
+            confucius_ref_dir = os.path.join(confucius_cache_dir, "ref_audio")
+            os.makedirs(confucius_ref_dir, exist_ok=True)
 
-        from pipeline.ref_audio_utils import (
-            extract_ref_audio_for_segments, extract_ref_audio_speaker_local)
-        pseudo_replacements = [
-            {"segment_index": idx}
-            for idx in translated_indices if idx < len(segments)
-        ]
-        confucius_ref_map = {}
-        if voice_clone and pseudo_replacements:
-            ref_mode = getattr(config, "REF_SELECT_MODE", "speaker_local")
-            if ref_mode == "speaker_local":
-                (confucius_ref_map, confucius_ref_source_map,
-                 _confucius_ref_text_map) = extract_ref_audio_speaker_local(
-                    audio_path, segments, pseudo_replacements,
-                    confucius_ref_dir, engine="confucius")
-            else:
-                confucius_ref_map, confucius_ref_source_map = extract_ref_audio_for_segments(
-                    audio_path, segments, pseudo_replacements, confucius_ref_dir)
-            print(f"[Confucius] 提取了 {len(confucius_ref_map)} 个参考音频 (mode={ref_mode})")
+            from pipeline.ref_audio_utils import (
+                extract_ref_audio_for_segments, extract_ref_audio_speaker_local)
+            pseudo_replacements = [
+                {"segment_index": idx}
+                for idx in translated_indices if idx < len(segments)
+            ]
+            confucius_ref_map = {}
+            if voice_clone and pseudo_replacements:
+                ref_mode = getattr(config, "REF_SELECT_MODE", "speaker_local")
+                if ref_mode == "speaker_local":
+                    (confucius_ref_map, confucius_ref_source_map,
+                     _confucius_ref_text_map) = extract_ref_audio_speaker_local(
+                        audio_path, segments, pseudo_replacements,
+                        confucius_ref_dir, engine="confucius")
+                else:
+                    confucius_ref_map, confucius_ref_source_map = extract_ref_audio_for_segments(
+                        audio_path, segments, pseudo_replacements, confucius_ref_dir)
+                print(f"[Confucius] 提取了 {len(confucius_ref_map)} 个参考音频 (mode={ref_mode})")
 
-        def _confucius_progress(current, total):
-            pct = 60 + int((current / max(total, 1)) * 20)
-            update_task(task_id, progress=pct,
-                        message=f"Step 3/4: Confucius4-TTS 句子合成 ({current}/{total})",
-                        _tts_completed_count=current)
+            def _confucius_progress(current, total):
+                pct = 60 + int((current / max(total, 1)) * 20)
+                update_task(task_id, progress=pct,
+                            message=f"Step 3/4: Confucius4-TTS 句子合成 ({current}/{total})",
+                            _tts_completed_count=current)
 
-        def _confucius_cancel():
-            return is_cancelled(task_id)
+            def _confucius_cancel():
+                return is_cancelled(task_id)
 
-        tts_audio_map = synthesize_sentences_with_confucius_tts(
-            segments, translated_indices, translations,
-            audio_path, confucius_cache_dir,
-            ref_audio_map=confucius_ref_map if voice_clone else {},
-            cancel_check=_confucius_cancel, progress_cb=_confucius_progress,
-            task_id=task_id)
+            tts_audio_map = synthesize_sentences_with_confucius_tts(
+                segments, translated_indices, translations,
+                audio_path, confucius_cache_dir,
+                ref_audio_map=confucius_ref_map if voice_clone else {},
+                cancel_check=_confucius_cancel, progress_cb=_confucius_progress,
+                task_id=task_id)
 
         if is_cancelled(task_id):
             raise InterruptedError("任务已被用户终止")
 
         if len(translated_indices) > 0 and not tts_audio_map:
-            raise RuntimeError(
-                f"TTS 合成完全失败：{len(translated_indices)} 个句子未生成任何音频，"
-                f"请检查 TTS 引擎配置和环境依赖")
+            if getattr(config, "SKIP_TTS", False):
+                print(f"[TTS] SKIP_TTS=True，跳过 TTS，使用原始音频继续")
+            else:
+                raise RuntimeError(
+                    f"TTS 合成完全失败：{len(translated_indices)} 个句子未生成任何音频，"
+                    f"请检查 TTS 引擎配置和环境依赖")
 
         update_task(task_id, progress=80,
                     message=f"语音合成完成: {len(tts_audio_map)} 条中文语音")
@@ -1061,6 +1068,7 @@ def submit_task():
 
     # Always use sentence_translate mode with 100% translation
     process_mode = "video" if task_type == "video" else "sentence_translate"
+    print(f"[Submit] process_mode={process_mode!r} (task_type={task_type!r})")
     skip_confirmation = data.get("skip_confirmation",
                                  getattr(config, "SKIP_CONFIRMATION", True))
     title = data.get("title", "").strip()
@@ -1338,6 +1346,16 @@ def submit_task():
                         message="视频配音完成！",
                         video_result=video_result)
 
+            # 落盘确保重启不丢
+            try:
+                save_task_result_to_disk(result_dir, {
+                    "task_id": task_id, "status": "completed",
+                    "video_result": video_result,
+                    "_video_path": video_path,
+                })
+            except Exception as e:
+                print(f"[Video] 落盘失败: {e}")
+
         except InterruptedError:
             update_task(task_id, status="cancelled", message="任务已被终止")
         except Exception as e:
@@ -1415,6 +1433,132 @@ def confirm_sentences(task_id):
                               args=(task_id,), daemon=True)
     thread.start()
     return jsonify({"message": f"已确认 {len(confirmed_translations)} 个翻译，继续处理"})
+
+
+@app.route("/api/task/<task_id>/redo", methods=["POST"])
+def redo_task(task_id):
+    """完整重做：清空所有结果，重新走完整个 pipeline"""
+    task = get_task(task_id)
+    if not task:
+        task = restore_task_from_disk(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
+
+    source_url = task.get("url", "")
+    task_type = task.get("type", "audio")
+    if not source_url:
+        return jsonify({"error": "任务缺少源 URL，无法重做"}), 400
+
+    # 清空内存中的旧结果
+    keys_to_clear = ["result", "translations", "translated_indices",
+                     "sentence_pairs", "time_mapping", "video_result",
+                     "segments_mixed", "tts_audio_map",
+                     "_checkpoint_translate_batch", "_checkpoint_translations",
+                     "_checkpoint_tts_idx"]
+    for k in keys_to_clear:
+        task.pop(k, None)
+
+    # 删除磁盘上的旧结果
+    basename = task.get("_basename", "")
+    if basename:
+        result_dir = os.path.join(config.RESULT_DIR, basename)
+        # 保留原始 wav/mp4，删除结果文件
+        for ext in ("_sentence.mp3", "_dubbed.mp4", ".srt", "task_result.json"):
+            p = os.path.join(result_dir, basename + ext)
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except:
+                    pass
+
+    # 启动重做线程
+    def _redo_worker():
+        update_task(task_id, status="queued", step="download",
+                    progress=0, message="正在重做...")
+        # 视频任务调用 _do_video_post_process 的入口
+        if task_type == "video":
+            _do_redo_video_task(task_id, source_url)
+        else:
+            _do_redo_audio_task(task_id, source_url)
+        # 通知前端刷新
+        if isinstance(task_subprocesses.get(task_id), list):
+            task_subprocesses.pop(task_id, None)
+
+    cancel_flags[task_id] = threading.Event()
+    thread = threading.Thread(target=_redo_worker, daemon=True)
+    thread.start()
+    return jsonify({"message": "重做已启动", "task_id": task_id})
+
+
+def _do_redo_audio_task(task_id, source_url):
+    """重做音频任务"""
+    task = get_task(task_id)
+    audio_path = task.get("_audio_path", "")
+    if not audio_path or not os.path.isfile(audio_path):
+        # 重新下载
+        if source_url.startswith("file://"):
+            audio_path = source_url[len("file://"):]
+        elif source_url.startswith("http"):
+            update_task(task_id, status="processing", step="download", progress=5)
+            from urllib.request import Request, urlopen
+            save_dir = config.DOWNLOAD_DIR
+            os.makedirs(save_dir, exist_ok=True)
+            ext = ".mp3"
+            audio_path = os.path.join(save_dir, f"{task_id[:8]}_redo{ext}")
+            try:
+                req = Request(source_url, headers={"User-Agent": "BiliMix/1.0"})
+                with urlopen(req, timeout=300) as resp, open(audio_path, "wb") as f:
+                    f.write(resp.read())
+            except Exception as e:
+                update_task(task_id, status="error", message=f"重做下载失败: {e}")
+                return
+        else:
+            update_task(task_id, status="error", message="无法获取音频源")
+            return
+        update_task(task_id, _audio_path=audio_path)
+    process_audio_sentence_mode(task_id, audio_path)
+
+
+def _do_redo_video_task(task_id, source_url):
+    """重做视频任务"""
+    task = get_task(task_id)
+    _video_path = task.get("_video_path", "")
+    # 视频文件如果不在了，重新走 step0
+    if not _video_path or not os.path.isfile(_video_path):
+        if source_url.startswith("file://"):
+            _video_path = source_url[len("file://"):]
+        else:
+            # YouTube
+            video_cache_dir = os.path.join(config.DOWNLOAD_DIR, "video_cache")
+            os.makedirs(video_cache_dir, exist_ok=True)
+            from pipeline.step0_video_prepare import prepare_video
+            prep = prepare_video(source_url, video_cache_dir, title=task.get("title", ""))
+            if not prep.get("ok"):
+                update_task(task_id, status="error", message=f"重做下载失败: {prep.get('error','')}")
+                return
+            _video_path = prep["video_path"]
+        update_task(task_id, _video_path=_video_path)
+    audio_file = task.get("_audio_path", "")
+    if not audio_file or not os.path.isfile(audio_file):
+        # 从视频提取音频
+        from pipeline.step0_video_prepare import _extract_audio
+        cache_dir = os.path.join(config.DOWNLOAD_DIR, "video_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        audio_file = os.path.join(cache_dir, f"audio_redo_{task_id[:8]}.wav")
+        if not _extract_audio(_video_path, audio_file):
+            update_task(task_id, status="error", message="音频提取失败")
+            return
+        update_task(task_id, _audio_path=audio_file)
+    process_audio_sentence_mode(task_id, audio_file)
+    # 视频后处理
+    if get_task(task_id, {}).get("status") != "error":
+        # 重新从内存 task 读取翻译结果
+        task = get_task(task_id)
+        if task.get("translations") and task.get("translated_indices"):
+            try:
+                _do_video_post_process(task_id)
+            except Exception as e:
+                print(f"[Redo] 视频后处理失败: {e}")
 
 
 @app.route("/api/task/<task_id>/retry", methods=["POST"])
@@ -1752,6 +1896,8 @@ def list_tasks():
                 "progress": task.get("progress", 0),
                 "message": task.get("message", ""),
                 "created_at": task.get("created_at", ""),
+                "process_mode": task.get("process_mode", "sentence_translate"),
+                "type": task.get("type", "audio"),
                 "basename": (task.get("result", {}).get("basename", "")
                              if task.get("result") else task.get("_basename", "")),
                 "total_words": (task.get("result", {}).get("total_words", 0)
@@ -1868,13 +2014,17 @@ def get_task_result(task_id):
     if not task:
         return jsonify({"error": "任务不存在"}), 404
 
-    return jsonify({
+    result_data = {
         "task_id": task.get("task_id"),
         "status": task.get("status"),
         "progress": task.get("progress", 0),
         "message": task.get("message", ""),
         "process_mode": task.get("process_mode", "word_replace"),
+        "type": task.get("type", "audio"),
         "title": task.get("title", ""),
+        "url": task.get("url", ""),
+        "original_duration": task.get("original_duration", 0),
+        "created_at": task.get("created_at", ""),
         "transcription_text": task.get("transcription_text", ""),
         "segments": task.get("segments_mixed") or task.get("segments", []),
         "difficult_words": task.get("difficult_words", []),
@@ -1885,7 +2035,32 @@ def get_task_result(task_id):
         "result": task.get("result"),
         "time_mapping": task.get("time_mapping", []),
         "video_result": task.get("video_result"),
-    })
+    }
+    # 视频任务：暴露原始视频 URL
+    # 优先 _video_path（step0 下载的），fallback 到任务 url
+    vpath = task.get("_video_path", "")
+    if vpath and os.path.isfile(vpath):
+        rel = _make_audio_url(vpath)
+        if rel:
+            result_data["original_video_url"] = rel
+    elif task.get("url", "").startswith("file://"):
+        fpath = task["url"][len("file://"):]
+        if os.path.isfile(fpath):
+            rel = _make_audio_url(fpath)
+            if rel:
+                result_data["original_video_url"] = rel
+    return jsonify(result_data)
+
+
+def _make_audio_url(abs_path: str) -> str:
+    """将服务端绝对路径转为 /api/audio/<relative> URL"""
+    for marker in ("/data/downloads/", "\\data\\downloads\\",
+                   "/data/results/", "\\data\\results\\"):
+        idx = abs_path.find(marker)
+        if idx != -1:
+            rel = abs_path[idx + len(marker):].replace("\\", "/")
+            return f"/api/audio/{rel}"
+    return f"/api/audio/{os.path.basename(abs_path)}"
 
 
 @app.route("/api/audio/<path:filename>")

@@ -116,6 +116,8 @@ def _persist_task(task_id: str):
             "url": task.get("url", ""),
             "title": task.get("title", ""),
             "difficulty": task.get("difficulty", ""),
+            "process_mode": task.get("process_mode", "sentence_translate"),
+            "type": task.get("type", "audio"),
             "status": task.get("status"),
             "progress": task.get("progress", 0),
             "message": task.get("message", ""),
@@ -210,6 +212,7 @@ def restore_task_from_disk(task_id: str) -> dict:
                 "title": summary.get("title", ""),
                 "difficulty": saved.get("difficulty", summary.get("difficulty", "")),
                 "process_mode": saved.get("process_mode", summary.get("process_mode", "sentence_translate")),
+                "type": saved.get("type", summary.get("type", "audio")),
                 "skip_confirmation": saved.get("skip_confirmation",
                                    summary.get("skip_confirmation",
                                    getattr(config, "SKIP_CONFIRMATION", True))),
@@ -229,7 +232,9 @@ def restore_task_from_disk(task_id: str) -> dict:
                 "sentence_pairs": saved.get("sentence_pairs", []),
                 "result": saved.get("result"),
                 "time_mapping": saved.get("time_mapping", []),
+                "video_result": saved.get("video_result"),
                 "_basename": basename,
+                "_video_path": saved.get("_video_path", ""),
                 "_audio_path": (saved.get("result", {}).get("original_audio", "")
                                 if saved.get("result") else ""),
             }

@@ -38,10 +38,12 @@ def transcribe(audio_path: str, output_dir: str = None) -> dict:
         with open(json_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    # 调用 WhisperX 进行转录（使用 conda 环境中的绝对路径）
+    # 调用 WhisperX 进行转录
+    # WHISPERX_BIN 支持 str（单二进制）或 list（如 [python, wrapper.py]）
     print(f"[Step1] 开始转录音频: {audio_path}")
-    cmd = [
-        config.WHISPERX_BIN, audio_path,
+    bin_cmd = config.WHISPERX_BIN if isinstance(config.WHISPERX_BIN, list) \
+              else [config.WHISPERX_BIN]
+    cmd = bin_cmd + [audio_path,
         "--model", config.WHISPERX_MODEL,
         "--device", config.WHISPERX_DEVICE,
         "--compute_type", config.WHISPERX_COMPUTE_TYPE,

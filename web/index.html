@@ -247,315 +247,54 @@
             </div>
         </section>
 
-        <!-- ====== 视频结果区 ====== -->
-        <section id="video-result-section" class="result-section hidden">
-            <div class="player-card video-player-card">
-                <div class="player-header">
-                    <h2 class="section-title">🎬 配音视频</h2>
-                    <div class="player-badges">
-                        <span class="badge" id="vbadge-words">-- 句翻译</span>
-                        <span class="badge" id="vbadge-duration">-- 秒</span>
-                    </div>
+                <!-- ====== 任务详情页 ====== -->
+        <section id="task-detail-view" class="content-view" style="display:none;">
+            <div class="detail-top">
+                <a href="#" class="detail-back" onclick="switchView('tasks'); return false;">← 任务列表</a>
+            </div>
+
+            <div class="detail-hero">
+                <div class="detail-hero-main">
+                    <span class="detail-type-badge" id="detail-type-badge">🎬 视频配音</span>
+                    <h1 class="detail-title" id="detail-title">--</h1>
+                    <span class="detail-filename" id="detail-filename">--</span>
                 </div>
-                <div class="video-player-wrapper">
-                    <video id="dubbed-video" controls preload="metadata" class="dubbed-video">
-                        您的浏览器不支持 video 标签
-                    </video>
+                <span class="detail-status-tag" id="detail-status-tag">✅ 已完成</span>
+            </div>
+
+            <div class="detail-meta" id="detail-meta">
+                <div class="detail-meta-item"><span class="meta-label">来源</span><span class="meta-value" id="meta-src">--</span></div>
+                <div class="detail-meta-item"><span class="meta-label">创建</span><span class="meta-value" id="meta-time">--</span></div>
+                <div class="detail-meta-item"><span class="meta-label">原时长</span><span class="meta-value" id="meta-dur">--</span></div>
+                <div class="detail-meta-item"><span class="meta-label">译时长</span><span class="meta-value" id="meta-mdur">--</span></div>
+                <div class="detail-meta-item"><span class="meta-label">翻译</span><span class="meta-value" id="meta-tr">--</span></div>
+            </div>
+
+            <div class="detail-player-card">
+                <div class="detail-tabs">
+                    <button class="detail-tab active" id="dt-orig" onclick="switchDetailSource('original')">🎬 原始</button>
+                    <button class="detail-tab" id="dt-dub" onclick="switchDetailSource('dubbed')">✨ 配音</button>
                 </div>
-                <div class="video-download-bar">
-                    <a id="download-video-btn" class="btn-primary" href="#" download>
-                        <span class="btn-icon">📥</span><span class="btn-text">下载配音视频 (MP4)</span>
-                    </a>
-                    <a id="download-srt-btn" class="btn-secondary" href="#" download>
-                        <span class="btn-icon">📄</span><span class="btn-text">下载字幕 (SRT)</span>
-                    </a>
+                <div class="detail-player-box" id="detail-video-wrapper" style="display:none;">
+                    <video id="detail-video" controls preload="metadata"></video>
+                </div>
+                <div class="detail-player-box" id="detail-audio-inline" style="display:none;">
+                    <audio id="detail-audio" controls preload="none"></audio>
+                </div>
+                <div class="detail-actions">
+                    <a id="detail-dl-media" class="btn-primary btn-sm" href="#" style="display:none;">📥 下载</a>
+                    <a id="detail-dl-srt" class="btn-secondary btn-sm" href="#">📄 字幕</a>
                 </div>
             </div>
-            <div class="tabs-card">
-                <div class="tabs-header">
-                    <button class="tab-btn active" data-tab="v-transcript" onclick="switchTab('v-transcript')">📝 双语字幕</button>
+
+            <div class="detail-transcript-card" id="detail-subtitle-card">
+                <div class="detail-transcript-hd">
+                    📝 字幕 · 播放时自动高亮
                 </div>
-                <div class="tab-content active" id="tab-v-transcript">
-                    <div class="transcript-toolbar">
-                        <span class="transcript-toolbar-info" id="vtranscript-info"></span>
-                        <div class="transcript-toolbar-actions">
-                            <button class="toolbar-btn" onclick="copyTranscript()" title="复制字幕到剪贴板">
-                                <span class="toolbar-btn-icon">📋</span><span class="toolbar-btn-text">复制</span>
-                            </button>
-                        </div>
-                    </div>
-                    <div class="transcript-container" id="vtranscript-container"></div>
-                </div>
-            </div>
-            <div class="restart-area">
-                <button class="btn-secondary" onclick="goHomeFromResult()">← 返回任务列表</button>
+                <div class="detail-transcript-body" id="detail-transcript-container"></div>
             </div>
         </section>
-
-    </main>
-
-    <!-- ====== 设置抽屉 ====== -->
-    <div class="settings-overlay" id="settings-overlay" onclick="closeSettings()"></div>
-    <aside class="settings-drawer" id="settings-drawer">
-        <div class="drawer-header">
-            <h2 class="drawer-title">⚙️ 系统设置</h2>
-            <button class="drawer-close" onclick="closeSettings()">✕</button>
-        </div>
-        <div class="drawer-body" id="settings-body">
-            <div class="settings-loading">
-                <div class="spinner" style="margin: 0 auto 12px;"></div>
-                <p>加载配置中...</p>
-            </div>
-        </div>
-        <div class="settings-footer" id="settings-footer" style="display:none;">
-            <button class="btn-secondary" onclick="resetSettingsToDefault()">恢复默认</button>
-            <button class="btn-primary" id="settings-save-btn" onclick="saveSettings()">
-                <span class="btn-icon">💾</span>
-                <span class="btn-text">保存设置</span>
-            </button>
-        </div>
-    </aside>
-
-    <!-- ====== 全屏转录覆盖层 ====== -->
-    <div class="fullscreen-overlay" id="fullscreen-overlay">
-        <div class="fullscreen-header">
-            <h2 class="fullscreen-title" id="fullscreen-title">📝 原文转录</h2>
-            <div class="fullscreen-actions">
-                <button class="toolbar-btn active" id="fs-auto-scroll-btn" onclick="toggleAutoScroll()" title="自动跟随">
-                    <span class="toolbar-btn-icon">📍</span><span class="toolbar-btn-text">自动跟随</span>
-                </button>
-                <button class="toolbar-btn" onclick="copyTranscript()" title="复制字幕到剪贴板">
-                    <span class="toolbar-btn-icon">📋</span><span class="toolbar-btn-text">复制</span>
-                </button>
-                <button class="fullscreen-close-btn" onclick="toggleTranscriptFullscreen()" title="退出全屏">✕</button>
-            </div>
-        </div>
-        <div class="fullscreen-player">
-            <audio id="fullscreen-audio" controls></audio>
-        </div>
-        <div class="fullscreen-transcript" id="fullscreen-transcript"></div>
-    </div>
-
-    <!-- ====== 添加订阅 Modal ====== -->
-    <div class="modal-overlay" id="add-sub-modal" onclick="closeAddSubscriptionModal()">
-        <div class="modal-card" onclick="event.stopPropagation()">
-            <div class="modal-header">
-                <h2 class="modal-title">添加订阅</h2>
-                <button class="modal-close" onclick="closeAddSubscriptionModal()">✕</button>
-            </div>
-
-            <!-- 搜索播客 -->
-            <div class="modal-search-area">
-                <div class="input-row" style="position:relative;">
-                    <input type="text" id="modal-search-input" placeholder="搜索播客..."
-                           spellcheck="false"
-                           oninput="debouncedModalPodcastSearch()"
-                           onkeydown="if(event.key==='Enter') modalSearchPodcasts()">
-                    <button class="search-btn" onclick="modalSearchPodcasts()">搜索</button>
-                </div>
-                <div class="podcast-results" id="modal-podcast-results" style="display:none;">
-                    <div class="podcast-results-list" id="modal-podcast-results-list"></div>
-                </div>
-            </div>
-
-            <div class="modal-divider">
-                <span>或</span>
-            </div>
-
-            <!-- RSS 添加 -->
-            <div class="modal-rss-area">
-                <div class="input-row">
-                    <input type="url" id="modal-rss-input" placeholder="粘贴 RSS Feed URL..."
-                           spellcheck="false"
-                           onkeydown="if(event.key==='Enter') modalLoadRssFeed()">
-                    <button class="search-btn" onclick="modalLoadRssFeed()">解析</button>
-                </div>
-                <div class="episodes-panel" id="modal-rss-episodes-panel" style="display:none;">
-                    <div class="episodes-header">
-                        <button class="episodes-back-btn" onclick="closeModalRssEpisodes()">←</button>
-                        <div class="episodes-podcast-info">
-                            <img class="episodes-podcast-img" id="modal-rss-podcast-img" src="" alt="">
-                            <div class="episodes-podcast-meta">
-                                <span class="episodes-podcast-title" id="modal-rss-podcast-title"></span>
-                                <span class="episodes-podcast-author" id="modal-rss-podcast-author"></span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="episodes-list" id="modal-rss-episodes-list"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ====== Mini Player ====== -->
-    <div class="mini-player" id="mini-player" style="display:none;">
-        <div class="mini-player-progress-bar" id="mini-player-progress-bar">
-            <div class="mini-player-progress-fill" id="mini-player-progress-fill">
-                <div class="mini-player-progress-thumb"></div>
-            </div>
-        </div>
-        <div class="mini-player-content" onclick="miniPlayerGoBack()">
-            <div class="mini-player-left">
-                <button class="mini-player-play-btn" id="mini-player-play-btn" onclick="event.stopPropagation(); miniPlayerTogglePlay()" title="播放/暂停">
-                    <svg id="mini-player-icon-pause" class="mini-player-svg-icon" viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                        <rect x="6" y="4" width="4" height="16" rx="1"/>
-                        <rect x="14" y="4" width="4" height="16" rx="1"/>
-                    </svg>
-                    <svg id="mini-player-icon-play" class="mini-player-svg-icon" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="display:none;">
-                        <path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11.04-6.86a1 1 0 0 0 0-1.72L9.5 4.28a1 1 0 0 0-1.5.86z"/>
-                    </svg>
-                </button>
-                <div class="mini-player-info">
-                    <div class="mini-player-title" id="mini-player-title">--</div>
-                    <div class="mini-player-meta">
-                        <span class="mini-player-badge" id="mini-player-badge">原始音频</span>
-                        <span class="mini-player-time" id="mini-player-time">--:-- / --:--</span>
-                    </div>
-                </div>
-            </div>
-            <div class="mini-player-right">
-                <button class="mini-player-expand-btn" onclick="event.stopPropagation(); miniPlayerGoBack()" title="返回详情">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-                        <polyline points="18 15 12 9 6 15"/>
-                    </svg>
-                </button>
-                <button class="mini-player-close-btn" onclick="event.stopPropagation(); miniPlayerClose()" title="停止播放">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- ====== 新建任务 Modal ====== -->
-    <div class="modal-overlay task-modal-overlay" id="new-task-modal" onclick="closeNewTaskModal()">
-        <div class="modal-card task-modal-card" onclick="event.stopPropagation()">
-            <div class="modal-header">
-                <h2 class="modal-title">新建任务</h2>
-                <button class="modal-close" onclick="closeNewTaskModal()">✕</button>
-            </div>
-            <div class="modal-body">
-                <!-- 模式选择器 -->
-                <div class="mode-selector">
-                    <div class="mode-card active" data-topmode="audio" onclick="switchTopMode('audio')">
-                        <div class="mode-card-icon">🎵</div>
-                        <div class="mode-card-text">
-                            <div class="mode-card-title">音频转录</div>
-                            <div class="mode-card-desc">英文音频 → 中文翻译 + 配音</div>
-                        </div>
-                        <div class="mode-card-check">✓</div>
-                    </div>
-                    <div class="mode-card" data-topmode="video" onclick="switchTopMode('video')">
-                        <div class="mode-card-icon">🎬</div>
-                        <div class="mode-card-text">
-                            <div class="mode-card-title">视频配音</div>
-                            <div class="mode-card-desc">YouTube/本地视频 → 中文字幕 + 配音</div>
-                        </div>
-                        <div class="mode-card-check">✓</div>
-                    </div>
-                </div>
-
-                <!-- 音频转录表单 -->
-                <div class="top-mode-panel active" id="topmode-audio">
-                    <div class="form-group">
-                        <label class="form-label">输入方式</label>
-                        <div class="segmented-control">
-                            <button class="segment active" data-mode="url" onclick="switchInputMode('url')"><span>🔗 链接</span></button>
-                            <button class="segment" data-mode="file" onclick="switchInputMode('file')"><span>📁 本地上传</span></button>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">音频源</label>
-                        <div class="input-mode-content active" id="input-mode-url">
-                            <input type="url" id="audio-url" class="form-input" placeholder="粘贴音频 URL（mp3, wav, m4a...）" spellcheck="false">
-                        </div>
-                        <div class="input-mode-content" id="input-mode-file">
-                            <div class="file-upload-row task-file-upload" id="file-upload-area">
-                                <span class="file-upload-label-text" id="file-upload-label">选择或拖拽音频文件</span>
-                                <span class="file-upload-hint">支持 mp3, wav, m4a, ogg, flac, aac</span>
-                                <input type="file" id="file-upload-input" accept=".mp3,.wav,.m4a,.ogg,.flac,.aac" onchange="onFileSelected(this)">
-                            </div>
-                            <div class="file-upload-info" id="file-upload-info" style="display:none;">
-                                <span class="file-upload-icon">✅</span>
-                                <span class="file-upload-name" id="file-upload-name"></span>
-                                <span class="file-upload-size" id="file-upload-size"></span>
-                                <button class="file-upload-clear" onclick="clearUploadedFile()" title="移除文件">✕</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 视频配音表单 -->
-                <div class="top-mode-panel" id="topmode-video">
-                    <div class="form-group">
-                        <label class="form-label">输入方式</label>
-                        <div class="segmented-control">
-                            <button class="segment active" data-vmode="youtube" onclick="switchVideoMode('youtube')"><span>▶️ YouTube</span></button>
-                            <button class="segment" data-vmode="local" onclick="switchVideoMode('local')"><span>📁 本地上传</span></button>
-                            <button class="segment" data-vmode="server" onclick="switchVideoMode('server')"><span>🖥 服务端路径</span></button>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">视频源</label>
-                        <div class="input-mode-content active" id="video-mode-youtube">
-                            <input type="url" id="video-url" class="form-input" placeholder="粘贴 YouTube 视频地址..." spellcheck="false">
-                        </div>
-                        <div class="input-mode-content" id="video-mode-local">
-                            <div class="file-upload-row task-file-upload" id="video-upload-area">
-                                <span class="file-upload-label-text" id="video-upload-label">选择或拖拽视频文件</span>
-                                <span class="file-upload-hint">支持 mp4, mkv, mov, avi, webm</span>
-                                <input type="file" id="video-upload-input" accept=".mp4,.mkv,.mov,.avi,.webm" onchange="onVideoFileSelected(this)">
-                            </div>
-                            <div class="file-upload-info" id="video-upload-info" style="display:none;">
-                                <span class="file-upload-icon">✅</span>
-                                <span class="file-upload-name" id="video-upload-name"></span>
-                                <span class="file-upload-size" id="video-upload-size"></span>
-                                <button class="file-upload-clear" onclick="clearVideoUpload()" title="移除文件">✕</button>
-                            </div>
-                        </div>
-                        <div class="input-mode-content" id="video-mode-server">
-                            <input type="text" id="video-server-path" class="form-input" placeholder="输入服务端视频绝对路径，如 /data/videos/my_video.mp4" spellcheck="false">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">字幕设置</label>
-                        <div class="video-options" id="video-options">
-                            <div class="video-option-row">
-                                <span class="video-option-label">样式</span>
-                                <div class="video-option-choices">
-                                    <label class="video-radio"><input type="radio" name="sub_mode" value="bilingual" checked> 双语</label>
-                                    <label class="video-radio"><input type="radio" name="sub_mode" value="chinese_only"> 仅中文</label>
-                                    <label class="video-radio"><input type="radio" name="sub_mode" value="none"> 无字幕</label>
-                                </div>
-                            </div>
-                            <div class="video-option-row">
-                                <span class="video-option-label">字号</span>
-                                <select class="video-option-select" id="sub-font-size">
-                                    <option value="16">小</option><option value="20" selected>中</option><option value="26">大</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="task-submit-bar" style="border-top:none;padding-top:0;margin-top:20px;">
-                    <button class="btn-secondary" onclick="closeNewTaskModal()" style="margin-right:auto;">取消</button>
-                    <button id="generate-btn" class="btn-primary btn-submit" onclick="submitTask()">
-                        <span class="btn-icon">✨</span><span class="btn-text">开始生成</span>
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ====== 底部 ====== -->
-    <footer class="footer">
-        <p>Powered by BiliMix · WhisperX · Ollama · Confucius4-TTS</p>
-    </footer>
-
-    <!-- JS 模块 — 按依赖顺序加载 -->
+<!-- JS 模块 — 按依赖顺序加载 -->
     <script src="js/utils.js"></script>
     <script src="js/state.js"></script>
     <script src="js/audio-sync.js"></script>

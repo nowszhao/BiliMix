@@ -37,6 +37,21 @@ function switchTopMode(mode) {
         const txt = btn.querySelector('.btn-text');
         if (txt) txt.textContent = mode === 'video' ? '开始配音' : '开始生成';
     }
+    _updateVideoHint();
+}
+
+// 智能提示：粘贴 YouTube URL 时建议切换到视频模式
+function _updateVideoHint() {
+    const hint = document.getElementById('youtube-hint');
+    const urlInput = document.getElementById('audio-url');
+    if (!hint || !urlInput) return;
+    const val = urlInput.value.trim();
+    const isYT = /youtube\.com|youtu\.be/.test(val);
+    if (isYT && currentTopMode === 'audio') {
+        hint.style.display = 'block';
+    } else {
+        hint.style.display = 'none';
+    }
 }
 
 function switchInputMode(mode) {
@@ -197,9 +212,12 @@ async function onFileSelected(input) {
 function clearUploadedFile() {
     uploadedFilePath = '';
     uploadedFileName = '';
-    document.getElementById('file-upload-info').style.display = 'none';
-    document.getElementById('file-upload-input').value = '';
-    document.getElementById('file-upload-label').textContent = '选择或拖拽音频文件';
+    var info = document.getElementById('file-upload-info');
+    var input = document.getElementById('file-upload-input');
+    var label = document.getElementById('file-upload-label');
+    if (info) info.style.display = 'none';
+    if (input) input.value = '';
+    if (label) label.textContent = '选择或拖拽音频文件';
 }
 
 function formatFileSize(bytes) {

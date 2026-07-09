@@ -104,55 +104,47 @@ def mix_sentence_audio(
             target_sr = 22050
             target_channels = 1
 
-        gap_seg = AudioSegment.silent(duration=full_gap_ms, frame_rate=target_sr)
+        # 全翻译模式：TTS 片段之间用交叉淡化取代静音间隙，听觉流畅无间断。
+        crossfade_ms = full_gap_ms if full_gap_ms > 20 else 80
         result = AudioSegment.empty()
         time_mapping = []
-        mixed_pos_ms = 0
+        actual_pos_ms = 0  # 追踪每个片段在最终混音中的实际起始位置
 
         for i, seg_idx in enumerate(translated_indices):
             tts_path = tts_audio_map.get(seg_idx, "")
             if not tts_path or not os.path.exists(tts_path):
-                print(f"[Step4b] 警告: seg[{seg_idx}] TTS 文件缺失，插入静音代替")
-                missed_seg = segments[seg_idx] if seg_idx < len(segments) else {}
-                seg_dur_s = missed_seg.get("end", 0) - missed_seg.get("start", 0)
-                seg_len_ms = max(int(seg_dur_s * 1000), 500)
-                tts_clip = AudioSegment.silent(duration=seg_len_ms, frame_rate=target_sr)
-            else:
-                tts_clip = AudioSegment.from_file(tts_path)
-                tts_len_ms = len(tts_clip)  # 在重采样前取真实时长
-                # 统一到目标采样率和声道数（true resampling，不改播放速度）
-                tts_clip = tts_clip.set_channels(target_channels)
-                if tts_clip.frame_rate != target_sr:
-                    tts_clip = tts_clip.set_frame_rate(target_sr)
-                tts_clip = _normalize_tts_audio(tts_clip)
-                tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
+                print(f"[Step4b] 警告: seg[{seg_idx}] TTS 文件缺失，跳过")
+                continue
+            tts_clip = AudioSegment.from_file(tts_path)
+            tts_len_ms = len(tts_clip)
+            tts_clip = tts_clip.set_channels(target_channels)
+            if tts_clip.frame_rate != target_sr:
+                tts_clip = tts_clip.set_frame_rate(target_sr)
+            tts_clip = _normalize_tts_audio(tts_clip)
 
-            result += tts_clip
+            if i == 0:
+                # 第一个片段直接添加
+                result = tts_clip
+                start_ms = 0
+            else:
+                # 后续片段用交叉淡化追加：无静音，前一段尾与本段首平滑过渡
+                tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
+                start_ms = len(result)  # 交叉淡化前 result 的尾部
+                result = result.append(tts_clip, crossfade=crossfade_ms)
+                # 交叉淡化后该片段实际开始位置向后移 crossfade_ms
+                start_ms = min(start_ms, len(result) - tts_len_ms)
+
+            end_ms = len(result)
             chinese_text = translations.get(seg_idx, "")
             time_mapping.append({
-                "mixed_start": round(mixed_pos_ms / 1000.0, 3),
-                "mixed_end": round((mixed_pos_ms + tts_len_ms) / 1000.0, 3),
-                "orig_start": 0,
-                "orig_end": 0,
+                "mixed_start": round(start_ms / 1000.0, 3),
+                "mixed_end": round(end_ms / 1000.0, 3),
+                "orig_start": 0, "orig_end": 0,
                 "type": "tts_chinese",
                 "segment_index": seg_idx,
                 "chinese": chinese_text,
             })
-            mixed_pos_ms += tts_len_ms
-            print(f"  [{seg_idx}] 🇨🇳 {chinese_text[:30]} ({tts_len_ms}ms)")
-
-            # 句间固定间隔（最后一句不加）
-            if i < len(translated_indices) - 1:
-                result += gap_seg
-                time_mapping.append({
-                    "mixed_start": round(mixed_pos_ms / 1000.0, 3),
-                    "mixed_end": round((mixed_pos_ms + full_gap_ms) / 1000.0, 3),
-                    "orig_start": 0,
-                    "orig_end": 0,
-                    "type": "gap",
-                    "segment_index": -1,
-                })
-                mixed_pos_ms += full_gap_ms
+            print(f"  [{seg_idx}] 🇨🇳 {chinese_text[:30]} ({tts_len_ms}ms, {start_ms/1000:.1f}s-{end_ms/1000:.1f}s)")
 
         # 导出
         fmt = getattr(config, "OUTPUT_FORMAT", "mp3")

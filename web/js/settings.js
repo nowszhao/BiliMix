@@ -444,6 +444,10 @@ function renderTaskTable() {
         html += `<td class="col-time">${timeHtml}</td>`;
         html += `<td class="col-actions" onclick="event.stopPropagation()">`;
 
+        // 重做按钮（已完成/出错的视频/音频任务都可重做）
+        if (t.status === 'completed' || t.status === 'error' || t.status === 'cancelled') {
+            html += `<button class="task-row-btn redo" onclick="event.stopPropagation(); redoTask('${t.task_id}')" title="重新转录配音">↻</button>`;
+        }
         if (t.basename) {
             html += `<button class="task-row-btn" onclick="event.stopPropagation(); toggleHistoryPlay('${t.task_id}', '${escapeAttr(t.basename)}', '${escapeAttr(t.url)}')" title="播放">▶</button>`;
         }
@@ -538,10 +542,133 @@ function renderTaskDetail(container, task) {
 }
 
 function openTaskResultView(taskId, url) {
-    // 切换到完整结果页（带回播放器+字幕同步）
     currentTaskId = taskId;
     tasks_url = url || '';
-    if (typeof loadResult === 'function') loadResult();
+    const tasksView = document.getElementById('tasks-view');
+    // 显示详情页
+    const detailView = document.getElementById('task-detail-view');
+    if (tasksView) tasksView.style.display = 'none';
+    if (detailView) {
+        detailView.style.display = '';
+        window.scrollTo(0, 0);
+        loadTaskDetail();
+    }
+}
+
+async function loadTaskDetail() {
+    try {
+        const resp = await fetch(`/api/task/${currentTaskId}/result`);
+        const data = await resp.json();
+        renderTaskDetailPage(data);
+    } catch (err) { console.error('Load detail error:', err); }
+}
+
+function renderTaskDetailPage(data) {
+    const isVideo = (data.type === 'video' || data.process_mode === 'video');
+    const title = data.title || '未命名任务';
+    const src = data.url || '--';
+    const sm = { completed:'已完成',processing:'处理中',error:'出错',cancelled:'已终止' };
+    const st = data.status||'';
+    const dur = data.original_duration||0;
+    const mixedDur = (data.result||{}).mixed_duration||0;
+    const trCount = (data.translated_indices||[]).length;
+    const cAt = (data.created_at||'').substring(0,16);
+    const typeLabel = isVideo ? '🎬 视频配音' : '🎵 音频转录';
+    const tc = isVideo ? 'video' : 'audio';
+
+    document.getElementById('detail-type-badge').textContent = typeLabel;
+    document.getElementById('detail-type-badge').className = 'detail-type-badge ' + tc;
+    document.getElementById('detail-title').textContent = title;
+    document.getElementById('detail-filename').textContent = src.length > 70 ? src.substring(0,70)+'...' : src;
+    const stag = document.getElementById('detail-status-tag');
+    stag.textContent = '✅ ' + (sm[st]||st);
+    stag.className = 'detail-status-tag ' + st;
+
+    document.getElementById('meta-src').textContent = src.length > 60 ? src.substring(0,60)+'...' : src;
+    document.getElementById('meta-time').textContent = cAt;
+    document.getElementById('meta-dur').textContent = typeof formatTime==='function'?formatTime(dur):dur+'s';
+    document.getElementById('meta-mdur').textContent = typeof formatTime==='function'?formatTime(mixedDur):mixedDur+'s';
+    document.getElementById('meta-tr').textContent = trCount + ' 句';
+
+    const vw = document.getElementById('detail-video-wrapper');
+    const aw = document.getElementById('detail-audio-inline');
+    if (isVideo) { vw.style.display=''; aw.style.display='none'; vw.classList.remove('is-audio'); }
+    else { vw.style.display='none'; aw.style.display=''; aw.classList.add('is-audio'); }
+
+    window._taskDetailData = data;
+    switchDetailSource('dubbed');
+
+    const segs = data.segments||[];
+    let sp = data.sentence_pairs||[];
+    if (sp.length===0 && data.translations && data.translated_indices) {
+        const idxs = [...data.translated_indices].sort((a,b)=>a-b);
+        sp = idxs.filter(i=>i<segs.length&&data.translations[i]).map(i=>({
+            index:i, english:(segs[i].text||'').trim(), chinese:data.translations[i],
+            start:segs[i].start||0, end:segs[i].end||0 }));
+    }
+    _renderDetailTranscript(segs, sp);
+}
+
+var _detailSource = 'dubbed';
+function switchDetailSource(src) {
+    _detailSource = src;
+    const data = window._taskDetailData; if (!data) return;
+    const isVideo = (data.type==='video'||data.process_mode==='video');
+
+    // tab active
+    document.getElementById('dt-orig').classList.toggle('active', src==='original');
+    document.getElementById('dt-dub').classList.toggle('active', src==='dubbed');
+
+    const ve = document.getElementById('detail-video');
+    const ae = document.getElementById('detail-audio');
+    const vw = document.getElementById('detail-video-wrapper');
+    const aw = document.getElementById('detail-audio-inline');
+    const dl = document.getElementById('detail-dl-media');
+    const ds = document.getElementById('detail-dl-srt');
+    if (ve) ve.pause(); if (ae) ae.pause();
+
+    if (isVideo) {
+        let url = src==='dubbed' ? ((data.video_result||{}).video_url||'') : (data.original_video_url||'');
+        vw.style.display=''; aw.style.display='none';
+        if (url) { ve.src = url; ve.load(); }
+        dl.style.display = (src==='dubbed'&&url) ? '' : 'none';
+        dl.href = url || '#';
+        ds.href = (src==='dubbed'&&(data.video_result||{}).srt_url) ? (data.video_result||{}).srt_url : '#';
+    } else {
+        const r = data.result||{}; const bn = r.basename||data.basename||'';
+        let path = '';
+        if (src==='dubbed') {
+            path = '/api/audio/'+bn+'/'+bn+'_sentence.mp3';
+            dl.style.display=''; dl.href=path;
+        } else {
+            const oa = r.original_audio||'';
+            path = oa ? (typeof _resolveAudioUrl==='function'?_resolveAudioUrl(oa):oa) : ('/api/audio/'+bn+'.mp3');
+            dl.style.display='none';
+        }
+        vw.style.display='none'; aw.style.display=''; aw.classList.add('is-audio');
+        if (path) { ae.src = path; ae.load(); }
+        ds.href = src==='dubbed' ? ('/api/audio/'+bn+'/'+bn+'.srt') : '#';
+    }
+}
+
+function _renderDetailTranscript(segments, pairs) {
+    const c = document.getElementById('detail-transcript-container'); if (!c||!segments) return;
+    const tmap={}; if(pairs)pairs.forEach(p=>{tmap[p.index]=p.chinese;});
+    c.innerHTML = segments.map((seg,i)=>{
+        const t=typeof formatTime==='function'?formatTime(seg.start||0):'0:00';
+        const en=(seg.text||'').trim(); const cn=tmap[i]||'';
+        return `<div class="transcript-segment ${cn?'has-translation':''}" data-start="${seg.start||0}" data-end="${seg.end||(seg.start||0)+5}"
+            onclick="(function(){var v=document.getElementById('detail-video');var a=document.getElementById('detail-audio');var m=v&&v.src?v:a;if(m){m.currentTime=${seg.start||0};m.play().catch(function(){})}})()">
+            <span class="segment-time">${t}</span><div class="segment-content"><span class="segment-text">${escapeHtml(en)}</span>
+            ${cn?`<span class="segment-chinese">${escapeHtml(cn)}</span>`:''}</div></div>`;
+    }).join('');
+    var ve=document.getElementById('detail-video');
+    if(ve) ve.ontimeupdate=function(){ var ct=ve.currentTime;
+        c.querySelectorAll('.transcript-segment').forEach(function(el){
+            var s=parseFloat(el.dataset.start||0), e=parseFloat(el.dataset.end||s+5);
+            el.classList.toggle('active', ct>=s-0.1 && ct<e);
+        });
+    };
 }
 
 function renderProcessingTaskDetail(task) {
@@ -621,7 +748,7 @@ function renderCompletedTaskDetail(task) {
         ${playerHtml}
         <div class="task-detail-end">✅ 已完成 · ${(task.mixed_duration || 0)}s 混合音频</div>
         <div class="task-detail-actions" style="margin-top:10px;">
-            <button class="ep-btn-primary ep-btn" onclick="event.stopPropagation(); openTaskResultView('${taskId}', '${escapeAttr(url)}')">查看字幕</button>
+            <button class="ep-btn-primary ep-btn" onclick="event.stopPropagation(); openTaskResultView('${taskId}', '${escapeAttr(url)}')">查看详情</button>
         </div>
     `;
 }
@@ -742,8 +869,39 @@ async function executeDelete() {
 // ============================================================
 
 function toggleSettings() {
-    const overlay = document.getElementById('settings-overlay');
-    const drawer = document.getElementById('settings-drawer');
+    let overlay = document.getElementById('settings-overlay');
+    let drawer = document.getElementById('settings-drawer');
+
+    // Lazy-create settings drawer elements if they don't exist
+    if (!overlay || !drawer) {
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'settings-overlay';
+            overlay.className = 'settings-overlay';
+            overlay.onclick = closeSettings;
+            document.body.appendChild(overlay);
+        }
+        if (!drawer) {
+            drawer = document.createElement('div');
+            drawer.id = 'settings-drawer';
+            drawer.className = 'settings-drawer';
+            drawer.innerHTML = `
+                <div class="settings-drawer-header">
+                    <h2>设置</h2>
+                    <button class="settings-close-btn" onclick="closeSettings()">&times;</button>
+                </div>
+                <div id="settings-body" class="settings-body"></div>
+                <div id="settings-footer" class="settings-footer">
+                    <button class="btn-secondary" onclick="closeSettings()">取消</button>
+                    <button class="btn-primary" id="settings-save-btn" onclick="saveAndClose()">
+                        <span class="btn-text">保存设置</span>
+                    </button>
+                </div>
+            `;
+            document.body.appendChild(drawer);
+        }
+    }
+
     if (drawer.classList.contains('open')) {
         closeSettings();
     } else {
@@ -754,8 +912,10 @@ function toggleSettings() {
 }
 
 function closeSettings() {
-    document.getElementById('settings-overlay').classList.remove('open');
-    document.getElementById('settings-drawer').classList.remove('open');
+    const overlay = document.getElementById('settings-overlay');
+    const drawer = document.getElementById('settings-drawer');
+    if (overlay) overlay.classList.remove('open');
+    if (drawer) drawer.classList.remove('open');
 }
 
 async function loadSettings() {
@@ -1160,6 +1320,11 @@ function onTTSEngineChange() {
 }
 
 function onSettingsModeChange() { /* Always sentence_translate mode */ }
+async function saveAndClose() {
+    await saveSettings();
+    closeSettings();
+}
+
 async function saveSettings() {
     const btn = document.getElementById('settings-save-btn');
     btn.disabled = true;
@@ -1563,3 +1728,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadSavedSubscriptions();
     initMiniPlayerProgressSeek();
 });
+
+async function redoTask(taskId) {
+    if (!confirm('确认重新转录并配音？将清空当前结果并重跑完整管道。')) return;
+    try {
+        const resp = await fetch(`/api/task/${taskId}/redo`, { method: 'POST' });
+        const data = await resp.json();
+        if (!resp.ok) { alert(data.error || '重做失败'); return; }
+        showToast('✅ 重做已启动');
+        setTimeout(() => loadHistory(), 500);
+        setTimeout(() => {
+            if (typeof toggleTaskDetail === 'function') toggleTaskDetail(taskId, '');
+        }, 1000);
+    } catch (err) { alert('网络错误: ' + err.message); }
+}

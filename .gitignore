@@ -35,6 +35,11 @@ data/downloads/
 data/results/
 data/transcripts/
 data/tts_cache/
+data/screenshots/
 
 # bilimix 本地配置
 core/config_local.py
+
+.playwright-cli
+.venv_whisperx
+scripts/whisperx_run.py

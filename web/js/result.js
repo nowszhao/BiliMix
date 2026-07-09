@@ -165,13 +165,11 @@ function seekVideoToSegment(time) {
 }
 
 function showSection(sectionId) {
-    // 隐藏所有 section
     ['progress-section', 'result-section', 'video-result-section',
-     'sentence-confirm-section'].forEach(id => {
+     'sentence-confirm-section', 'task-detail-view'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.add('hidden');
     });
-    // 显示目标 section
     const target = document.getElementById(sectionId);
     if (target) target.classList.remove('hidden');
 }
