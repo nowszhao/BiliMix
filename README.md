@@ -1,18 +1,38 @@
-# BiliMix — 中英混合播客学习工具
+# BiliMix — 中英混合播客/视频学习工具
 
-将英文播客/音频自动转录为文本，通过本地 LLM 逐句翻译为中文，再用 Confucius4-TTS 进行零样本声音克隆合成，
-最终组装为中英交替音频，让你跨越语言障碍，沉浸式地收听海外资讯。
+将英文播客/音频/视频通过本地 LLM 逐句翻译为中文，用 Confucius4-TTS 零样本声音克隆朗读中文译文，
+组装为中英交替音频（或带字幕的配音视频），让你跨越语言障碍，沉浸式收听海外内容。
+
+## 支持场景
+
+| 场景 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| 🎧 音频转录 | URL / 本地文件 | 中英交替 MP3 | 播客、音频课程 |
+| 🎬 视频配音 | YouTube / 本地 MP4 / 服务器路径 | 中英配音 MP4 + SRT 字幕 | 含中英双语/纯中文可选 |
 
 ## 核心流程
 
 ```
-音频 → Step 1: WhisperX 转录 → Step 2: Ollama 逐句翻译 → Step 3: Confucius4-TTS 合成 → Step 4: 中英交替组装
+音频/视频 → 转录 → 翻译 → 声音克隆 TTS → 组装（音频/视频 + 字幕）
 ```
 
-1. **WhisperX 转录** — 英文语音转文字，带词级时间戳与说话人分离
-2. **Ollama LLM 翻译** — 逐句翻译全部英文句子为中文（100% 覆盖）
-3. **Confucius4-TTS 合成** — 零样本声音克隆，用原始说话人的音色朗读中文翻译
-4. **音频组装** — 按句子级时间戳将英文原文与中文翻译交替拼装输出
+1. **Step 0: 素材准备** — URL 下载 或 本地上传，视频可直传或指定服务器路径
+2. **Step 1: WhisperX 转录** — 语音转文字，带词级时间戳与说话人分离
+3. **Step 2: Ollama LLM 翻译** — 逐句翻译全部句子为中文（100% 覆盖）
+4. **Step 3: Confucius4-TTS 合成** — 零样本声音克隆，保留原说话人音色
+5. **Step 4: 音频/视频组装** — 中英交替拼接；视频模式额外渲染字幕并合成 MP4
+
+## Web 前端
+
+- **暗色侧边栏** — 更新 / 任务 / 设置 三页导航，活跃项 accent 色高亮
+- **更新页** — 播客订阅聚合，按时间（今日/本周/本月/全部）+ 状态筛选单集
+- **任务页** — 表格式任务列表，支持状态/类型筛选 + 排序 + 搜索；一键重做、删除
+- **新建任务弹窗** — 音频/视频双模式切换；URL/上传/服务器路径多种输入方式；
+  背景音乐保留、字幕模式、字幕字号等选项卡片
+- **设置页** — 全页布局，双列网格，配置组可折叠；涵盖 TTS、WhisperX、Ollama 等全部参数
+- **进度条** — 实时步骤指示 + 断点续传重试
+- **结果页** — 原始音频/混合音频对比播放，原文转录 + 翻译句对展示
+- **视频详情页** — 原始/配音双标签切换播放，字幕带播放高亮、支持下载
 
 ## 技术栈
 
@@ -21,7 +41,10 @@
 | WhisperX | 英文语音转文字（词级时间戳 + 说话人分离） |
 | Ollama | 本地 LLM 批量句子翻译 |
 | Confucius4-TTS-CPU | 零样本多语言声音克隆 TTS |
+| FFmpeg | 音频/视频转码、字幕烧录、人声分离 |
+| yt-dlp | YouTube 视频下载 |
 | Flask | Web 服务 + REST API |
+| SQLite | 任务、订阅、搜索历史持久化 |
 
 ## 快速开始
 
@@ -29,10 +52,10 @@
 # 安装依赖
 pip install -r requirements.txt
 
-# 启动 Web 服务
-python services/web_app.py
-# 浏览器访问 http://localhost:5000
-# 默认账号: admin / bilimix2024
+# 启动 Web 服务（默认端口 5000，可通过命令行参数指定）
+python services/web_app.py 5555
+# 浏览器访问 http://localhost:5555
+# 认证默认关闭，可在设置中开启
 ```
 
 ## 目录结构
@@ -40,69 +63,86 @@ python services/web_app.py
 ```
 BiliMix/
 ├── services/
-│   ├── web_app.py               # Flask Web 服务 + REST API
-│   └── podcast_service.py       # 播客搜索与 RSS 解析
+│   ├── web_app.py                # Flask Web 服务 + REST API
+│   └── podcast_service.py        # 播客搜索与 RSS 解析
 ├── pipeline/
-│   ├── step1_transcribe.py      # WhisperX 转录
+│   ├── step0_video_prepare.py    # 视频下载/预处理 (yt-dlp)
+│   ├── step1_transcribe.py       # WhisperX 转录
 │   ├── step2b_translate_sentences.py  # LLM 批量逐句翻译
-│   ├── step3_tts_confucius.py   # Confucius4-TTS 合成（支持并行 Worker）
-│   ├── step4b_sentence_mixer.py # 中英交替音频组装
-│   └── ref_audio_utils.py       # 参考音频提取（声音克隆用）
+│   ├── step3_tts_confucius.py    # Confucius4-TTS 合成（并行 Worker）
+│   ├── step4b_sentence_mixer.py  # 中英交替音频组装
+│   ├── step5_video_assemble.py   # 视频字幕烧录与最终组装
+│   └── step_vocal_separation.py  # 人声/背景音分离 (demucs)
 ├── workers/
-│   └── confucius_tts_worker.py  # TTS Worker 独立子进程
+│   └── confucius_tts_worker.py   # TTS Worker 独立子进程
 ├── core/
-│   ├── config.py                # 全局配置
-│   ├── config_manager.py        # Web 配置管理
-│   ├── database.py              # SQLite 数据库（任务、订阅、历史等）
-│   ├── task_manager.py          # 任务状态管理与断点恢复
-│   └── llm_utils.py             # Ollama API 调用工具
-├── web/                         # 前端页面 (HTML/CSS/JS)
-├── sdk/                         # Python CLI SDK
-├── config.py                    # 根目录配置入口
+│   ├── config.py                 # 全局配置
+│   ├── config_manager.py         # Web 配置管理（读取/更新/写回）
+│   ├── database.py               # SQLite 数据库
+│   ├── task_manager.py           # 任务状态管理与断点恢复
+│   └── llm_utils.py              # Ollama API 调用工具
+├── web/
+│   ├── index.html                # 单页应用入口
+│   ├── style.css                 # 基础样式
+│   ├── apple_overrides.css       # Apple HIG 设计覆盖
+│   └── js/
+│       ├── state.js              # 全局状态
+│       ├── utils.js              # 工具函数
+│       ├── task.js               # 任务提交/取消/轮询/进度
+│       ├── settings.js           # 设置、任务列表、历史、确认弹窗
+│       ├── episodes.js           # 更新页、订阅、页面导航
+│       ├── podcast.js            # 播客搜索
+│       ├── confirm.js            # 翻译确认
+│       ├── result.js             # 结果展示
+│       └── audio-sync.js         # 音频同步/时间轴
+├── sdk/                          # Python CLI SDK
+├── config.py                     # 根目录配置入口
 ├── requirements.txt
 └── README.md
 ```
 
 ## 配置说明
 
-核心配置项 (`core/config.py`)：
+所有配置均可在 Web 设置页面动态修改，无需重启服务。
+
+### 核心参数
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| WHISPERX_MODEL | base | WhisperX 模型大小 |
-| WHISPERX_DEVICE | cpu | 转录设备 (cpu/cuda) |
-| WHISPERX_BATCH_SIZE | 10 | 转录批处理大小 |
-| OLLAMA_MODEL | translategemma:12b | LLM 翻译模型 |
-| OLLAMA_BASE_URL | http://localhost:11434 | Ollama 服务地址 |
-| LLM_BATCH_SIZE | 5 | 每批合并翻译的句子数 |
-| LLM_NUM_PREDICT | 8192 | LLM 单次最大输出 token 数 |
-| SENTENCE_CN_RATIO | 1.0 | 翻译比例（固定 100%） |
-| TTS_ENGINE | confucius-tts | TTS 引擎 |
-| TTS_TEXT_FORMAT | chinese_only | TTS 文本格式 |
-| CONFUCIUS4_TTS_DEVICE | cpu | 推理设备 (cpu/cuda) |
-| CONFUCIUS4_TTS_N_TIMESTEPS | 40 | 扩散步数（越高音质越好） |
-| CONFUCIUS4_TTS_NUM_WORKERS | 2 | 并行 Worker 数（1=串行） |
-| CONFUCIUS4_TTS_TEMPERATURE | 0.8 | T2S 采样温度 |
-| SENTENCE_GAP_MS | 400 | 中-英句子间间隔 (ms) |
-| SENTENCE_FULL_GAP_MS | 250 | 完整句子组间间隔 (ms) |
+| SKIP_CONFIRMATION | True | 跳过翻译确认环节 |
+| SENTENCE_CN_RATIO | 1.0 | 中文翻译比例（固定 100%） |
+| SENTENCE_GAP_MS | 400 | 中英交替句间间隔 (ms) |
+| SENTENCE_FULL_GAP_MS | 250 | 全翻译模式句间间隔 (ms) |
+| SENTENCE_TTS_VOICE_CLONE | True | 翻译 TTS 是否克隆原声 |
+| KEEP_BGM | False | 新建任务时默认保留背景音乐 |
 
-所有配置项均可在 Web UI 或 CLI 中动态修改。
+### TTS (Confucius4)
 
-## 处理模式
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| CONFUCIUS4_TTS_DEVICE | cpu | 推理设备 |
+| CONFUCIUS4_TTS_TEMPERATURE | 0.3 | 采样温度 |
+| CONFUCIUS4_TTS_TOP_P | 0.9 | 核采样阈值 |
+| CONFUCIUS4_TTS_N_TIMESTEPS | 25 | 扩散步数 |
+| CONFUCIUS4_TTS_INFERENCE_CFG_RATE | 0.9 | CFG 引导强度 |
+| CONFUCIUS4_TTS_NUM_WORKERS | 2 | 并行 Worker 数 |
 
-仅支持 **全文句子翻译模式**（sentence_translate）：
-- 对全部英文句子进行 100% 逐句翻译
-- 使用声音克隆技术，用原始说话人音色朗读中文翻译
-- 最终输出为「英文原文 → 中文翻译 → 英文原文 → 中文翻译…」交替音频
+### WhisperX
 
-不再支持单词替换、生词识别等模式。
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| WHISPERX_MODEL | medium | 模型大小 |
+| WHISPERX_DEVICE | cpu | 推理设备 |
+| WHISPERX_LANGUAGE | en | 音频语言 |
+| WHISPERX_THREADS | 8 | CPU 线程数 |
 
-## 前置要求
+### Ollama
 
-1. **Python 3.10+** + conda 环境
-2. **Ollama** 服务运行中，已拉取翻译模型（如 `ollama pull translategemma:12b`）
-3. **Confucius4-TTS-CPU** 已克隆到 BiliMix 同级目录
-4. **WhisperX** 已安装（转录引擎，建议独立 conda 环境）
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| OLLAMA_MODEL | translategemma:12b | 翻译模型 |
+| OLLAMA_BASE_URL | http://localhost:11434 | 服务地址 |
+| LLM_BATCH_SIZE | 5 | 每批合并翻译句数 |
 
 ## API 概览
 
@@ -110,55 +150,60 @@ BiliMix/
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| /api/submit | POST | 提交音频处理任务 |
-| /api/upload | POST | 上传本地音频文件 |
+| /api/submit | POST | 提交处理任务（音频/视频） |
+| /api/upload | POST | 上传本地文件 |
 | /api/tasks | GET | 获取任务列表 |
-| /api/task/<id> | GET | 查询任务状态 |
+| /api/task/<id> | GET | 查询任务状态与进度 |
 | /api/task/<id>/result | GET | 获取任务完整结果 |
 | /api/task/<id>/cancel | POST | 终止任务 |
-| /api/task/<id>/confirm_sentences | POST | 确认句子翻译后继续 |
-| /api/task/<id>/retry | POST | 断点续传重试失败任务 |
-| /api/task/<id>/retry-synthesis | POST | 仅重试 TTS 合成步骤 |
-| /api/task/<id> | DELETE | 删除任务及其文件 |
+| /api/task/<id>/confirm_sentences | POST | 确认翻译后继续 |
+| /api/task/<id>/retry | POST | 断点续传重试 |
+| /api/task/<id>/redo | POST | 完整重做（清空所有产物，仅保留源文件） |
+| /api/task/<id> | DELETE | 删除任务及其所有文件 |
 
-### 播客 & 内容
+### 播客 & 订阅
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | /api/podcast/search | GET | 搜索播客 |
 | /api/podcast/rss | GET | 解析 RSS Feed |
-| /api/favorites | GET | 获取播客收藏列表 |
-| /api/favorites | POST | 添加播客收藏 |
-| /api/favorites | DELETE | 移除播客收藏 |
-| /api/favorites/check | GET | 检查是否已收藏 |
-| /api/subscriptions | GET | 获取 RSS 订阅列表 |
-| /api/subscriptions | POST | 添加 RSS 订阅 |
-| /api/subscriptions | DELETE | 移除 RSS 订阅 |
-| /api/search-history/suggestions | GET | 获取搜索建议 |
-| /api/search-history | POST | 记录搜索关键词 |
-| /api/search-history | DELETE | 清空搜索历史 |
-| /api/recent-podcasts | GET | 获取最近使用的播客源 |
+| /api/subscriptions | GET/POST/DELETE | 订阅管理 |
+| /api/favorites | GET/POST/DELETE | 播客收藏 |
+| /api/search-history | GET/POST/DELETE | 搜索历史 |
+| /api/recent-podcasts | GET | 最近使用的播客源 |
 
 ### 工具 & 配置
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| /api/config | GET | 获取当前配置 |
-| /api/config | POST | 更新配置 |
-| /api/translate | POST | 翻译单个英文词/短语 |
+| /api/config | GET | 获取全部配置 |
+| /api/config | POST | 更新配置（写回文件） |
+| /api/translate | POST | 翻译英文词/短语 |
 | /api/word-levels | POST | 查询 BNC/COCA 词频等级 |
 | /api/audio/<path> | GET | 提供音频文件流 |
 | /api | GET | API 元信息 |
 
-## SDK
+## 前置要求
 
-Python CLI SDK 位于 `sdk/` 目录：
+1. **Python 3.10+** + conda 环境
+2. **Ollama** 服务运行中，已拉取翻译模型
+3. **Confucius4-TTS-CPU** 已克隆到 BiliMix 同级目录
+4. **WhisperX** 已安装（转录引擎，建议独立 conda 环境）
+5. **ffmpeg** 系统已安装
+6. **yt-dlp** (pip install yt-dlp) — 视频配音必需
+7. **demucs** (pip install demucs) — 背景音乐保留必需
+
+## SDK
 
 ```bash
 pip install -e sdk/
 bmx task submit --url https://example.com/episode.mp3 --wait
 bmx task list
 bmx task result <task_id>
+bmx video submit --url https://www.youtube.com/watch?v=xxx
+bmx download <task_id>
 ```
 
-详细用法见 `sdk/README.md`。
+## License
+
+MIT

@@ -927,74 +927,32 @@ async function executeDeleteTask(taskId) {
 // ============================================================
 
 function toggleSettings() {
-    let overlay = document.getElementById('settings-overlay');
-    let drawer = document.getElementById('settings-drawer');
-
-    // Lazy-create settings drawer elements if they don't exist
-    if (!overlay || !drawer) {
-        if (!overlay) {
-            overlay = document.createElement('div');
-            overlay.id = 'settings-overlay';
-            overlay.className = 'settings-overlay';
-            overlay.onclick = closeSettings;
-            document.body.appendChild(overlay);
-        }
-        if (!drawer) {
-            drawer = document.createElement('div');
-            drawer.id = 'settings-drawer';
-            drawer.className = 'settings-drawer';
-            drawer.innerHTML = `
-                <div class="settings-drawer-header">
-                    <h2>设置</h2>
-                    <button class="settings-close-btn" onclick="closeSettings()">&times;</button>
-                </div>
-                <div id="settings-body" class="settings-body"></div>
-                <div id="settings-footer" class="settings-footer">
-                    <button class="btn-secondary" onclick="closeSettings()">取消</button>
-                    <button class="btn-primary" id="settings-save-btn" onclick="saveAndClose()">
-                        <span class="btn-text">保存设置</span>
-                    </button>
-                </div>
-            `;
-            document.body.appendChild(drawer);
-        }
-    }
-
-    if (drawer.classList.contains('open')) {
-        closeSettings();
-    } else {
-        overlay.classList.add('open');
-        drawer.classList.add('open');
-        loadSettings();
-    }
+    // Redirect to in-page settings view
+    switchView('settings');
 }
 
 function closeSettings() {
-    const overlay = document.getElementById('settings-overlay');
-    const drawer = document.getElementById('settings-drawer');
-    if (overlay) overlay.classList.remove('open');
-    if (drawer) drawer.classList.remove('open');
+    // No-op: settings is now an in-page view
 }
 
 async function loadSettings() {
     const body = document.getElementById('settings-body');
-    const footer = document.getElementById('settings-footer');
+    if (!body) return;
     body.innerHTML = '<div class="settings-loading"><div class="spinner" style="margin: 0 auto 12px;"></div><p>加载配置中...</p></div>';
-    footer.style.display = 'none';
 
     try {
         const resp = await fetch('/api/config');
         settingsData = await resp.json();
         renderSettingsForm(settingsData);
-        footer.style.display = '';
     } catch (err) {
-        body.innerHTML = `<div class="settings-loading"><p>加载失败: ${err.message}</p></div>`;
+        body.innerHTML = '<div class="settings-loading"><p>加载失败: ' + err.message + '</p></div>';
     }
 }
 
 function renderSettingsForm(cfg) {
     const body = document.getElementById('settings-body');
     body.innerHTML = `
+        <div class="settings-grid">
         <!-- 默认选项 -->
         <div class="settings-group">
             <div class="settings-group-title collapsible" onclick="toggleSettingsGroup(this)">
@@ -1426,7 +1384,7 @@ function onTTSEngineChange() {
 function onSettingsModeChange() { /* Always sentence_translate mode */ }
 async function saveAndClose() {
     await saveSettings();
-    closeSettings();
+    showToast('✅ 设置已保存');
 }
 
 async function saveSettings() {
@@ -1554,7 +1512,7 @@ document.addEventListener('keydown', (e) => {
     }
     if (e.key === 'Escape') {
         if (isFullscreen) toggleTranscriptFullscreen();
-        else { closeConfirm(); closeHistory(); closeSettings(); }
+        else { closeConfirmDialog(); closeHistory(); closeSettings(); }
     }
 });
 

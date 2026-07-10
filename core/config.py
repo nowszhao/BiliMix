@@ -196,7 +196,7 @@ OUTPUT_FORMAT = "mp3"
 OUTPUT_BITRATE = "192k"
 # 默认保留背景音乐/环境音（需人声分离）
 # 可在 Web 设置页面修改，新建任务时作为 BGM 选项的默认值
-KEEP_BGM = False
+KEEP_BGM = True
 
 # ========================
 # 本地配置覆盖（不影响服务端默认值）

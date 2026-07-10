@@ -16,7 +16,7 @@ let episodesCache = [];
 // ============================================================
 
 function switchView(view) {
-    const views = ['updates-view', 'tasks-view'];
+    const views = ['updates-view', 'tasks-view', 'settings-view'];
     views.forEach(v => {
         const el = document.getElementById(v);
         if (el) el.style.display = (v === view + '-view') ? '' : 'none';
@@ -30,7 +30,10 @@ function switchView(view) {
         item.classList.toggle('active', item.dataset.view === view);
     });
 
-    if (view === 'updates') {
+    if (view === 'settings') {
+        loadSettings();
+        return;
+    } else if (view === 'updates') {
         loadEpisodes();
         loadSidebarSubscriptions();
     } else if (view === 'tasks') {

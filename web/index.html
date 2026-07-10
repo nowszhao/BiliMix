@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="apple_overrides.css">
 </head>
 <body>
     <!-- ====== 侧边栏 ====== -->
@@ -22,13 +23,13 @@
         <nav class="sidebar-nav">
             <div class="sidebar-nav-item active" data-view="updates" onclick="switchView('updates')">
                 <span class="sidebar-nav-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>
-                <span class="sidebar-nav-text">更新</span>
+                <span class="sidebar-nav-text">内容</span>
             </div>
             <div class="sidebar-nav-item" data-view="tasks" onclick="switchView('tasks')">
                 <span class="sidebar-nav-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="12" y2="17"/></svg></span>
                 <span class="sidebar-nav-text">任务</span>
             </div>
-            <div class="sidebar-nav-item" data-view="settings" onclick="toggleSettings()">
+            <div class="sidebar-nav-item" data-view="settings" onclick="switchView('settings')">
                 <span class="sidebar-nav-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
                 <span class="sidebar-nav-text">设置</span>
             </div>
@@ -59,7 +60,7 @@
         <section id="updates-view" class="content-view">
             <div class="content-header">
                 <div>
-                    <h1 class="content-title">更新</h1>
+                    <h1 class="content-title">内容</h1>
                     <p class="content-subtitle" id="updates-subtitle">今日 · 加载中...</p>
                 </div>
                 <div class="content-header-actions">
@@ -169,6 +170,24 @@
                 </div>
             </div>
         </section>
+        <!-- ====== 设置页 ====== -->
+        <section id="settings-view" class="content-view" style="display:none;">
+            <div class="content-header">
+                <div>
+                    <h1 class="content-title">设置</h1>
+                    <p class="content-subtitle">应用配置</p>
+                </div>
+                <div class="content-header-actions">
+                    <button class="btn-primary" id="settings-save-btn" onclick="saveAndClose()">
+                        <span class="btn-text">保存设置</span>
+                    </button>
+                </div>
+            </div>
+            <div id="settings-body" class="settings-body-page">
+                <div class="settings-loading"><div class="spinner" style="margin: 0 auto 12px;"></div><p>加载配置中...</p></div>
+            </div>
+        </section>
+
 
         <!-- ====== 句子翻译确认区 ====== -->
         <section id="sentence-confirm-section" class="confirm-section hidden">
