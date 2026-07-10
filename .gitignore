@@ -25,6 +25,9 @@ build/
 .DS_Store
 Thumbs.db
 
+# 视频文件
+*.mp4
+
 # SQLite 数据库文件
 data/bilimix.db
 data/bilimix.db-shm
