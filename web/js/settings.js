@@ -4,6 +4,18 @@
    ============================================================ */
 
 // ============================================================
+// Settings Group Toggle
+// ============================================================
+
+function toggleSettingsGroup(titleEl) {
+    const group = titleEl.parentElement;
+    const body = group.querySelector('.settings-group-body');
+    const chevron = titleEl.querySelector('.group-chevron');
+    const isCollapsed = titleEl.classList.toggle('collapsed');
+    if (body) body.style.display = isCollapsed ? 'none' : '';
+}
+
+// ============================================================
 // Section Management
 // ============================================================
 
@@ -448,9 +460,6 @@ function renderTaskTable() {
         if (t.status === 'completed' || t.status === 'error' || t.status === 'cancelled') {
             html += `<button class="task-row-btn redo" onclick="event.stopPropagation(); redoTask('${t.task_id}')" title="重新转录配音">↻</button>`;
         }
-        if (t.basename) {
-            html += `<button class="task-row-btn" onclick="event.stopPropagation(); toggleHistoryPlay('${t.task_id}', '${escapeAttr(t.basename)}', '${escapeAttr(t.url)}')" title="播放">▶</button>`;
-        }
         html += `<button class="task-row-btn del" onclick="event.stopPropagation(); confirmDeleteTask('${t.task_id}', '${escapeAttr(displayName)}')" title="删除">✕</button>`;
 
         html += '</td></tr>';
@@ -815,44 +824,93 @@ const _origSwitchView = typeof switchView === 'function' ? switchView : null;
 // Delete Task Confirmation
 // ============================================================
 
-function confirmDeleteTask(taskId, displayUrl) {
-    pendingDeleteTaskId = taskId;
+// ============================================================
+// 通用 Confirm Dialog（支持多种类型：删除 / 重做 / 通用）
+// ============================================================
 
+let _confirmCallback = null;
+
+function ensureConfirmOverlay() {
     let overlay = document.getElementById('confirm-overlay');
     if (!overlay) {
         overlay = document.createElement('div');
         overlay.id = 'confirm-overlay';
         overlay.className = 'confirm-overlay';
+        overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) closeConfirmDialog();
+        });
         overlay.innerHTML = `
             <div class="confirm-dialog">
-                <div class="confirm-icon">🗑️</div>
-                <div class="confirm-title">确认删除</div>
-                <div class="confirm-message" id="confirm-message"></div>
-                <div class="confirm-actions">
-                    <button class="confirm-cancel" onclick="closeConfirm()">取消</button>
-                    <button class="confirm-delete" onclick="executeDelete()">确认删除</button>
+                <div class="confirm-icon" id="confirm-icon-box">
+                    <svg id="confirm-icon-warning" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    <svg id="confirm-icon-danger" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
                 </div>
+                <div class="confirm-title" id="confirm-title"></div>
+                <div class="confirm-message" id="confirm-message"></div>
+                <div class="confirm-actions" id="confirm-actions"></div>
             </div>
         `;
         document.body.appendChild(overlay);
     }
-
-    document.getElementById('confirm-message').textContent =
-        `将删除该任务及其所有关联文件（音频、转录、结果等），此操作不可恢复。`;
-    setTimeout(() => overlay.classList.add('open'), 10);
+    return overlay;
 }
 
-function closeConfirm() {
+function showConfirmDialog(opts) {
+    const overlay = ensureConfirmOverlay();
+    document.getElementById('confirm-title').textContent = opts.title || '确认操作';
+    document.getElementById('confirm-message').textContent = opts.message || '';
+
+    const iconBox = document.getElementById('confirm-icon-box');
+    const warnIcon = document.getElementById('confirm-icon-warning');
+    const dangerIcon = document.getElementById('confirm-icon-danger');
+    iconBox.className = 'confirm-icon ' + (opts.iconType || 'warning');
+    warnIcon.style.display = (opts.iconType === 'danger') ? 'none' : '';
+    dangerIcon.style.display = (opts.iconType === 'danger') ? '' : 'none';
+
+    const btnSecondary = opts.secondaryLabel || '取消';
+    const btnPrimary = opts.primaryLabel || '确认';
+    const primaryClass = opts.primaryClass || 'confirm-primary';
+
+    document.getElementById('confirm-actions').innerHTML = `
+        <button class="confirm-cancel">${btnSecondary}</button>
+        <button class="${primaryClass}">${btnPrimary}</button>
+    `;
+
+    // Bind events
+    const [cancelBtn, primaryBtn] = document.querySelectorAll('#confirm-actions button');
+    cancelBtn.onclick = () => {
+        closeConfirmDialog();
+        if (opts.onCancel) opts.onCancel();
+    };
+    primaryBtn.onclick = () => {
+        closeConfirmDialog();
+        if (opts.onConfirm) opts.onConfirm();
+    };
+
+    overlay.classList.add('open');
+    // Auto-focus primary
+    setTimeout(() => primaryBtn.focus(), 100);
+}
+
+function closeConfirmDialog() {
     const overlay = document.getElementById('confirm-overlay');
     if (overlay) overlay.classList.remove('open');
-    pendingDeleteTaskId = null;
 }
 
-async function executeDelete() {
-    if (!pendingDeleteTaskId) return;
-    const taskId = pendingDeleteTaskId;
-    closeConfirm();
+// ---- 快捷预设 ----
 
+function confirmDeleteTask(taskId, displayUrl) {
+    showConfirmDialog({
+        title: '确认删除',
+        message: '将删除该任务及其所有关联文件（音频、转录、结果等），\n此操作不可恢复。',
+        iconType: 'danger',
+        primaryLabel: '确认删除',
+        primaryClass: 'confirm-delete',
+        onConfirm: () => executeDeleteTask(taskId),
+    });
+}
+
+async function executeDeleteTask(taskId) {
     try {
         const resp = await fetch(`/api/task/${taskId}`, { method: 'DELETE' });
         const data = await resp.json();
@@ -937,106 +995,132 @@ async function loadSettings() {
 function renderSettingsForm(cfg) {
     const body = document.getElementById('settings-body');
     body.innerHTML = `
-        <!-- 处理模式 -->
+        <!-- 默认选项 -->
         <div class="settings-group">
-            <div class="settings-group-title">🎯 处理模式</div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">句子翻译</span>
-                    <span class="settings-item-desc">100% 全文翻译为中英交替音频</span>
-                </div>
+            <div class="settings-group-title collapsible" onclick="toggleSettingsGroup(this)">
+                默认选项
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">跳过确认</span>
-                    <span class="settings-item-desc">自动跳过翻译确认环节</span>
+            <div class="settings-group-body">
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">跳过确认</span>
+                        <span class="settings-item-desc">自动跳过翻译确认环节</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <label class="settings-toggle">
+                            <input type="checkbox" id="cfg-skip_confirmation" ${cfg.skip_confirmation ? 'checked' : ''}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
                 </div>
-                <div class="settings-item-control">
-                    <label class="settings-toggle">
-                        <input type="checkbox" id="cfg-skip_confirmation" ${cfg.skip_confirmation ? 'checked' : ''}>
-                        <span class="toggle-slider"></span>
-                    </label>
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">保留背景音乐</span>
+                        <span class="settings-item-desc">新建任务时默认启用「保留原音频背景音乐/环境音」选项</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <label class="settings-toggle">
+                            <input type="checkbox" id="cfg-keep_bgm" ${cfg.keep_bgm ? 'checked' : ''}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
                 </div>
             </div>
         </div>
-        <!-- Confucius4-TTS (CPU) --></div>
-        </div>
-        <!-- Confucius4-TTS (CPU) --></div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">句间静音</span>
-                    <span class="settings-item-desc">中英交替之间的间隔（毫秒）</span>
-                </div>
-                <div class="settings-item-control">
-                    <input type="number" class="settings-input" id="cfg-sentence_gap_ms"
-                        value="${cfg.sentence_gap_ms}" min="0" max="2000" step="50">
-                </div>
+
+        <!-- 时间与语音 -->
+        <div class="settings-group">
+            <div class="settings-group-title collapsible" onclick="toggleSettingsGroup(this)">
+                ⏱️ 时间与语音
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">全翻译句间间隔</span>
-                    <span class="settings-item-desc">100% 翻译模式下的句间间隔（毫秒）</span>
+            <div class="settings-group-body">
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">句间静音</span>
+                        <span class="settings-item-desc">中英交替之间的间隔（毫秒）</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <input type="number" class="settings-input" id="cfg-sentence_gap_ms"
+                            value="${cfg.sentence_gap_ms}" min="0" max="2000" step="50">
+                    </div>
                 </div>
-                <div class="settings-item-control">
-                    <input type="number" class="settings-input" id="cfg-sentence_full_gap_ms"
-                        value="${cfg.sentence_full_gap_ms}" min="0" max="2000" step="50">
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">全翻译句间间隔</span>
+                        <span class="settings-item-desc">100% 翻译模式下的句间间隔（毫秒）</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <input type="number" class="settings-input" id="cfg-sentence_full_gap_ms"
+                            value="${cfg.sentence_full_gap_ms}" min="0" max="2000" step="50">
+                    </div>
                 </div>
-            </div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">克隆原声</span>
-                    <span class="settings-item-desc">翻译 TTS 是否克隆原音频说话人声音</span>
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">克隆原声</span>
+                        <span class="settings-item-desc">翻译 TTS 是否克隆原音频说话人声音</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <label class="settings-toggle">
+                            <input type="checkbox" id="cfg-sentence_tts_voice_clone" ${cfg.sentence_tts_voice_clone ? 'checked' : ''}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
                 </div>
-                <div class="settings-item-control">
-                    <label class="settings-toggle">
-                        <input type="checkbox" id="cfg-sentence_tts_voice_clone" ${cfg.sentence_tts_voice_clone ? 'checked' : ''}>
-                        <span class="toggle-slider"></span>
-                    </label>
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">说话人间隔阈值</span>
+                        <span class="settings-item-desc">同说话人最大间隔（秒），单人演讲建议 0.8</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <input type="number" class="settings-input" id="cfg-same_speaker_gap"
+                            value="${cfg.same_speaker_gap}" min="0.1" max="3.0" step="0.1">
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- TTS -->
         <div class="settings-group">
-            <div class="settings-group-title">🔊 TTS 语音合成</div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">TTS 引擎</span>
-                    <span class="settings-item-desc">Confucius4-TTS CPU 本地合成</span>
-                </div>
-                <div class="settings-item-control">
-                    <select class="settings-select" id="cfg-tts_engine" onchange="onTTSEngineChange()">
-                        <option value="confucius-tts" ${cfg.tts_engine === 'confucius-tts' ? 'selected' : ''}>Confucius4-TTS (CPU)</option>
-                    </select>
-                </div>
+            <div class="settings-group-title collapsible" onclick="toggleSettingsGroup(this)">
+                🔊 TTS 语音合成
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">合成文本格式</span>
-                    <span class="settings-item-desc">mixed: 英+中混合 / chinese_only: 纯中文</span>
+            <div class="settings-group-body">
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">TTS 引擎</span>
+                        <span class="settings-item-desc">Confucius4-TTS CPU 本地合成</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <select class="settings-select" id="cfg-tts_engine" onchange="onTTSEngineChange()">
+                            <option value="confucius-tts" ${cfg.tts_engine === 'confucius-tts' ? 'selected' : ''}>Confucius4-TTS (CPU)</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="settings-item-control">
-                    <select class="settings-select" id="cfg-tts_text_format">
-                        <option value="chinese_only" ${cfg.tts_text_format === 'chinese_only' ? 'selected' : ''}>纯中文</option>
-                        <option value="mixed" ${cfg.tts_text_format === 'mixed' ? 'selected' : ''}>英+中混合</option>
-                    </select>
-                </div>
-            </div>
-            <div class="settings-item">
-                <div class="settings-item-label">
-                    <span class="settings-item-name">说话人间隔阈值</span>
-                    <span class="settings-item-desc">同说话人最大间隔（秒），单人演讲建议 0.8</span>
-                </div>
-                <div class="settings-item-control">
-                    <input type="number" class="settings-input" id="cfg-same_speaker_gap"
-                        value="${cfg.same_speaker_gap}" min="0.1" max="3.0" step="0.1">
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">合成文本格式</span>
+                        <span class="settings-item-desc">mixed: 英+中混合 / chinese_only: 纯中文</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <select class="settings-select" id="cfg-tts_text_format">
+                            <option value="chinese_only" ${cfg.tts_text_format === 'chinese_only' ? 'selected' : ''}>纯中文</option>
+                            <option value="mixed" ${cfg.tts_text_format === 'mixed' ? 'selected' : ''}>英+中混合</option>
+                        </select>
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Confucius4-TTS-CPU -->
         <div class="settings-group" id="settings-group-confucius-tts">
-            <div class="settings-group-title">🎵 Confucius4-TTS (CPU)</div>
+            <div class="settings-group-title collapsible collapsed" onclick="toggleSettingsGroup(this)">
+                🎵 Confucius4-TTS (CPU)
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="settings-group-body" style="display:none">
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">推理设备</span>
@@ -1135,7 +1219,11 @@ function renderSettingsForm(cfg) {
 
         <!-- ⚙️ 重试 -->
         <div class="settings-group">
-            <div class="settings-group-title">⚙️ 重试设置</div>
+            <div class="settings-group-title collapsible collapsed" onclick="toggleSettingsGroup(this)">
+                ⚙️ 重试设置
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="settings-group-body" style="display:none">
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">全局重试次数</span>
@@ -1150,7 +1238,11 @@ function renderSettingsForm(cfg) {
 
         <!-- WhisperX -->
         <div class="settings-group">
-            <div class="settings-group-title">🎙️ WhisperX 转录</div>
+            <div class="settings-group-title collapsible collapsed" onclick="toggleSettingsGroup(this)">
+                🎙️ WhisperX 转录
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="settings-group-body" style="display:none">
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">模型大小</span>
@@ -1205,7 +1297,11 @@ function renderSettingsForm(cfg) {
 
         <!-- Ollama -->
         <div class="settings-group">
-            <div class="settings-group-title">🤖 Ollama LLM</div>
+            <div class="settings-group-title collapsible collapsed" onclick="toggleSettingsGroup(this)">
+                🤖 Ollama LLM
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="settings-group-body" style="display:none">
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">API 地址</span>
@@ -1240,7 +1336,11 @@ function renderSettingsForm(cfg) {
 
         <!-- 音频输出 -->
         <div class="settings-group">
-            <div class="settings-group-title">💿 音频输出</div>
+            <div class="settings-group-title collapsible collapsed" onclick="toggleSettingsGroup(this)">
+                💿 音频输出
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="settings-group-body" style="display:none">
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">输出格式</span>
@@ -1270,7 +1370,11 @@ function renderSettingsForm(cfg) {
 
         <!-- 登录认证 -->
         <div class="settings-group">
-            <div class="settings-group-title">🔐 登录认证</div>
+            <div class="settings-group-title collapsible collapsed" onclick="toggleSettingsGroup(this)">
+                🔐 登录认证
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="settings-group-body" style="display:none">
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">启用登录</span>
@@ -1304,10 +1408,10 @@ function renderSettingsForm(cfg) {
                 </div>
             </div>
         </div>
+    </div>
     `;
 
-    // 根据当前选中的模式和 TTS 引擎，联动显示/隐藏对应配置组
-    onSettingsModeChange();
+    // 根据当前选中的 TTS 引擎，联动显示/隐藏对应配置组
     onTTSEngineChange();
 }
 
@@ -1366,6 +1470,7 @@ async function saveSettings() {
         auth_enabled: getValue('cfg-auth_enabled'),
         auth_username: getValue('cfg-auth_username'),
         auth_password: getValue('cfg-auth_password'),
+        keep_bgm: getValue('cfg-keep_bgm'),
     };
 
     try {
@@ -1462,17 +1567,11 @@ async function initPageConfig() {
         const resp = await fetch('/api/config');
         const cfg = await resp.json();
 
-        const modeSelect = document.getElementById('mode-select');
-        if (modeSelect && cfg.process_mode) {
-            modeSelect.value = cfg.process_mode;
-            onModeChange();
-        }
-
-        const diffSelect = document.getElementById('difficulty-select');
-        if (diffSelect && cfg.difficulty) diffSelect.value = cfg.difficulty;
-
-        const skipCheck = document.getElementById('skip-confirm-check');
-        if (skipCheck && cfg.skip_confirmation !== undefined) skipCheck.checked = cfg.skip_confirmation;
+        // 应用 BGM 默认值
+        const audioBgm = document.getElementById('audio-keep-bgm-checkbox');
+        if (audioBgm && cfg.keep_bgm !== undefined) audioBgm.checked = cfg.keep_bgm;
+        const videoBgm = document.getElementById('keep-bgm-checkbox');
+        if (videoBgm && cfg.keep_bgm !== undefined) videoBgm.checked = cfg.keep_bgm;
     } catch (err) {
         console.warn('Failed to load config:', err);
     }
@@ -1730,15 +1829,36 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function redoTask(taskId) {
-    if (!confirm('确认重新转录并配音？将清空当前结果并重跑完整管道。')) return;
+    if (!confirm('确认重新处理吗？\n\n将清除该任务的所有处理结果（转录、翻译、TTS 缓存等），仅保留原始下载的文件，然后从头执行整个 pipeline。\n\n此操作不可撤销。')) return;
+
+    // 找到按钮并设为 loading 态
+    const btn = document.querySelector(`.task-row[onclick*="${taskId}"] .task-row-btn.redo`);
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳';
+    }
+
     try {
         const resp = await fetch(`/api/task/${taskId}/redo`, { method: 'POST' });
         const data = await resp.json();
-        if (!resp.ok) { alert(data.error || '重做失败'); return; }
-        showToast('✅ 重做已启动');
-        setTimeout(() => loadHistory(), 500);
-        setTimeout(() => {
-            if (typeof toggleTaskDetail === 'function') toggleTaskDetail(taskId, '');
-        }, 1000);
-    } catch (err) { alert('网络错误: ' + err.message); }
+        if (!resp.ok) { alert(data.error || '重做失败'); if (btn) { btn.disabled = false; btn.textContent = '↻'; } return; }
+
+        showToast('✅ 重做已启动，跳转到进度页面...');
+
+        // 设置全局状态，让轮询系统接管
+        currentTaskId = data.task_id || taskId;
+        // 切换到进度区
+        const tasksView = document.getElementById('tasks-view');
+        if (tasksView) tasksView.style.display = 'none';
+        const progress = document.getElementById('progress-section');
+        if (progress) {
+            progress.classList.remove('hidden');
+            resetProgressUI();
+        }
+        // 立即拉一次状态
+        startPolling();
+    } catch (err) {
+        alert('网络错误: ' + err.message);
+        if (btn) { btn.disabled = false; btn.textContent = '↻'; }
+    }
 }

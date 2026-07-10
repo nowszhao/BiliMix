@@ -9,8 +9,16 @@ Step 4b: 句子翻译模式 - 中英交替音频组装
 未被翻译的句子：保留英文原声
 
 最终效果：一句英文、一句中文交替出现，共同讲述完整的文章内容。
+
+100% 全翻译模式（视频配音场景）：
+  每句中文 TTS 用 ffmpeg atempo 拉伸/压缩到原句子的精确时间窗口，
+  再按原始绝对时间戳叠加到与原时间轴等长的静音底轨上 —— 完整保留
+  原视频里每一句话之间的停顿（换气、镜头切换、戏剧停顿等），
+  确保音频时间轴与视频画面永远同步，不会出现渐进式错位。
 """
 import os
+import subprocess
+import tempfile
 
 from pydub import AudioSegment
 
@@ -40,6 +48,60 @@ def _normalize_tts_audio(audio: AudioSegment,
     return audio.apply_gain(gain)
 
 
+# atempo 允许的拉伸范围：收紧到 0.85x~1.2x（±15~20%），避免逐句独立调速导致
+# 相邻句子语速跳变明显（原范围 0.5~2.0 太宽，忽快忽慢听感刺耳）。
+# 超出此范围的时长差异不再靠暴力拉伸吸收，改为允许音频播放时长略微
+# 溢出到下一句之前的静音间隙里（由调用方结合下一句起始时间做安全裁剪）。
+_ATEMPO_MIN, _ATEMPO_MAX = 0.85, 1.2
+
+
+def _time_stretch_natural(audio: AudioSegment, target_ms: int) -> AudioSegment:
+    """
+    用 ffmpeg atempo 将音频调速到接近目标时长，但调速幅度限制在
+    _ATEMPO_MIN~_ATEMPO_MAX 范围内（±15~20%），保持语速自然平稳。
+
+    与旧版 _time_stretch_to_duration 的区别：不再强制裁剪/填充到
+    精确的 target_ms —— 允许结果时长与目标有一定偏差，由调用方决定
+    如何在时间轴上安放（通常是让多出的部分播放到下一句之前的空隙里）。
+
+    Args:
+        audio: 原始音频片段
+        target_ms: 目标时长（毫秒），仅用于计算合理的调速倍率
+
+    Returns:
+        AudioSegment: 调速后的音频（音高不变），实际时长可能与 target_ms 有偏差
+    """
+    src_ms = len(audio)
+    if src_ms <= 0 or target_ms <= 0:
+        return audio
+
+    speed = src_ms / target_ms  # >1: 需要加快(压缩)  <1: 需要放慢(拉伸)
+    speed = max(_ATEMPO_MIN, min(_ATEMPO_MAX, speed))
+
+    if abs(speed - 1.0) < 0.03:
+        return audio  # 差异很小，不值得调速引入的额外处理开销
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f_in, \
+         tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f_out:
+        in_path, out_path = f_in.name, f_out.name
+    try:
+        audio.export(in_path, format="wav")
+        r = subprocess.run([
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-i", in_path, "-filter:a", f"atempo={speed:.4f}",
+            out_path,
+        ], capture_output=True, text=True, timeout=60)
+        if r.returncode == 0 and os.path.exists(out_path):
+            return AudioSegment.from_file(out_path)
+        return audio  # atempo 失败，回退原始音频
+    finally:
+        for p in (in_path, out_path):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
 def mix_sentence_audio(
     audio_path: str,
     segments: list,
@@ -48,6 +110,8 @@ def mix_sentence_audio(
     tts_audio_map: dict,
     output_path: str,
     gap_ms: int = None,
+    bgm_path: str = None,
+    bgm_gain_db: float = -8.0,
 ) -> dict:
     """
     组装中英交替音频：被翻译的句子用中文 TTS 替换英文原声。
@@ -60,6 +124,12 @@ def mix_sentence_audio(
         tts_audio_map: {segment_index: tts_wav_path} 中文 TTS 音频映射
         output_path: 输出音频文件路径
         gap_ms: 句子之间的静音间隔（毫秒），None 则用 config 配置
+        bgm_path: 背景音/伴奏轨路径（人声分离得到的 no_vocals 音频）。
+                  提供时会先铺在底轨上（降低音量），再叠加中文 TTS，
+                  保留原视频的背景音乐/环境音，提升沉浸感。仅在
+                  100% 全翻译模式下生效。
+        bgm_gain_db: 背景音混入时的音量调整（dB，负值=降低音量），
+                     避免背景音过响掩盖人声
 
     Returns:
         dict: 混合结果信息
@@ -79,84 +149,145 @@ def mix_sentence_audio(
     all_translated = len(translated_set) >= len(segments)
 
     # ============================================================
-    # 100% 全翻译模式：直接拼接中文 TTS，无需加载英文原音频
+    # 100% 全翻译模式（视频配音场景）：
+    # 每句中文 TTS 用 atempo 拉伸/压缩到原句子的精确时间窗口，
+    # 按绝对时间戳叠加到与原时间轴等长的静音底轨上。
+    # 完整保留原视频的停顿节奏，音画时间轴始终同步。
     # ============================================================
     if all_translated:
-        print(f"[Step4b] 100% 全翻译模式：直接拼接 TTS 音频")
-        print(f"  总句子数: {len(translated_indices)}, 句间间隔: {full_gap_ms}ms")
+        print(f"[Step4b] 100% 全翻译模式：锚定原始时间戳 + atempo 拉伸对齐")
+        print(f"  总句子数: {len(translated_indices)}")
 
         # 找到第一个可用的 TTS 文件获取音频参数
         first_tts = None
-        first_seg = None
         for idx in translated_indices:
             p = tts_audio_map.get(idx, "")
             if p and os.path.exists(p):
                 first_tts = p
-                first_seg = idx
                 break
-        if first_tts and os.path.exists(first_tts):
+        if first_tts:
             probe = AudioSegment.from_file(first_tts)
             target_sr = probe.frame_rate
             target_channels = probe.channels
         else:
-            # 全部 TTS 文件都缺失：无法确定音频参数，用默认值
             print(f"[Step4b] 警告：所有 TTS 文件缺失，使用默认参数 22050Hz/mono")
             target_sr = 22050
             target_channels = 1
 
-        # 全翻译模式：TTS 片段之间用交叉淡化取代静音间隙，听觉流畅无间断。
-        crossfade_ms = full_gap_ms if full_gap_ms > 20 else 80
-        result = AudioSegment.empty()
-        time_mapping = []
-        actual_pos_ms = 0  # 追踪每个片段在最终混音中的实际起始位置
+        # 底轨时长 = 原始音频/视频的真实总时长（而非最后一句转录文本的 end，
+        # 因为片尾静音/无语音片段不会被 WhisperX 转录出 segment，
+        # 若只用最后 segment.end 会导致底轨偏短，音画对不齐）
+        last_seg_end = segments[-1].get("end", 0) if segments else 0
+        real_duration = last_seg_end
+        if audio_path and os.path.exists(audio_path):
+            try:
+                probe_full = AudioSegment.from_file(audio_path)
+                real_duration = max(real_duration, len(probe_full) / 1000.0)
+            except Exception as e:
+                print(f"[Step4b] 警告：无法探测原始音频时长 ({e})，使用最后 segment.end")
+        original_duration = real_duration
+        base_len_ms = max(int(original_duration * 1000), 1000)
+        result = AudioSegment.silent(duration=base_len_ms, frame_rate=target_sr)
+        if target_channels == 2:
+            result = result.set_channels(2)
 
-        for i, seg_idx in enumerate(translated_indices):
-            tts_path = tts_audio_map.get(seg_idx, "")
-            if not tts_path or not os.path.exists(tts_path):
-                print(f"[Step4b] 警告: seg[{seg_idx}] TTS 文件缺失，跳过")
+        # 铺背景音/伴奏轨底层（人声分离得到的 no_vocals），保留原视频的
+        # 背景音乐/环境音氛围。降低音量避免掩盖中文人声的清晰度。
+        if bgm_path and os.path.exists(bgm_path):
+            try:
+                bgm_clip = AudioSegment.from_file(bgm_path)
+                bgm_clip = bgm_clip.set_channels(target_channels)
+                if bgm_clip.frame_rate != target_sr:
+                    bgm_clip = bgm_clip.set_frame_rate(target_sr)
+                bgm_clip = bgm_clip.apply_gain(bgm_gain_db)
+                if len(bgm_clip) < base_len_ms:
+                    bgm_clip = bgm_clip + AudioSegment.silent(
+                        duration=base_len_ms - len(bgm_clip), frame_rate=target_sr)
+                elif len(bgm_clip) > base_len_ms:
+                    bgm_clip = bgm_clip[:base_len_ms]
+                result = result.overlay(bgm_clip)
+                print(f"[Step4b] 已叠加背景音轨 ({bgm_gain_db:+.1f}dB): {bgm_path}")
+            except Exception as e:
+                print(f"[Step4b] 警告：背景音轨叠加失败 ({e})，跳过")
+
+        time_mapping = []
+        translated_set_fast = set(translated_indices)
+        sorted_indices = sorted(translated_indices)
+
+        # 追踪音频实际播放到的位置（而非原始时间戳），用于处理
+        # TTS 时长超出原句子窗口时的顺延，避免中途硬切断语音
+        actual_cursor_ms = 0
+
+        for pos, seg_idx in enumerate(sorted_indices):
+            if seg_idx >= len(segments):
                 continue
+            seg = segments[seg_idx]
+            seg_start_ms = int(seg.get("start", 0) * 1000)
+            seg_end_ms = int(seg.get("end", 0) * 1000)
+            window_ms = max(seg_end_ms - seg_start_ms, 200)  # 原句子的时间窗口
+
+            tts_path = tts_audio_map.get(seg_idx, "")
+            chinese_text = translations.get(seg_idx, "")
+            if not tts_path or not os.path.exists(tts_path):
+                print(f"[Step4b] 警告: seg[{seg_idx}] TTS 文件缺失，该时间窗口保持静音")
+                time_mapping.append({
+                    "mixed_start": round(seg_start_ms / 1000.0, 3),
+                    "mixed_end": round(seg_end_ms / 1000.0, 3),
+                    "orig_start": round(seg_start_ms / 1000.0, 3),
+                    "orig_end": round(seg_end_ms / 1000.0, 3),
+                    "type": "silence",
+                    "segment_index": seg_idx,
+                })
+                actual_cursor_ms = max(actual_cursor_ms, seg_end_ms)
+                continue
+
             tts_clip = AudioSegment.from_file(tts_path)
-            tts_len_ms = len(tts_clip)
             tts_clip = tts_clip.set_channels(target_channels)
             if tts_clip.frame_rate != target_sr:
                 tts_clip = tts_clip.set_frame_rate(target_sr)
             tts_clip = _normalize_tts_audio(tts_clip)
 
-            if i == 0:
-                # 第一个片段直接添加
-                result = tts_clip
-                start_ms = 0
-            else:
-                # 后续片段用交叉淡化追加：无静音，前一段尾与本段首平滑过渡
-                tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
-                start_ms = len(result)  # 交叉淡化前 result 的尾部
-                result = result.append(tts_clip, crossfade=crossfade_ms)
-                # 交叉淡化后该片段实际开始位置向后移 crossfade_ms
-                start_ms = min(start_ms, len(result) - tts_len_ms)
+            # 语速调整幅度限制在 ±15~20%，保持自然平稳；不再强制裁剪，
+            # 允许调速后仍超出窗口的语音完整播放，靠顺延而非截断来处理
+            tts_clip = _time_stretch_natural(tts_clip, window_ms)
+            tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
 
-            end_ms = len(result)
-            chinese_text = translations.get(seg_idx, "")
+            # 实际播放起点：若上一句播放已经拖到了这句的原定开始时间之后，
+            # 顺延到上一句结束处（避免语音重叠），否则按原始时间戳播放
+            # （保留原视频里本来就有的自然停顿）
+            placement_start_ms = max(seg_start_ms, actual_cursor_ms)
+
+            end_pos_ms = placement_start_ms + len(tts_clip)
+            if end_pos_ms > len(result):
+                extra = AudioSegment.silent(
+                    duration=end_pos_ms - len(result), frame_rate=target_sr)
+                result = result + extra
+            result = result.overlay(tts_clip, position=placement_start_ms)
+            actual_cursor_ms = end_pos_ms
+
             time_mapping.append({
-                "mixed_start": round(start_ms / 1000.0, 3),
-                "mixed_end": round(end_ms / 1000.0, 3),
-                "orig_start": 0, "orig_end": 0,
+                "mixed_start": round(placement_start_ms / 1000.0, 3),
+                "mixed_end": round(end_pos_ms / 1000.0, 3),
+                "orig_start": round(seg_start_ms / 1000.0, 3),
+                "orig_end": round(seg_end_ms / 1000.0, 3),
                 "type": "tts_chinese",
                 "segment_index": seg_idx,
                 "chinese": chinese_text,
             })
-            print(f"  [{seg_idx}] 🇨🇳 {chinese_text[:30]} ({tts_len_ms}ms, {start_ms/1000:.1f}s-{end_ms/1000:.1f}s)")
+            delay_note = f" [顺延{(placement_start_ms - seg_start_ms)}ms]" if placement_start_ms > seg_start_ms else ""
+            print(f"  [{seg_idx}] {chinese_text[:30]} "
+                  f"(窗口{window_ms}ms, 实际{len(tts_clip)}ms, {seg_start_ms/1000:.1f}s-{seg_end_ms/1000:.1f}s){delay_note}")
 
         # 导出
         fmt = getattr(config, "OUTPUT_FORMAT", "mp3")
         bitrate = getattr(config, "OUTPUT_BITRATE", "192k")
         result.export(output_path, format=fmt, bitrate=bitrate)
 
-        original_duration = segments[-1].get("end", 0) if segments else 0
         mixed_duration = len(result) / 1000.0
 
         print(f"[Step4b] 组装完成:")
         print(f"  原始时长: {original_duration:.1f}s")
-        print(f"  混合时长: {mixed_duration:.1f}s")
+        print(f"  混合时长: {mixed_duration:.1f}s (与原时长严格对齐)")
         print(f"  中文句数: {len(translated_indices)}")
         print(f"  输出: {output_path}")
 

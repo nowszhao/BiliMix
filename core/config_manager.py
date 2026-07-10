@@ -41,6 +41,8 @@ UPDATABLE_CONFIGS = {
     "auth_enabled": ("AUTH_ENABLED", bool),
     "auth_username": ("AUTH_USERNAME", str),
     "auth_password": ("AUTH_PASSWORD", str),
+    # 默认保留背景音乐
+    "keep_bgm": ("KEEP_BGM", bool),
 }
 
 
@@ -88,6 +90,8 @@ def get_all_config() -> dict:
         "auth_enabled": getattr(config, "AUTH_ENABLED", True),
         "auth_username": getattr(config, "AUTH_USERNAME", "admin"),
         "auth_password": getattr(config, "AUTH_PASSWORD", "bilimix2024"),
+        # 默认保留背景音乐
+        "keep_bgm": getattr(config, "KEEP_BGM", False),
     }
 
 

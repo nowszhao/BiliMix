@@ -281,10 +281,13 @@ async function submitAudioTask(btn) {
     btn.querySelector('.btn-text').textContent = '提交中...';
 
     try {
+        const keepBgmEl = document.getElementById('audio-keep-bgm-checkbox');
+        const keepBgm = keepBgmEl ? keepBgmEl.checked : false;
         const body = {
             title: title,
             skip_confirmation: true,
             type: 'audio',
+            keep_bgm: keepBgm,
         };
         if (localPath) {
             body.local_path = localPath;
@@ -351,6 +354,8 @@ async function submitVideoTask(btn) {
     const subMode = subModeEl ? subModeEl.value : 'bilingual';
     const fontSizeEl = document.getElementById('sub-font-size');
     const fontSize = fontSizeEl ? fontSizeEl.value : '20';
+    const keepBgmEl = document.getElementById('keep-bgm-checkbox');
+    const keepBgm = keepBgmEl ? keepBgmEl.checked : false;
 
     tasks_url = url || ('file://' + localPath);
     currentTaskTitle = title;
@@ -366,6 +371,7 @@ async function submitVideoTask(btn) {
             type: 'video',
             subtitle_mode: subMode,
             subtitle_font_size: parseInt(fontSize),
+            keep_bgm: keepBgm,
         };
         if (localPath) {
             body.local_path = localPath;
@@ -583,10 +589,10 @@ function updateProgress(data) {
         : ['download', 'transcribe', 'translate', 'confirm', 'synthesize', 'mix'];
 
     const stepOrder = isVideoTask
-        ? { 'download': 0, 'downloading': 0, 'transcribe': 1, 'translate': 2,
+        ? { 'download': 0, 'downloading': 0, 'separate': 0, 'transcribe': 1, 'translate': 2,
             'confirm_sentence': 3, 'confirm': 3, 'synthesize': 4,
             'merge': 5, 'mix': 5, 'subtitle': 6, 'assemble': 7, 'done': 8 }
-        : { 'download': 0, 'downloading': 0, 'transcribe': 1, 'translate': 2,
+        : { 'download': 0, 'downloading': 0, 'separate': 0, 'transcribe': 1, 'translate': 2,
             'confirm_sentence': 3, 'confirm': 3, 'synthesize': 4,
             'merge': 5, 'vocabulary': 5, 'done': 6 };
 

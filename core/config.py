@@ -31,7 +31,7 @@ for _d in (DATA_DIR, OUTPUT_DIR, TTS_CACHE_DIR, RESULT_DIR, DOWNLOAD_DIR):
 # ========================
 # whisperx 可执行文件路径（conda 环境中的绝对路径，避免 PATH 找不到）
 WHISPERX_BIN = "/root/miniconda3/envs/whisperx_new/bin/whisperx"
-WHISPERX_MODEL = "tiny"
+WHISPERX_MODEL = "medium"
 WHISPERX_DEVICE = "cpu"
 WHISPERX_COMPUTE_TYPE = "int8"
 WHISPERX_BATCH_SIZE = 10
@@ -48,7 +48,7 @@ WHISPERX_THREADS = 8
 WHISPERX_DIARIZE = True
 # HuggingFace Token（需同意 pyannote/speaker-diarization-3.1 模型协议）
 # https://huggingface.co/pyannote/speaker-diarization-3.1
-WHISPERX_HF_TOKEN = ""
+WHISPERX_HF_TOKEN = "your_huggingface_token_here"
 # 最少说话人数（0=自动）
 WHISPERX_MIN_SPEAKERS = 0
 # 最多说话人数（0=自动）
@@ -58,7 +58,7 @@ WHISPERX_MAX_SPEAKERS = 0
 # Ollama 配置
 # ========================
 OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL = "translategemma:4b"
+OLLAMA_MODEL = "translategemma:12b"
 # 生词识别时每批合并的句子数量（越大越快，但过大可能降低识别精度）
 # 建议范围: 5~15，默认 8
 LLM_BATCH_SIZE = 5
@@ -88,7 +88,7 @@ TTS_ENGINE = "confucius-tts"
 CONFUCIUS4_TTS_ROOT = ""
 # Confucius4-TTS-CPU 使用的 Python 解释器（需已安装 torch/transformers 等依赖）
 # 留空则使用当前 Python 解释器 (sys.executable)
-CONFUCIUS4_TTS_PYTHON = ""
+CONFUCIUS4_TTS_PYTHON = "/root/miniconda3/envs/qwen3-tts/bin/python"
 # 推理设备: "cpu" 或 "cuda"
 CONFUCIUS4_TTS_DEVICE = "cpu"
 # 单条 TTS 合成超时（秒），CPU 推理较慢，长句可能需要 60-120s
@@ -194,6 +194,9 @@ SECRET_KEY = "bilimix-secret-key-change-me"
 OUTPUT_FORMAT = "mp3"
 # 输出音频比特率
 OUTPUT_BITRATE = "192k"
+# 默认保留背景音乐/环境音（需人声分离）
+# 可在 Web 设置页面修改，新建任务时作为 BGM 选项的默认值
+KEEP_BGM = False
 
 # ========================
 # 本地配置覆盖（不影响服务端默认值）

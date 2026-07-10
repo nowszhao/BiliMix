@@ -294,7 +294,266 @@
                 <div class="detail-transcript-body" id="detail-transcript-container"></div>
             </div>
         </section>
-<!-- JS 模块 — 按依赖顺序加载 -->
+
+        <!-- ====== 新建任务 Modal ====== -->
+        <div id="new-task-modal" class="modal-overlay task-modal-overlay" onclick="if(event.target===this) closeNewTaskModal()">
+            <div class="modal-card new-task-modal-card">
+                <div class="modal-header">
+                    <h3 class="modal-title">新建任务</h3>
+                    <button class="modal-close" onclick="closeNewTaskModal()">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <div class="modal-body">
+
+                    <!-- 顶层模式选择 -->
+                    <div class="mode-card-group">
+                        <div class="mode-card active" data-topmode="audio" onclick="switchTopMode('audio')">
+                            <div class="mode-card-illustration audio-illustration">
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+                            </div>
+                            <div class="mode-card-body">
+                                <span class="mode-card-title">音频转录</span>
+                                <span class="mode-card-desc">音频/播客 → 中文配音音频</span>
+                            </div>
+                            <div class="mode-card-radio"></div>
+                        </div>
+                        <div class="mode-card" data-topmode="video" onclick="switchTopMode('video')">
+                            <div class="mode-card-illustration video-illustration">
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                            </div>
+                            <div class="mode-card-body">
+                                <span class="mode-card-title">视频配音</span>
+                                <span class="mode-card-desc">视频 → 中文配音 + 字幕</span>
+                            </div>
+                            <div class="mode-card-radio"></div>
+                        </div>
+                    </div>
+
+                    <!-- ====== 音频模式面板 ====== -->
+                    <div class="top-mode-panel active" id="topmode-audio">
+                        <!-- 输入方式切换 -->
+                        <div class="field-group">
+                            <label class="field-label">输入方式</label>
+                            <div class="seg-control input-mode-seg">
+                                <button class="segment active" data-mode="url" onclick="switchInputMode('url')">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                    URL 链接
+                                </button>
+                                <button class="segment" data-mode="file" onclick="switchInputMode('file')">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                    本地上传
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- URL 输入 -->
+                        <div class="input-mode-content active" id="input-mode-url">
+                            <div class="input-wrapper">
+                                <span class="input-leading-icon">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                </span>
+                                <input type="text" id="audio-url" class="modal-input has-leading-icon has-clear-btn" placeholder="输入音频/播客单集 URL..." oninput="_updateVideoHint()">
+                                <button class="input-clear-btn" onclick="document.getElementById('audio-url').value=''; document.getElementById('audio-url').focus(); _updateVideoHint()" title="清空" type="button">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>
+                            </div>
+                            <div id="youtube-hint" class="hint-banner" style="display:none;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                                检测到 YouTube 链接，推荐使用「视频配音」模式获得更好的效果
+                            </div>
+                        </div>
+
+                        <!-- 文件上传 -->
+                        <div class="input-mode-content" id="input-mode-file">
+                            <div class="upload-zone" id="audio-upload-zone" onclick="document.getElementById('file-upload-input').click()">
+                                <div class="upload-zone-icon">
+                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                </div>
+                                <div class="upload-zone-text">
+                                    <span class="upload-zone-title" id="file-upload-label">拖拽音频文件到此处，或点击选择</span>
+                                    <span class="upload-zone-hint">支持 MP3、WAV、M4A、OGG、FLAC、AAC</span>
+                                </div>
+                                <input type="file" id="file-upload-input" accept=".mp3,.wav,.m4a,.ogg,.flac,.aac" style="display:none;" onchange="onFileSelected(this)">
+                            </div>
+                            <div class="file-upload-info" id="file-upload-info" style="display:none;">
+                                <div class="file-info-icon">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                </div>
+                                <div class="file-info-details">
+                                    <span id="file-upload-name"></span>
+                                    <span id="file-upload-size"></span>
+                                </div>
+                                <button class="file-upload-clear" onclick="event.stopPropagation(); clearUploadedFile()" title="移除文件">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 选项 -->
+                        <div class="options-card">
+                            <div class="option-row">
+                                <div class="option-row-left">
+                                    <span class="option-row-icon">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+                                    </span>
+                                    <div class="option-row-text">
+                                        <span class="option-row-title">背景音乐</span>
+                                        <span class="option-row-desc">保留原音频背景音乐/环境音（需人声分离）</span>
+                                    </div>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="audio-keep-bgm-checkbox">
+                                    <span class="toggle-track"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ====== 视频模式面板 ====== -->
+                    <div class="top-mode-panel" id="topmode-video">
+                        <!-- 输入方式切换 -->
+                        <div class="field-group">
+                            <label class="field-label">输入方式</label>
+                            <div class="seg-control input-mode-seg three-col">
+                                <button class="segment active" data-vmode="youtube" onclick="switchVideoMode('youtube')">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                    URL
+                                </button>
+                                <button class="segment" data-vmode="local" onclick="switchVideoMode('local')">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                    上传
+                                </button>
+                                <button class="segment" data-vmode="server" onclick="switchVideoMode('server')">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                                    服务器
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- URL 输入 -->
+                        <div class="input-mode-content active" id="video-mode-youtube">
+                            <div class="input-wrapper">
+                                <span class="input-leading-icon">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                </span>
+                                <input type="text" id="video-url" class="modal-input has-leading-icon has-clear-btn" placeholder="输入视频 URL（支持 YouTube、Bilibili 等）...">
+                                <button class="input-clear-btn" onclick="document.getElementById('video-url').value=''; document.getElementById('video-url').focus()" title="清空" type="button">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 本地上传 -->
+                        <div class="input-mode-content" id="video-mode-local">
+                            <div class="upload-zone" id="video-upload-zone" onclick="document.getElementById('video-upload-input').click()">
+                                <div class="upload-zone-icon">
+                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                </div>
+                                <div class="upload-zone-text">
+                                    <span class="upload-zone-title" id="video-upload-label">拖拽视频文件到此处，或点击选择</span>
+                                    <span class="upload-zone-hint">支持 MP4、MKV、MOV、AVI、WebM</span>
+                                </div>
+                                <input type="file" id="video-upload-input" accept=".mp4,.mkv,.mov,.avi,.webm" style="display:none;" onchange="onVideoFileSelected(this)">
+                            </div>
+                            <div class="file-upload-info" id="video-upload-info" style="display:none;">
+                                <div class="file-info-icon">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                </div>
+                                <div class="file-info-details">
+                                    <span id="video-upload-name"></span>
+                                    <span id="video-upload-size"></span>
+                                </div>
+                                <button class="file-upload-clear" onclick="event.stopPropagation(); clearVideoUpload()" title="移除文件">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 服务器路径 -->
+                        <div class="input-mode-content" id="video-mode-server">
+                            <div class="input-wrapper">
+                                <span class="input-leading-icon">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                                </span>
+                                <input type="text" id="video-server-path" class="modal-input has-leading-icon has-clear-btn" placeholder="输入服务器本地视频文件路径...">
+                                <button class="input-clear-btn" onclick="document.getElementById('video-server-path').value=''; document.getElementById('video-server-path').focus()" title="清空" type="button">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 选项 -->
+                        <div class="options-card">
+                            <div class="option-row">
+                                <div class="option-row-left">
+                                    <span class="option-row-icon">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                                    </span>
+                                    <div class="option-row-text">
+                                        <span class="option-row-title">字幕模式</span>
+                                        <span class="option-row-desc">选择配音视频的字幕显示方式</span>
+                                    </div>
+                                </div>
+                                <div class="option-row-choices">
+                                    <label class="chip-radio">
+                                        <input type="radio" name="sub_mode" value="bilingual" checked>
+                                        <span class="chip-radio-label">中英双语</span>
+                                    </label>
+                                    <label class="chip-radio">
+                                        <input type="radio" name="sub_mode" value="chinese_only">
+                                        <span class="chip-radio-label">仅中文</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="option-row">
+                                <div class="option-row-left">
+                                    <span class="option-row-icon">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+                                    </span>
+                                    <div class="option-row-text">
+                                        <span class="option-row-title">字幕字号</span>
+                                        <span class="option-row-desc">设置字幕文字大小（px）</span>
+                                    </div>
+                                </div>
+                                <input type="number" id="sub-font-size" class="number-input" value="20" min="12" max="48">
+                            </div>
+                            <div class="option-row">
+                                <div class="option-row-left">
+                                    <span class="option-row-icon">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+                                    </span>
+                                    <div class="option-row-text">
+                                        <span class="option-row-title">背景音乐</span>
+                                        <span class="option-row-desc">保留原视频背景音乐/环境音（需人声分离）</span>
+                                    </div>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="keep-bgm-checkbox">
+                                    <span class="toggle-track"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 兼容隐藏字段 -->
+                    <div id="mode-hint" class="hint-banner" style="display:none;">
+                        <span id="mode-hint-text"></span>
+                    </div>
+                    <input type="hidden" id="mode-select" value="sentence_translate">
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-cancel-secondary" onclick="closeNewTaskModal()">取消</button>
+                    <button class="btn-primary btn-generate" id="generate-btn" onclick="submitTask()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        <span class="btn-text">开始生成</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
     <script src="js/utils.js"></script>
     <script src="js/state.js"></script>
     <script src="js/audio-sync.js"></script>
@@ -304,5 +563,46 @@
     <script src="js/podcast.js"></script>
     <script src="js/settings.js"></script>
     <script src="js/episodes.js"></script>
+
+    <!-- 添加订阅 Modal -->
+    <div id="add-sub-modal" class="modal-overlay">
+        <div class="modal-card add-sub-modal-card">
+            <div class="modal-header">
+                <h3 class="modal-title">添加订阅</h3>
+                <button class="modal-close" onclick="closeAddSubscriptionModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- 搜索播客 -->
+                <div class="modal-section">
+                    <label class="modal-label">搜索播客</label>
+                    <input type="text" id="modal-search-input" class="modal-input" placeholder="输入关键词搜索播客..." oninput="debouncedModalPodcastSearch()">
+                    <div id="modal-podcast-results" style="display:none">
+                        <div id="modal-podcast-results-list"></div>
+                    </div>
+                </div>
+                <div class="modal-divider"><span>或</span></div>
+                <!-- RSS 链接 -->
+                <div class="modal-section">
+                    <label class="modal-label">RSS 链接</label>
+                    <div class="modal-rss-row">
+                        <input type="text" id="modal-rss-input" class="modal-input" placeholder="输入 RSS 订阅链接...">
+                        <button class="btn btn-primary" onclick="modalLoadRssFeed()">解析</button>
+                    </div>
+                </div>
+                <!-- RSS 解析结果 -->
+                <div id="modal-rss-episodes-panel" style="display:none">
+                    <div class="episodes-header" style="display:flex;align-items:center;gap:12px;padding:12px 0">
+                        <img id="modal-rss-podcast-img" src="" alt="" class="podcast-detail-img" style="width:48px;height:48px;border-radius:8px;object-fit:cover" onerror="this.style.display='none'">
+                        <div>
+                            <div id="modal-rss-podcast-title" class="podcast-detail-title"></div>
+                            <div id="modal-rss-podcast-author" class="podcast-detail-author"></div>
+                        </div>
+                    </div>
+                    <div id="modal-rss-episodes-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>

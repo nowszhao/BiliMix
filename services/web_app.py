@@ -57,8 +57,9 @@ from pipeline.step2b_translate_sentences import (
     translate_sentences,
 )
 from pipeline.step4b_sentence_mixer import mix_sentence_audio, build_segments_with_mixed_time
+from pipeline.step_vocal_separation import separate_vocals
 from pipeline.step0_video_prepare import prepare_video
-from pipeline.step5_video_assemble import generate_bilingual_srt, assemble_video
+from pipeline.step5_video_assemble import generate_bilingual_srt, assemble_video, _probe_video_size
 
 # Flask 静态文件目录使用绝对路径（web_app.py 已移至 services/ 子目录）
 _web_dir = os.path.join(config.BASE_DIR, "web")
@@ -324,13 +325,41 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
         os.makedirs(result_dir, exist_ok=True)
         update_task(task_id, _basename=basename, _audio_path=audio_path)
 
+        # ---- Step 0: 人声/背景音分离（若开启背景音保留）----
+        # 提前分离的好处：
+        #   1) 转录基于纯人声音频，不受背景音乐/环境音干扰，识别更准确
+        #      （背景音是一种噪声源，容易导致 VAD 漏检或 ASR 幻觉）
+        #   2) 分离结果（no_vocals）直接留到 Step4 混音阶段复用，
+        #      不需要在混音时重新调用一次 demucs
+        # demucs 是逐帧处理，不改变音频时长，分离前后时间轴严格一致，
+        # 用 vocals.wav 转录得到的时间戳可以直接复用，无需额外校准。
+        task_pre = get_task(task_id) or {}
+        keep_bgm = task_pre.get("keep_bgm", False)
+        transcribe_audio_path = audio_path
+        vocals_path = ""
+        bgm_path = None
+        if keep_bgm:
+            update_task(task_id, status="processing", step="separate",
+                        progress=3, message="正在分离人声与背景音...")
+            sep_cache_dir = os.path.join(result_dir, "vocal_separation")
+            sep_result = separate_vocals(audio_path, sep_cache_dir)
+            if sep_result.get("ok"):
+                vocals_path = sep_result.get("vocals_path", "")
+                bgm_path = sep_result.get("no_vocals_path", "")
+                if vocals_path and os.path.exists(vocals_path):
+                    transcribe_audio_path = vocals_path
+                    print(f"[VocalSep] 提前分离成功，转录将使用纯人声音频: {vocals_path}")
+                update_task(task_id, _bgm_path=bgm_path, _vocals_path=vocals_path)
+            else:
+                print(f"[VocalSep] 提前分离失败，转录使用原始音频: {sep_result.get('error')}")
+
         # ---- Step 1: 转录 ----
         if is_cancelled(task_id):
             raise InterruptedError("任务已被用户终止")
         update_task(task_id, status="processing", step="transcribe",
                     progress=5, message="Step 1/4: 正在转录音频...")
 
-        transcription = transcribe(audio_path)
+        transcription = transcribe(transcribe_audio_path)
         full_text = extract_full_text(transcription)
         segments = transcription.get("segments", [])
 
@@ -475,6 +504,11 @@ def continue_after_sentence_confirmation(task_id: str):
         # _raw_segments 缺失时（如断点续传从磁盘恢复）回退到精简 segments
         segments = task.get("_raw_segments") or task.get("segments", [])
 
+        # 若前置阶段已做过人声分离，TTS 参考音频提取也用纯人声音频，
+        # 避免参考音频里混入背景音乐影响声音克隆的音色纯净度
+        vocals_path = task.get("_vocals_path", "")
+        ref_audio_source = vocals_path if vocals_path and os.path.exists(vocals_path) else audio_path
+
         full_text = task.get("transcription_text", "")
         result_dir = os.path.join(config.RESULT_DIR, basename)
         os.makedirs(result_dir, exist_ok=True)
@@ -535,11 +569,11 @@ def continue_after_sentence_confirmation(task_id: str):
                 if ref_mode == "speaker_local":
                     (confucius_ref_map, confucius_ref_source_map,
                      _confucius_ref_text_map) = extract_ref_audio_speaker_local(
-                        audio_path, segments, pseudo_replacements,
+                        ref_audio_source, segments, pseudo_replacements,
                         confucius_ref_dir, engine="confucius")
                 else:
                     confucius_ref_map, confucius_ref_source_map = extract_ref_audio_for_segments(
-                        audio_path, segments, pseudo_replacements, confucius_ref_dir)
+                        ref_audio_source, segments, pseudo_replacements, confucius_ref_dir)
                 print(f"[Confucius] 提取了 {len(confucius_ref_map)} 个参考音频 (mode={ref_mode})")
 
             def _confucius_progress(current, total):
@@ -579,12 +613,29 @@ def continue_after_sentence_confirmation(task_id: str):
         output_audio_path = os.path.join(
             result_dir, f"{basename}_sentence.{config.OUTPUT_FORMAT}")
 
+        # 背景音乐保留：优先复用 Step0 提前分离好的伴奏轨（_bgm_path），
+        # 避免重复调用 demucs；仅当提前分离未执行/未成功时才在此处补做一次
+        bgm_path = task.get("_bgm_path", "") or None
+        keep_bgm = task.get("keep_bgm", False)
+        if keep_bgm and not bgm_path and audio_path and os.path.exists(audio_path):
+            update_task(task_id, message="正在分离人声与背景音...")
+            sep_cache_dir = os.path.join(result_dir, "vocal_separation")
+            sep_result = separate_vocals(audio_path, sep_cache_dir)
+            if sep_result.get("ok"):
+                bgm_path = sep_result.get("no_vocals_path", "")
+                print(f"[VocalSep] 背景音分离成功: {bgm_path}")
+            else:
+                print(f"[VocalSep] 分离失败，跳过背景音保留: {sep_result.get('error')}")
+        elif bgm_path:
+            print(f"[VocalSep] 复用 Step0 提前分离的背景音轨: {bgm_path}")
+
         mix_result = mix_sentence_audio(
             audio_path=audio_path, segments=segments,
             translated_indices=translated_indices,
             translations=translations,
             tts_audio_map=tts_audio_map,
-            output_path=output_audio_path)
+            output_path=output_audio_path,
+            bgm_path=bgm_path)
 
         if is_cancelled(task_id):
             raise InterruptedError("任务已被用户终止")
@@ -1120,6 +1171,7 @@ def submit_task():
             "_video_path": "",
             "_subtitle_mode": subtitle_mode,
             "_subtitle_font_size": subtitle_font_size,
+            "keep_bgm": bool(data.get("keep_bgm", False)),
         }
 
     # 任务创建后立即持久化到 SQLite，避免进程中途退出后历史记录丢失
@@ -1299,16 +1351,17 @@ def submit_task():
                 print(f"[Video] 混音文件缺失: {mixed_audio}")
                 return
 
-            # Step 5a: 生成双语 SRT
+            # Step 5a: 生成双语 ASS 字幕（内嵌样式：底部对齐 + 中英分色）
             update_task(task_id, step="subtitle", progress=93,
                         message="正在生成字幕...")
             segments = task.get("segments", [])
             translations = task.get("translations", {})
             time_mapping = task.get("time_mapping", [])
-            srt_path = os.path.join(result_dir, f"{basename}.srt")
+            srt_path = os.path.join(result_dir, f"{basename}.ass")
+            _, video_h = _probe_video_size(video_path)
             srt_result = generate_bilingual_srt(
                 segments, translations, time_mapping, srt_path,
-                subtitle_mode=mode)
+                subtitle_mode=mode, video_height=video_h)
             if not srt_result:
                 print(f"[Video] 字幕生成失败")
                 return
@@ -1317,18 +1370,8 @@ def submit_task():
             update_task(task_id, step="assemble", progress=96,
                         message="正在合成视频（可能需要几分钟）...")
             output_video = os.path.join(result_dir, f"{basename}_dubbed.mp4")
-            font_size = int(task.get("_subtitle_font_size", 20))
-            sub_style = (
-                f"FontName=Arial,"
-                f"FontSize={font_size},"
-                f"PrimaryColour=&H00FFFFFF,"
-                f"OutlineColour=&H00000000,"
-                f"Outline=2,Shadow=1,"
-                f"MarginV=40"
-            )
             assembled = assemble_video(
-                video_path, mixed_audio, srt_path, output_video,
-                subtitle_style=sub_style)
+                video_path, mixed_audio, srt_path, output_video)
 
             if not assembled:
                 update_task(task_id, status="error",
@@ -1338,7 +1381,7 @@ def submit_task():
             # 存储视频结果
             video_result = {
                 "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",
-                "srt_url": f"/api/audio/{basename}/{basename}.srt",
+                "srt_url": f"/api/audio/{basename}/{basename}.ass",
                 "video_path": output_video,
                 "srt_path": srt_path,
             }
@@ -1437,7 +1480,7 @@ def confirm_sentences(task_id):
 
 @app.route("/api/task/<task_id>/redo", methods=["POST"])
 def redo_task(task_id):
-    """完整重做：清空所有结果，重新走完整个 pipeline"""
+    """完整重做：清空所有处理结果，仅保留源文件，从头跑 pipeline"""
     task = get_task(task_id)
     if not task:
         task = restore_task_from_disk(task_id)
@@ -1449,38 +1492,94 @@ def redo_task(task_id):
     if not source_url:
         return jsonify({"error": "任务缺少源 URL，无法重做"}), 400
 
-    # 清空内存中的旧结果
-    keys_to_clear = ["result", "translations", "translated_indices",
-                     "sentence_pairs", "time_mapping", "video_result",
-                     "segments_mixed", "tts_audio_map",
-                     "_checkpoint_translate_batch", "_checkpoint_translations",
-                     "_checkpoint_tts_idx"]
-    for k in keys_to_clear:
-        task.pop(k, None)
-
-    # 删除磁盘上的旧结果
     basename = task.get("_basename", "")
+
+    # ---- 1. 清理磁盘结果目录（保留源文件） ----
     if basename:
         result_dir = os.path.join(config.RESULT_DIR, basename)
-        # 保留原始 wav/mp4，删除结果文件
-        for ext in ("_sentence.mp3", "_dubbed.mp4", ".srt", "task_result.json"):
-            p = os.path.join(result_dir, basename + ext)
-            if os.path.exists(p):
-                try:
-                    os.remove(p)
-                except:
-                    pass
+        if os.path.isdir(result_dir):
+            import shutil
+            # 需要保留的：原始下载的音频/视频（由 _audio_path/_video_path 指向）
+            # 删除所有生成物：TTS cache、人声分离缓存、sentence mp3、字幕、结果 JSON
+            keep_paths = set()
+            audio_path = task.get("_audio_path", "")
+            video_path = task.get("_video_path", "")
+            for p in (audio_path, video_path):
+                if p and os.path.exists(p):
+                    keep_paths.add(os.path.realpath(p))
 
-    # 启动重做线程
+            for name in os.listdir(result_dir):
+                full = os.path.join(result_dir, name)
+                real = os.path.realpath(full)
+                if real not in keep_paths:
+                    try:
+                        if os.path.isdir(full):
+                            shutil.rmtree(full)
+                        else:
+                            os.remove(full)
+                    except:
+                        pass
+
+    # ---- 2. 清空内存 task 中的所有处理状态 ----
+    reset_fields = {
+        "status": "queued",
+        "step": "download",
+        "progress": 0,
+        "message": "正在重做...",
+        "original_duration": 0,
+        "transcription_text": "",
+        "segments": [],
+        "difficult_words": [],
+        "replacements": [],
+        "translations": {},
+        "translated_indices": [],
+        "sentence_pairs": [],
+        "time_mapping": [],
+        "segments_mixed": [],
+        "tts_audio_map": {},
+        "result": None,
+        "video_result": None,
+    }
+
+    # 清理所有 checkpoint 和内部键
+    checkpoint_keys = ["_checkpoint_translate_batch", "_checkpoint_translations",
+                       "_checkpoint_tts_idx", "_bgm_path", "_vocals_path",
+                       "_saved_result_path"]
+    with tasks_lock:
+        t = tasks.get(task_id, {})
+        for k, v in reset_fields.items():
+            t[k] = v
+        for k in checkpoint_keys:
+            t.pop(k, None)
+        tasks[task_id] = t
+
+    # ---- 3. 更新 SQLite index ----
+    try:
+        save_task_to_index(task_id, {
+            "task_id": task_id,
+            "url": source_url,
+            "title": task.get("title", ""),
+            "process_mode": "sentence_translate",
+            "type": task_type,
+            "status": "queued",
+            "progress": 0,
+            "message": "正在重做...",
+            "created_at": task.get("created_at", ""),
+            "basename": basename,
+            "total_words": 0,
+            "total_replacements": 0,
+        })
+    except:
+        pass
+
+    # ---- 4. 启动重做线程 ----
     def _redo_worker():
-        update_task(task_id, status="queued", step="download",
+        update_task(task_id, status="processing", step="download",
                     progress=0, message="正在重做...")
-        # 视频任务调用 _do_video_post_process 的入口
         if task_type == "video":
             _do_redo_video_task(task_id, source_url)
         else:
             _do_redo_audio_task(task_id, source_url)
-        # 通知前端刷新
         if isinstance(task_subprocesses.get(task_id), list):
             task_subprocesses.pop(task_id, None)
 
@@ -1695,9 +1794,16 @@ def _synthesis_resume(task_id):
     update_task(task_id, status="processing", step="merge", progress=82,
                 message="重新组装音频...")
     output_path = os.path.join(result_dir, f"{basename}_sentence.{config.OUTPUT_FORMAT}")
+    bgm_path = task.get("_bgm_path", "") or None
+    if task.get("keep_bgm") and not bgm_path and audio_path and os.path.exists(audio_path):
+        sep_cache_dir = os.path.join(result_dir, "vocal_separation")
+        sep_result = separate_vocals(audio_path, sep_cache_dir)
+        if sep_result.get("ok"):
+            bgm_path = sep_result.get("no_vocals_path", "")
     mix_result = mix_sentence_audio(audio_path, segments,
                                     translated_indices, translations,
-                                    tts_audio_map, output_path)
+                                    tts_audio_map, output_path,
+                                    bgm_path=bgm_path)
     
     # 完成
     result_data = {
@@ -1794,12 +1900,21 @@ def retry_sentence_synthesis(task_id):
         config.RESULT_DIR, basename,
         f"{basename}_sentence.{config.OUTPUT_FORMAT}")
 
+    bgm_path = task.get("_bgm_path", "") or None
+    if task.get("keep_bgm") and not bgm_path and audio_path and os.path.exists(audio_path):
+        result_dir_bgm = os.path.join(config.RESULT_DIR, basename)
+        sep_cache_dir = os.path.join(result_dir_bgm, "vocal_separation")
+        sep_result = separate_vocals(audio_path, sep_cache_dir)
+        if sep_result.get("ok"):
+            bgm_path = sep_result.get("no_vocals_path", "")
+
     mix_result = mix_sentence_audio(
         audio_path=audio_path, segments=segments,
         translated_indices=translated_indices,
         translations=translations,
         tts_audio_map=tts_audio_map,
-        output_path=output_audio_path)
+        output_path=output_audio_path,
+        bgm_path=bgm_path)
 
     # 构建完整结果
     full_text = task.get("transcription_text", "")
@@ -2072,6 +2187,7 @@ def serve_audio(filename):
         ".flac": "audio/flac", ".aac": "audio/aac",
         ".mp4": "video/mp4", ".mkv": "video/x-matroska",
         ".srt": "text/plain; charset=utf-8",
+        ".ass": "text/plain; charset=utf-8",
     }
     ext = os.path.splitext(filename)[1].lower()
     mime = mime_map.get(ext, "audio/mpeg")

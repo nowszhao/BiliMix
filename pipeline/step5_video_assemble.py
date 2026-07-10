@@ -2,14 +2,15 @@
 Step 5: 视频组装模块
 将混音音频与视频合成，烧录双语字幕，输出最终配音视频。
 
-策略（视频连续流畅版）：
-  1. 用 PIL 把每条字幕渲染为带描边透明 PNG
-  2. 用 ffmpeg filter_complex 一次性叠加所有字幕到原视频
-     - 链式 overlay + enable=between(t\,start\,end) 控制每条字幕的可见时间
-     - 视频以单流连续播放，**不会跳跃**
+策略：
+  1. 生成 ASS 字幕文件（含字体/描边/位置样式），时间戳对齐混合后的音频时间轴
+  2. 用 ffmpeg 的 ass= 滤镜（libass 引擎）一次性烧录全部字幕到视频画面
+     —— 不再使用逐条 PNG 渲染 + 链式 overlay，避免字幕数量增多时
+        filter graph 呈线性/超线性增长导致的 CPU 占满、处理时间暴涨问题
   3. 与混合音频合并，按用户规则对齐时长：
      - 混音 ≤ 原视频 → 截断视频到混音时长
      - 混音 > 原视频 → tpad=clone 延长末帧
+  4. 限制 ffmpeg 编码线程数，避免抢占全部 CPU 核心拖慢整机
 """
 import os
 import re
@@ -18,91 +19,41 @@ import shutil
 import tempfile
 from typing import Optional
 
+# 限制 ffmpeg 使用的线程数（避免抢占所有 CPU 核心导致系统卡顿）
+_FFMPEG_THREADS = str(max(1, min(4, os.cpu_count() or 4)))
+
 
 # ============================================================
 # 字幕渲染
 # ============================================================
 
-def _parse_srt(srt_path: str) -> list[dict]:
-    if not os.path.isfile(srt_path):
-        return []
-    with open(srt_path, "r", encoding="utf-8") as f:
-        content = f.read()
-    entries = []
-    for block in re.split(r"\n\s*\n", content.strip()):
-        lines = block.strip().split("\n")
-        if len(lines) < 3:
-            continue
-        try:
-            idx = int(lines[0].strip())
-        except ValueError:
-            continue
-        m = re.match(
-            r"(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)",
-            lines[1].strip()
-        )
-        if not m:
-            continue
-        sh, sm, ss, sms = (int(m.group(i)) for i in (1, 2, 3, 4))
-        eh, em, es, ems = (int(m.group(i)) for i in (5, 6, 7, 8))
-        start = sh * 3600 + sm * 60 + ss + sms / 1000
-        end = eh * 3600 + em * 60 + es + ems / 1000
-        text = "\n".join(lines[2:]).strip()
-        entries.append({"index": idx, "start": start, "end": end, "text": text})
-    return entries
-
-
-def _load_font(size: int):
-    from PIL import ImageFont
-    for path in [
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/System/Library/Fonts/STHeiti Medium.ttc",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-    ]:
-        if os.path.isfile(path):
-            try:
-                return ImageFont.truetype(path, size)
-            except Exception:
-                pass
-    return ImageFont.load_default()
-
-
-def _render_subtitle_png(text: str, video_w: int, font_size: int) -> str:
-    """渲染一条字幕为带描边的透明 PNG（高度由文本行数自动计算）"""
-    from PIL import Image, ImageDraw
-    lines = text.split("\n")
-    line_h = int(font_size * 1.3)
-    canvas_h = line_h * len(lines) + 12
-    img = Image.new("RGBA", (video_w, canvas_h), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    font = _load_font(font_size)
-    for i, line in enumerate(lines):
-        bbox = draw.textbbox((0, 0), line, font=font)
-        line_w = bbox[2] - bbox[0]
-        x = (video_w - line_w) // 2
-        y = 6 + i * line_h
-        for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2),
-                       (-1, -1), (1, -1), (-1, 1), (1, 1)]:
-            draw.text((x + dx, y + dy), line, font=font, fill=(0, 0, 0, 230))
-        draw.text((x, y), line, font=font, fill=(255, 255, 255, 255))
-    out = tempfile.mktemp(suffix=".png", prefix="sub_")
-    img.save(out, "PNG")
-    return out
+def _parse_ass_dialogue_count(ass_path: str) -> int:
+    """统计 ASS 字幕文件中的 Dialogue 条目数量（用于判断是否存在有效字幕）。"""
+    if not os.path.isfile(ass_path):
+        return 0
+    count = 0
+    with open(ass_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip().startswith("Dialogue:"):
+                count += 1
+    return count
 
 
 # ============================================================
-# SRT 生成
+# ASS 字幕生成（支持中英文分色 + 底部对齐）
 # ============================================================
 
-def _seconds_to_srt_time(seconds: float) -> str:
+def _seconds_to_ass_time(seconds: float) -> str:
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
-    ms = int((seconds - int(seconds)) * 1000)
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+    cs = int((seconds - int(seconds)) * 100)  # ASS 用百分之一秒
+    return f"{h:d}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+# ASS 颜色格式为 &HBBGGRR&（BGR 顺序，与 SRT/HTML 的 RGB 相反）
+_ASS_COLOR_ENGLISH = "&H00E6E6E6&"   # 浅灰白：英文原文
+_ASS_COLOR_CHINESE = "&H0000D7FF&"   # 金黄色：中文翻译，与英文形成区分
 
 
 def generate_bilingual_srt(
@@ -111,7 +62,16 @@ def generate_bilingual_srt(
     time_mapping: list[dict],
     output_path: str,
     subtitle_mode: str = "bilingual",
+    video_height: int = 720,
 ) -> str:
+    """
+    生成 ASS 字幕文件（尽管函数名/参数保留 srt 命名以兼容旧调用方，
+    实际输出内容为 ASS 格式，支持行内颜色标签 + 精确对齐控制）。
+
+    英文行使用浅灰白色，中文行使用金黄色，视觉上清晰区分两种语言。
+    字幕固定底部居中对齐（Alignment=2），边距按视频高度百分比计算，
+    避免不同分辨率下字幕位置视觉不一致。
+    """
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     tts_time_map = {}
     for entry in time_mapping:
@@ -148,26 +108,53 @@ def generate_bilingual_srt(
 
     if not entries:
         return ""
-    lines = []
+
+    font_size = max(20, video_height // 18)
+    margin_v = max(30, int(video_height * 0.07))  # 底部边距按视频高度 7% 计算
+
+    header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: {video_height if video_height >= 1080 else 1080}
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: English,Noto Sans CJK SC,{font_size},{_ASS_COLOR_ENGLISH},&H000000FF&,&H00000000&,&H00000000&,0,0,0,0,100,100,0,0,1,2,1,2,20,20,{margin_v + font_size + 6},1
+Style: Chinese,Noto Sans CJK SC,{font_size},{_ASS_COLOR_CHINESE},&H000000FF&,&H00000000&,&H00000000&,0,0,0,0,100,100,0,0,1,2,1,2,20,20,{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+    lines = [header]
     for e in entries:
-        lines.append(str(e["index"]))
-        lines.append(f"{_seconds_to_srt_time(e['start'])} --> {_seconds_to_srt_time(e['end'])}")
+        start_ts = _seconds_to_ass_time(e["start"])
+        end_ts = _seconds_to_ass_time(e["end"])
+        eng_text = e["english"].replace("\n", "\\N") if e["english"] else ""
+        chn_text = e["chinese"].replace("\n", "\\N") if e["chinese"] else ""
         if subtitle_mode == "bilingual":
-            lines.append(f"{e['english']}\n{e['chinese']}" if (e['english'] and e['chinese'])
-                         else e['chinese'] or e['english'])
+            if eng_text and chn_text:
+                lines.append(f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{eng_text}")
+                lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{chn_text}")
+            else:
+                text = chn_text or eng_text
+                style = "Chinese" if chn_text else "English"
+                lines.append(f"Dialogue: 0,{start_ts},{end_ts},{style},,0,0,0,,{text}")
         elif subtitle_mode == "chinese_only":
-            lines.append(e['chinese'] or e['english'])
+            text = chn_text or eng_text
+            lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{text}")
         else:
-            lines.append(e['english'] or "")
-        lines.append("")
+            if eng_text:
+                lines.append(f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{eng_text}")
+
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
-    print(f"[Step5] 生成字幕: {len(entries)} 条 → {output_path}")
+    print(f"[Step5] 生成 ASS 字幕: {len(entries)} 条 → {output_path}")
     return output_path
 
-
 # ============================================================
-# 视频组装：连续流 + 链式 overlay
+# 视频组装：字幕烧录（libass 一次性渲染）+ 音视频对齐合并
 # ============================================================
 
 def _probe_video_size(video_path: str) -> tuple[int, int]:
@@ -196,115 +183,13 @@ def _probe_video_duration(video_path: str) -> float:
         return 0.0
 
 
-def _build_continuous_overlay(
-    video_path: str,
-    entries: list[dict],
-    vw: int,
-    vh: int,
-    font_size: int,
-    work_dir: str,
-) -> str:
-    """用链式 overlay + enable=between() 一次性烧录所有字幕到原视频，输出连续视频文件路径。"""
-    from PIL import Image
-    # 渲染所有 PNG
-    png_paths = []
-    for e in entries:
-        png = _render_subtitle_png(e["text"], vw, font_size)
-        png_paths.append((e, png))
-
-    # 构建 filter_complex
-    # 链式 overlay，每条字幕独立控制
-    # 表达式内的 , 用 \ 转义
-    fc_parts = []
-    for i, (e, png) in enumerate(png_paths):
-        png_h = Image.open(png).size[1]
-        y_expr = f"H-{40 + png_h}"
-        enable_expr = f"between(t\\,{e['start']}\\,{e['end']})"
-        fc_parts.append(f"[{i+1}:v]format=rgba,setpts=PTS-STARTPTS[sub{i}];")
-        if i == 0:
-            fc_parts.append(f"[0:v][sub0]overlay=0:{y_expr}:enable={enable_expr}[v0];")
-        else:
-            fc_parts.append(f"[v{i-1}][sub{i}]overlay=0:{y_expr}:enable={enable_expr}[v{i}];")
-
-    last_label = f"[v{len(png_paths)-1}]"
-    fc_parts.append(f"{last_label}format=yuv420p[vout]")
-    filter_complex = "".join(fc_parts)
-
-    # 构建 ffmpeg 命令
-    inputs = ["ffmpeg", "-y", "-loglevel", "error", "-i", video_path]
-    for _, png in png_paths:
-        inputs += ["-loop", "1", "-i", png]
-    inputs += [
-        "-filter_complex", filter_complex,
-        "-map", "[vout]",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "0",
-        "-an",
-        "-r", "30",
-    ]
-    overlay_video = os.path.join(work_dir, "overlay.mp4")
-    inputs.append(overlay_video)
-    r = subprocess.run(inputs, capture_output=True, text=True, timeout=1800)
-    if r.returncode != 0:
-        print(f"[Step5] 链式 overlay 失败: {r.stderr[-500:]}")
-        return ""
-    print(f"[Step5] 链式 overlay 成功: {len(png_paths)} 条字幕")
-    return overlay_video
-
-
-def _align_video_to_audio(video_path: str, audio_path: str, target_dur: float, output_path: str) -> bool:
-    """对齐规则：混音 ≤ 原视频 → 截断 / 混音 > 原视频 → 延长最后一帧。"""
-    video_dur = _probe_video_duration(video_path)
-    diff = video_dur - target_dur
-
-    tmp = output_path + ".re.mp4"
-    if diff > 0.3:
-        # 混音较短：截断视频
-        print(f"[Step5] 视频 > 混音 ({video_dur:.2f}s > {target_dur:.2f}s) → 截断")
-        r = subprocess.run([
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-i", video_path, "-i", audio_path,
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-            "-c:a", "aac", "-b:a", "192k",
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-shortest", "-movflags", "+faststart",
-            tmp,
-        ], capture_output=True, text=True, timeout=300)
-    elif diff < -0.3:
-        # 混音较长：延长最后一帧
-        print(f"[Step5] 视频 < 混音 ({video_dur:.2f}s < {target_dur:.2f}s) → 延长末帧")
-        r = subprocess.run([
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-i", video_path, "-i", audio_path,
-            "-filter_complex", f"[0:v]tpad=stop_mode=clone:stop_duration={abs(diff):.3f}[v]",
-            "-map", "[v]", "-map", "1:a:0",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-            "-c:a", "aac", "-b:a", "192k",
-            "-shortest", "-movflags", "+faststart",
-            tmp,
-        ], capture_output=True, text=True, timeout=300)
-    else:
-        # 偏差 < 0.3s，直接合并
-        r = subprocess.run([
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-i", video_path, "-i", audio_path,
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-            "-c:a", "aac", "-b:a", "192k",
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-movflags", "+faststart",
-            output_path,
-        ], capture_output=True, text=True, timeout=300)
-        if r.returncode == 0 and os.path.exists(output_path):
-            return True
-        return False
-
-    if r.returncode == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
-        if os.path.exists(output_path):
-            os.remove(output_path)
-        os.rename(tmp, output_path)
-        return True
-    if os.path.exists(tmp):
-        os.remove(tmp)
-    return False
+def _escape_path_for_filter(path: str) -> str:
+    """转义路径中的特殊字符，用于嵌入 ffmpeg filter 参数（单引号包裹）。"""
+    path = os.path.abspath(path)
+    path = path.replace("\\", "\\\\")
+    path = path.replace(":", "\\:")
+    path = path.replace("'", "\\'")
+    return path
 
 
 def assemble_video(
@@ -315,7 +200,14 @@ def assemble_video(
     subtitle_style: Optional[str] = None,
     timeout: int = 1800,
 ) -> str:
-    """连续流视频组装：原视频单流播放 + 字幕按时间烧录 + 替换音轨。"""
+    """
+    视频组装（单次 ffmpeg 调用）：
+      1. 用 ass= 滤镜（libass 引擎）一次性烧录全部字幕 —— 样式（字体/颜色/位置）
+         已内嵌在 ASS 文件的 [V4+ Styles] 中，无需 force_style 覆盖；
+         无论字幕条数多少，都是一次线性扫描，不会随字幕数量增长而变慢
+      2. 同一条 filter 链内按需 tpad 延长末帧（混音 > 原视频时）
+      3. 替换音轨为混合音频，按需 -shortest 截断（混音 ≤ 原视频时）
+    """
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     if os.path.isfile(output_path):
         try:
@@ -323,59 +215,51 @@ def assemble_video(
         except Exception:
             pass
 
-    entries = _parse_srt(srt_path)
+    dialogue_count = _parse_ass_dialogue_count(srt_path)
     video_duration = _probe_video_duration(video_path)
     mixed_duration = _probe_video_duration(mixed_audio_path)
-    print(f"[Step5] 视频时长: {video_duration:.2f}s  混音时长: {mixed_duration:.2f}s  字幕数: {len(entries)}")
+    print(f"[Step5] 视频时长: {video_duration:.2f}s  混音时长: {mixed_duration:.2f}s  字幕数: {dialogue_count}")
 
-    if not entries:
+    has_srt = dialogue_count > 0
+    diff = video_duration - mixed_duration  # >0: 视频更长(需截断) <0: 视频更短(需延长末帧)
+
+    vf_parts = []
+    if diff < -0.3:
+        print(f"[Step5] 视频 < 混音 ({video_duration:.2f}s < {mixed_duration:.2f}s) -> 延长末帧")
+        vf_parts.append(f"tpad=stop_mode=clone:stop_duration={abs(diff):.3f}")
+    elif diff > 0.3:
+        print(f"[Step5] 视频 > 混音 ({video_duration:.2f}s > {mixed_duration:.2f}s) -> 截断")
+
+    if has_srt:
+        escaped_ass = _escape_path_for_filter(srt_path)
+        vf_parts.append(f"ass=filename='{escaped_ass}'")
+        print(f"[Step5] 字幕烧录: {dialogue_count} 条 (libass ass= 滤镜，样式已内嵌)")
+    else:
         print("[Step5] 无字幕，纯拼接音视频")
-        cmd = [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-i", video_path, "-i", mixed_audio_path,
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-            "-c:a", "aac", "-b:a", "192k",
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-shortest", "-movflags", "+faststart",
-            output_path,
-        ]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        if r.returncode != 0:
-            print(f"[Step5] 失败: {r.stderr.strip()[-300:]}")
-            return ""
-        return output_path
 
-    vw, vh = _probe_video_size(video_path)
-    font_size = max(20, vh // 18)
-    print(f"[Step5] 视频尺寸: {vw}x{vh}  字号: {font_size}")
+    vf_parts.append("format=yuv420p")
 
-    work_dir = tempfile.mkdtemp(prefix="bilimix_step5_")
-    try:
-        # 1) 一次性烧录所有字幕 → 连续视频
-        overlay_video = _build_continuous_overlay(
-            video_path, entries, vw, vh, font_size, work_dir
-        )
-        if not overlay_video:
-            print("[Step5] overlay 失败")
-            return ""
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-threads", _FFMPEG_THREADS,
+        "-i", video_path, "-i", mixed_audio_path,
+        "-vf", ",".join(vf_parts),
+        "-c:v", "libopenh264", "-b:v", "1500k",
+        "-c:a", "aac", "-b:a", "128k",
+        "-map", "0:v:0", "-map", "1:a:0",
+    ]
+    if diff > 0.3:
+        cmd.append("-shortest")
+    cmd += ["-movflags", "+faststart", output_path]
 
-        overlay_dur = _probe_video_duration(overlay_video)
-        print(f"[Step5] Overlay 视频时长: {overlay_dur:.2f}s")
-
-        # 2) 合并音视频并按规则对齐
-        ok = _align_video_to_audio(overlay_video, mixed_audio_path, mixed_duration, output_path)
-        if not ok:
-            print(f"[Step5] 音视频合并失败")
-            return ""
-
-        if os.path.exists(output_path):
-            size_mb = os.path.getsize(output_path) / (1024 * 1024)
-            final_dur = _probe_video_duration(output_path)
-            print(f"[Step5] 组装完成: {os.path.basename(output_path)} ({size_mb:.1f} MB, {final_dur:.2f}s)")
-            return output_path
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0:
+        print(f"[Step5] 失败: {r.stderr.strip()[-500:]}")
         return ""
-    finally:
-        try:
-            shutil.rmtree(work_dir, ignore_errors=True)
-        except Exception:
-            pass
+
+    if os.path.exists(output_path):
+        size_mb = os.path.getsize(output_path) / (1024 * 1024)
+        final_dur = _probe_video_duration(output_path)
+        print(f"[Step5] 组装完成: {os.path.basename(output_path)} ({size_mb:.1f} MB, {final_dur:.2f}s)")
+        return output_path
+    return ""
