@@ -48,7 +48,7 @@ WHISPERX_THREADS = 8
 WHISPERX_DIARIZE = True
 # HuggingFace Token（需同意 pyannote/speaker-diarization-3.1 模型协议）
 # https://huggingface.co/pyannote/speaker-diarization-3.1
-WHISPERX_HF_TOKEN = "your_huggingface_token_here"
+WHISPERX_HF_TOKEN = os.environ.get("HF_TOKEN", "")
 # 最少说话人数（0=自动）
 WHISPERX_MIN_SPEAKERS = 0
 # 最多说话人数（0=自动）
