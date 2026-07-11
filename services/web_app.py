@@ -66,6 +66,70 @@ _web_dir = os.path.join(config.BASE_DIR, "web")
 app = Flask(__name__, static_folder=_web_dir, static_url_path="")
 app.secret_key = getattr(config, "SECRET_KEY", "bilimix-secret-key-change-me")
 
+
+# ============================================================
+# 启动时依赖检测：缺失关键依赖直接退出，避免运行时静默降级
+# ============================================================
+def _check_required_dependencies():
+    """启动时检查关键依赖是否安装，缺失任何一项直接 sys.exit(1)。"""
+    import importlib
+    # 核心依赖：{模块名: pip 包名}
+    required = [
+        ("flask", "flask"),
+        ("whisper", "openai-whisper"),
+        ("torch", "torch"),
+        ("torchaudio", "torchaudio"),
+        ("demucs", "demucs"),
+        ("ffmpeg", "ffmpeg-python"),
+        ("yt_dlp", "yt-dlp"),
+        ("srt", "srt"),
+    ]
+    missing_pkgs = []
+    missing_hints = []
+    for mod, pkg in required:
+        try:
+            importlib.import_module(mod)
+        except ImportError:
+            missing_pkgs.append(pkg)
+            missing_hints.append(f"  - {mod} (pip install {pkg})")
+
+    # demucs 子进程可用性（与 sys.executable 一致才能用）
+    if "demucs" not in missing_pkgs:
+        import subprocess
+        r = subprocess.run(
+            [sys.executable, "-m", "demucs", "--help"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode != 0:
+            missing_pkgs.append("demucs (cli)")
+            missing_hints.append(
+                f"  - demucs CLI 不可用 ({sys.executable} -m demucs 失败):\n"
+                f"    stderr: {r.stderr.strip()[:200]}"
+            )
+
+    # ffmpeg 可执行文件
+    import shutil as _shutil
+    if not _shutil.which("ffmpeg"):
+        missing_pkgs.append("ffmpeg (binary)")
+        missing_hints.append("  - ffmpeg 可执行文件不在 PATH（brew install ffmpeg）")
+
+    if missing_pkgs:
+        print("=" * 60)
+        print("❌ 启动失败：缺少以下依赖：")
+        for h in missing_hints:
+            print(h)
+        print()
+        print("请安装缺失依赖后重试：")
+        print(f"  pip install {' '.join(p for p in missing_pkgs if '(' not in p)}")
+        print()
+        print("完整依赖列表请参考 README.md")
+        print("=" * 60)
+        sys.exit(1)
+
+
+_check_required_dependencies()
+
+
 # 全局任务队列：保证同一时间只有一个任务在运行，后续任务按提交顺序排队（FIFO）
 # 用 Condition + deque 实现公平排队，替代非公平的 threading.Lock 轮询
 import collections as _collections

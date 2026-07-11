@@ -48,14 +48,50 @@
 
 ## 快速开始
 
-```bash
-# 安装依赖
-pip install -r requirements.txt
+### 1. 系统依赖（必须先安装）
 
-# 启动 Web 服务（默认端口 5000，可通过命令行参数指定）
+| 依赖 | macOS 安装 | 说明 |
+|------|-----------|------|
+| **FFmpeg** | `brew install ffmpeg` | 音视频转码、字幕烧录、人声分离底层依赖 |
+| **Ollama** | [ollama.com](https://ollama.com) | 本地 LLM 运行时，启动后默认监听 11434 |
+
+### 2. Python 依赖
+
+> ⚠️ **启动时会强制检测以下依赖**，缺失任何一项服务都会直接退出，不会静默降级。
+
+```bash
+# 推荐使用 Python 3.10+ 环境
+pip install -r requirements.txt
+```
+
+完整依赖清单：
+
+| 包 | 用途 |
+|-----|------|
+| `flask` | Web 服务 + REST API |
+| `openai-whisper` | WhisperX 语音转录 |
+| `torch` / `torchaudio` | 模型推理（Whisper / demucs / TTS） |
+| `demucs` | 人声/背景音分离 |
+| `ffmpeg-python` | FFmpeg Python 绑定 |
+| `yt-dlp` | YouTube 视频下载 |
+| `srt` | SRT 字幕生成 |
+
+### 3. 启动
+
+```bash
 python services/web_app.py 5555
 # 浏览器访问 http://localhost:5555
 # 认证默认关闭，可在设置中开启
+```
+
+如果依赖缺失，会看到类似错误：
+```
+============================================================
+❌ 启动失败：缺少以下依赖：
+  - demucs (pip install demucs)
+  - ffmpeg (binary) (brew install ffmpeg)
+...
+============================================================
 ```
 
 ## 目录结构
