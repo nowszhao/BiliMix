@@ -390,7 +390,7 @@ def generate_task_id(url: str) -> str:
 
 def _load_step_timing_from_disk(task: dict) -> list:
     """从磁盘的 task_result.json 中加载步骤耗时数据"""
-    basename = task.get("_basename", "") or (task.get("result", {}).get("basename", ""))
+    basename = task.get("_basename", "") or ((task.get("result") or {}).get("basename", ""))
     if not basename:
         return []
     result_file = os.path.join(config.RESULT_DIR, basename, "task_result.json")
@@ -405,7 +405,7 @@ def _load_step_timing_from_disk(task: dict) -> list:
 
 def _load_video_result_from_disk(task: dict) -> dict:
     """从磁盘的 task_result.json 中加载视频结果"""
-    basename = task.get("_basename", "") or (task.get("result", {}).get("basename", ""))
+    basename = task.get("_basename", "") or ((task.get("result") or {}).get("basename", ""))
     if not basename:
         return None
     result_file = os.path.join(config.RESULT_DIR, basename, "task_result.json")
@@ -1511,7 +1511,7 @@ def submit_task():
             task = get_task(task_id)
             if not task:
                 return
-            result = task.get("result", {})
+            result = (task.get("result") or {})
             if not result:
                 print(f"[Video] 无混音结果，跳过后处理")
                 return
@@ -2211,16 +2211,16 @@ def list_tasks():
                 "created_at": task.get("created_at", ""),
                 "process_mode": task.get("process_mode", "sentence_translate"),
                 "type": task.get("type", "audio"),
-                "basename": (task.get("result", {}).get("basename", "")
+                "basename": ((task.get("result") or {}).get("basename", "")
                              if task.get("result") else task.get("_basename", "")),
-                "total_words": (task.get("result", {}).get("total_words", 0)
+                "total_words": ((task.get("result") or {}).get("total_words", 0)
                                 if task.get("result") else 0),
-                "total_replacements": (task.get("result", {}).get("total_replacements", 0)
+                "total_replacements": ((task.get("result") or {}).get("total_replacements", 0)
                                        if task.get("result") else 0),
                 "original_duration": (task.get("original_duration", 0)
-                                      or (task.get("result", {}).get("original_duration", 0)
+                                      or ((task.get("result") or {}).get("original_duration", 0)
                                           if task.get("result") else 0)),
-                "mixed_duration": (task.get("result", {}).get("mixed_duration", 0)
+                "mixed_duration": ((task.get("result") or {}).get("mixed_duration", 0)
                                    if task.get("result") else 0),
             }
 

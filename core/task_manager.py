@@ -139,7 +139,7 @@ def _persist_task(task_id: str):
         # 优先使用顶层 original_duration（下载完成后立即设置），否则尝试从 result 取
         orig_dur = task.get("original_duration", 0)
         if not orig_dur and task.get("result"):
-            orig_dur = task.get("result", {}).get("original_duration", 0)
+            orig_dur = (task.get("result") or {}).get("original_duration", 0)
         summary = {
             "task_id": task.get("task_id"),
             "url": task.get("url", ""),
@@ -152,14 +152,14 @@ def _persist_task(task_id: str):
             "progress": task.get("progress", 0),
             "message": task.get("message", ""),
             "created_at": task.get("created_at", ""),
-            "basename": (task.get("result", {}).get("basename", "")
+            "basename": ((task.get("result") or {}).get("basename", "")
                          if task.get("result") else task.get("_basename", "")),
-            "total_words": (task.get("result", {}).get("total_words", 0)
+            "total_words": ((task.get("result") or {}).get("total_words", 0)
                             if task.get("result") else 0),
-            "total_replacements": (task.get("result", {}).get("total_replacements", 0)
+            "total_replacements": ((task.get("result") or {}).get("total_replacements", 0)
                                    if task.get("result") else 0),
             "original_duration": orig_dur,
-            "mixed_duration": (task.get("result", {}).get("mixed_duration", 0)
+            "mixed_duration": ((task.get("result") or {}).get("mixed_duration", 0)
                                if task.get("result") else 0),
         }
     save_task_to_index(task_id, summary)

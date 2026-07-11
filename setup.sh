@@ -91,34 +91,44 @@ fi
 source "$CONDA_BASE/etc/profile.d/conda.sh"
 ok "conda 已激活: $CONDA_BASE"
 
-# ---------- 1b. 配置中国大陆镜像源（强制）----------
-# macOS LibreSSL 与部分 HTTPS 镜像存在兼容问题，禁用 SSL 验证
-conda config --set ssl_verify false 2>/dev/null || true
-export CONDA_SSL_VERIFY=false
-export REQUESTS_CA_BUNDLE=""
-export SSL_CERT_FILE=""
+# ---------- 1b. 网络配置 ----------
+# 注意：macOS LibreSSL 与部分中文镜像存在 SSL 兼容问题
+# ① 清理 conda channels（防止残留的历史配置）
+conda config --remove-key channels 2>/dev/null || true
+conda config --set ssl_verify true 2>/dev/null || true
+
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 export PIP_DEFAULT_TIMEOUT=120
 
-# conda 镜像（清华）
-conda config --remove-key channels 2>/dev/null || true
-conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main 2>/dev/null || true
-conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r 2>/dev/null || true
-conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge 2>/dev/null || true
-conda config --set show_channel_urls yes 2>/dev/null || true
+# ② pip 镜像自动检测
+_choose_pip_index() {
+    local ts_code ts_time py_code py_time
+    ts_time=$(curl -s -o /dev/null -w "%{time_total}" --max-time 5 https://pypi.tuna.tsinghua.edu.cn/simple/pip/ 2>/dev/null || echo "99")
+    ts_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 https://pypi.tuna.tsinghua.edu.cn/simple/pip/ 2>/dev/null || echo "000")
+    py_time=$(curl -s -o /dev/null -w "%{time_total}" --max-time 5 https://pypi.org/simple/pip/ 2>/dev/null || echo "99")
+    py_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 https://pypi.org/simple/pip/ 2>/dev/null || echo "000")
 
-# pip 镜像（清华）+ trusted-host（绕过 SSL 验证）
-mkdir -p "$HOME/.pip"
-cat > "$HOME/.pip/pip.conf" <<EOF
+    if [ "$ts_code" = "200" ] && awk "BEGIN{exit !($ts_time < $py_time * 3)}"; then
+        mkdir -p "$HOME/.pip"
+        cat > "$HOME/.pip/pip.conf" <<'PIPEOF'
 [global]
 index-url = https://pypi.tuna.tsinghua.edu.cn/simple
 trusted-host = pypi.tuna.tsinghua.edu.cn
 timeout = 120
 retries = 5
-EOF
-ok "镜像源已配置（清华）+ SSL 验证已禁用（macOS LibreSSL 兼容）"
+PIPEOF
+        ok "pip → 清华镜像（快于官方 ${py_time}s vs ${ts_time}s）"
+    else
+        rm -f "$HOME/.pip/pip.conf" 2>/dev/null
+        ok "pip → 官方 PyPI（清华不可达）"
+    fi
+}
+_choose_pip_index
 
 # ---------- 2. 创建 bilimix env ----------
+# 先清理损坏的包缓存（macOS 上 conda 包缓存损坏会导致 [Errno 35]）
+conda clean -a -y 2>&1 | tail -2
+
 if conda env list | grep -q "^bilimix\b"; then
     info "conda env 'bilimix' 已存在，跳过创建"
 else
@@ -130,6 +140,9 @@ conda activate bilimix
 ENV_PYTHON="$(which python)"
 ENV_BIN="$(dirname "$ENV_PYTHON")"
 ok "激活 bilimix env: $ENV_PYTHON"
+
+# 确保用 env 内的 pip（防止 PATH 中其他 pip 覆盖）
+_pip() { "$ENV_PYTHON" -m pip "$@"; }
 
 # ---------- 3. 系统依赖 ----------
 # HuggingFace 镜像（中国大陆访问 huggingface.co 常被墙）
@@ -159,26 +172,26 @@ ok "系统依赖就绪（ffmpeg / ollama）"
 
 # ---------- 4. 主 Python 依赖 ----------
 info "安装主 Python 依赖 (requirements.txt) ..."
-pip install -r requirements.txt
+_pip install -r requirements.txt
 ok "主依赖安装完成"
 
 # ---------- 5. WhisperX ----------
 info "安装 WhisperX ..."
-pip install whisperx
+_pip install whisperx
 ok "WhisperX 安装完成"
 
 # ---------- 6. torch 对齐 ----------
 info "对齐 torch/torchaudio 版本到 2.7.0（与 Confucius4-TTS-CPU 对齐）..."
 if [ "$OS" = "Linux" ] && [ "$ARCH" = "x86_64" ]; then
-    pip install --upgrade torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cpu
+    _pip install --upgrade torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cpu
 else
-    pip install --upgrade torch==2.7.0 torchaudio==2.7.0
+    _pip install --upgrade torch==2.7.0 torchaudio==2.7.0
 fi
 ok "torch 版本对齐完成"
 
 # ---------- 7. TTS 依赖 ----------
 info "安装 TTS 依赖 (requirements-tts.txt) ..."
-pip install -r requirements-tts.txt
+_pip install -r requirements-tts.txt
 ok "TTS 依赖安装完成"
 
 # ---------- 8. clone Confucius4-TTS-CPU ----------
