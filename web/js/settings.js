@@ -539,6 +539,12 @@ function _renderTaskCard(t) {
         html += `<div class="task-card-progress"><div class="task-card-progress-fill" style="width:${progress}%"></div></div>`;
     }
 
+    // 处理中：显示当前步骤名
+    if (isProcessing && t.step) {
+        const stepName = ({download:'下载',separate:'分离',transcribe:'转录',translate:'翻译',confirm:'确认',synthesize:'合成',merge:'拼接',mix:'混音',subtitle:'字幕',assemble:'组装'})[t.step] || t.step;
+        html += `<div class="task-card-step-name">▶ ${escapeHtml(stepName)} ${progress}%</div>`;
+    }
+
     // 操作按钮
     html += `<div class="task-card-actions" onclick="event.stopPropagation()">`;
     if (t.status === 'completed') {
@@ -691,7 +697,7 @@ function _renderTaskDetailPanel(task) {
         const step = task.step || '';
         const stepNames = ['download','separate','transcribe','translate','confirm','synthesize','merge','mix','subtitle','assemble'];
         const stepLabels = {download:'下载',separate:'分离',transcribe:'转录',translate:'翻译',confirm:'确认',synthesize:'合成',merge:'拼接',mix:'混音',subtitle:'字幕',assemble:'组装'};
-        const stepIdx = stepNames.indexOf(step);
+        const stepIdx = stepNames.includes(step) ? stepNames.indexOf(step) : Math.min(totalSteps - 1, Math.floor(totalSteps * progress / 100));
         const totalSteps = stepNames.length;
 
         // 当前步骤描述（提取 message 中的人话）

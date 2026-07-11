@@ -2893,3 +2893,14 @@ body { background: var(--bg-page); color: var(--text-1); }
     overflow-x: auto;
 }
 .task-detail-timing::-webkit-scrollbar { display: none; }
+
+.task-card-step-name {
+    font-size: 11px;
+    color: var(--accent);
+    background: var(--bg-active);
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-top: 4px;
+    font-weight: 600;
+    display: inline-block;
+}
