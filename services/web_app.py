@@ -716,7 +716,7 @@ def continue_after_sentence_confirmation(task_id: str):
         try:
             update_episode_status_by_task(task_id, "transcribed")
         except Exception:
-            pass
+            print(f"[WARN] 更新单集 transcribed 状态失败（非关键）")
 
         save_task_result_to_disk(result_dir, {
             "task_id": task_id, "status": "completed",
