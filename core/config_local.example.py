@@ -21,6 +21,11 @@ WHISPERX_THREADS = 8                # CPU 核数
 WHISPERX_BATCH_SIZE = 10
 WHISPERX_DIARIZE = False            # 设 True 并配置 HF_TOKEN 启用说话人分离
 
+# --- Demucs 人声分离 ---
+# demucs 子进程超时（秒）。CPU 推理长音频可能需要 20-40 分钟。
+# 默认 1800（30 分钟）。超时后任务跳过人声分离，用原始音频继续。
+DEMUCS_TIMEOUT = 1800
+
 # --- Ollama ---
 OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_MODEL = "translategemma:4b"   # 或 translategemma:12b（更准，需更多内存）

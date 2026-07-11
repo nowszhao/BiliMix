@@ -55,6 +55,13 @@ WHISPERX_MIN_SPEAKERS = 0
 WHISPERX_MAX_SPEAKERS = 0
 
 # ========================
+# Demucs 人声分离配置
+# ========================
+# demucs 子进程超时（秒）。CPU 推理长音频可能需要 20-40 分钟，默认 1800（30 分钟）。
+# 可在 Web UI 设置中调整。超时后任务会跳过人声分离，使用原始音频继续转录。
+DEMUCS_TIMEOUT = 1800
+
+# ========================
 # Ollama 配置
 # ========================
 OLLAMA_BASE_URL = "http://localhost:11434"

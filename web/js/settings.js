@@ -1572,6 +1572,16 @@ function renderSettingsForm(cfg) {
                         value="${cfg.whisperx_threads ?? 4}" min="0" max="64" step="1">
                 </div>
             </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">Demucs 超时（秒）</span>
+                    <span class="settings-item-desc">人声分离子进程超时，CPU 推理长音频建议 1800（30 分钟）</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-demucs_timeout"
+                        value="${cfg.demucs_timeout ?? 1800}" min="60" max="7200" step="60">
+                </div>
+            </div>
         </div>
         </div>
 
@@ -1734,6 +1744,7 @@ async function saveSettings() {
         whisperx_device: getValue('cfg-whisperx_device'),
         whisperx_language: getValue('cfg-whisperx_language'),
         whisperx_threads: getValue('cfg-whisperx_threads'),
+        demucs_timeout: getValue('cfg-demucs_timeout'),
         ollama_base_url: getValue('cfg-ollama_base_url'),
         ollama_model: getValue('cfg-ollama_model'),
         llm_batch_size: getValue('cfg-llm_batch_size'),

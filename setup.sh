@@ -91,28 +91,32 @@ fi
 source "$CONDA_BASE/etc/profile.d/conda.sh"
 ok "conda 已激活: $CONDA_BASE"
 
-# ---------- 1b. 中国大陆镜像检测 ----------
-# 测试官方源响应时间，>3s 则切换到清华镜像
-setup_mirrors() {
-    local pypi_time conda_time
-    pypi_time=$(curl -s -o /dev/null -w "%{time_total}" --max-time 5 https://pypi.org/simple/flask/ 2>/dev/null || echo "99")
-    conda_time=$(curl -s -o /dev/null -w "%{time_total}" --max-time 5 https://repo.anaconda.org/pkgs/main/noarch/ 2>/dev/null || echo "99")
+# ---------- 1b. 配置中国大陆镜像源（强制）----------
+# macOS LibreSSL 与部分 HTTPS 镜像存在兼容问题，禁用 SSL 验证
+conda config --set ssl_verify false 2>/dev/null || true
+export CONDA_SSL_VERIFY=false
+export REQUESTS_CA_BUNDLE=""
+export SSL_CERT_FILE=""
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+export PIP_DEFAULT_TIMEOUT=120
 
-    if awk "BEGIN{exit !($pypi_time > 3 || $conda_time > 3)}"; then
-        warn "检测到网络较慢（PyPI: ${pypi_time}s, conda: ${conda_time}s），切换到中国大陆镜像"
-        # conda 镜像
-        conda config --set channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main/ \
-                           https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r/ --force 2>/dev/null || true
-        conda config --set show_channel_urls yes 2>/dev/null || true
-        # pip 镜像（写入环境变量，后续 pip install 自动使用）
-        export PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-        export PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
-        ok "已切换：pip → 清华，conda → 清华"
-    else
-        info "网络良好（PyPI: ${pypi_time}s, conda: ${conda_time}s），使用官方源"
-    fi
-}
-setup_mirrors
+# conda 镜像（清华）
+conda config --remove-key channels 2>/dev/null || true
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main 2>/dev/null || true
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r 2>/dev/null || true
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge 2>/dev/null || true
+conda config --set show_channel_urls yes 2>/dev/null || true
+
+# pip 镜像（清华）+ trusted-host（绕过 SSL 验证）
+mkdir -p "$HOME/.pip"
+cat > "$HOME/.pip/pip.conf" <<EOF
+[global]
+index-url = https://pypi.tuna.tsinghua.edu.cn/simple
+trusted-host = pypi.tuna.tsinghua.edu.cn
+timeout = 120
+retries = 5
+EOF
+ok "镜像源已配置（清华）+ SSL 验证已禁用（macOS LibreSSL 兼容）"
 
 # ---------- 2. 创建 bilimix env ----------
 if conda env list | grep -q "^bilimix\b"; then

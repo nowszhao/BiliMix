@@ -15,18 +15,21 @@ import shutil
 import sys
 
 
-def separate_vocals(audio_path: str, cache_dir: str, timeout: int = 600) -> dict:
+def separate_vocals(audio_path: str, cache_dir: str, timeout: int = None) -> dict:
     """
     对音频做人声/背景音分离。
 
     Args:
         audio_path: 原始音频文件路径（wav/mp3等）
         cache_dir: 分离结果缓存目录
-        timeout: demucs 进程超时时间（秒）
+        timeout: demucs 进程超时时间（秒）。None 则读取 config.DEMUCS_TIMEOUT（默认 1800）
 
     Returns:
         dict: {"ok": bool, "vocals_path": str, "no_vocals_path": str, "error": str}
     """
+    if timeout is None:
+        from core import config as _cfg
+        timeout = getattr(_cfg, "DEMUCS_TIMEOUT", 1800)
     os.makedirs(cache_dir, exist_ok=True)
     basename = os.path.splitext(os.path.basename(audio_path))[0]
 
