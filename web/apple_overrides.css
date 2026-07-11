@@ -2200,7 +2200,7 @@ body { background: var(--bg-page); color: var(--text-1); }
 }
 
 /* Toggle switch */
-.toggle-switch { display: inline-flex; align-items: center; cursor: pointer; }
+.toggle-switch { display: inline-flex; align-items: center; cursor: pointer; flex-shrink: 0; }
 .toggle-switch input { position: absolute; opacity: 0; pointer-events: none; }
 .toggle-track {
     width: 38px;
@@ -2210,6 +2210,8 @@ body { background: var(--bg-page); color: var(--text-1); }
     position: relative;
     transition: background 0.2s;
     display: inline-block;
+    flex-shrink: 0;
+    box-sizing: border-box;
 }
 .toggle-track::after {
     content: '';
