@@ -423,8 +423,11 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
                             f"(比例: {ratio*100:.0f}%)")
 
         def _translate_progress(batch_idx, total_batches):
+            task_cur = get_task(task_id)
+            if task_cur and task_cur.get("step") != "translate":
+                return
             pct = 30 + int((batch_idx / max(total_batches, 1)) * 25)
-            update_task(task_id, progress=pct,
+            update_task(task_id, step="translate", progress=pct,
                         message=f"Step 2/4: 翻译批次 ({batch_idx+1}/{total_batches})")
 
         def _cancel_check():
@@ -1817,7 +1820,10 @@ def _synthesis_resume(task_id):
         os.makedirs(confucius_cache_dir, exist_ok=True)
 
         def _progress(current, total):
-            update_task(task_id, progress=60 + int((current / max(total, 1)) * 20),
+            task_cur = get_task(task_id)
+            if task_cur and task_cur.get("step") != "synthesize":
+                return
+            update_task(task_id, step="synthesize", progress=60 + int((current / max(total, 1)) * 20),
                         message=f"补充合成 TTS ({current}/{total})")
 
         def _cancel(): return is_cancelled(task_id)
@@ -1915,8 +1921,11 @@ def retry_sentence_synthesis(task_id):
                     progress=60, message=f"重新合成 {len(missing_indices)} 条 TTS...")
 
         def _retry_progress(current, total):
+            task_cur = get_task(task_id)
+            if task_cur and task_cur.get("step") != "retry_synthesis":
+                return
             pct = 60 + int((current / max(total, 1)) * 20)
-            update_task(task_id, progress=pct,
+            update_task(task_id, step="retry_synthesis", progress=pct,
                         message=f"TTS 重试合成 ({current}/{total})")
 
         def _retry_cancel():
