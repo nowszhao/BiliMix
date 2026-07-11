@@ -696,9 +696,9 @@ function _renderTaskDetailPanel(task) {
         const message = task.message || '';
         const step = task.step || '';
         const stepNames = ['download','separate','transcribe','translate','confirm','synthesize','merge','mix','subtitle','assemble'];
+        const totalSteps = stepNames.length;
         const stepLabels = {download:'下载',separate:'分离',transcribe:'转录',translate:'翻译',confirm:'确认',synthesize:'合成',merge:'拼接',mix:'混音',subtitle:'字幕',assemble:'组装'};
         const stepIdx = stepNames.includes(step) ? stepNames.indexOf(step) : Math.min(totalSteps - 1, Math.floor(totalSteps * progress / 100));
-        const totalSteps = stepNames.length;
 
         // 当前步骤描述（提取 message 中的人话）
         const currentLabel = stepLabels[step] || '处理中';
