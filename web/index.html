@@ -656,5 +656,33 @@
         </div>
     </div>
 
+    <!-- 转录处理选项弹窗（来自单集卡片的"转录处理"按钮） -->
+    <div id="episode-bgm-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this) closeEpisodeBgmModal()">
+        <div class="modal-card episode-bgm-modal-card">
+            <div class="modal-header">
+                <h3>转录处理</h3>
+                <button class="modal-close" onclick="closeEpisodeBgmModal()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="episode-bgm-title" id="episode-bgm-title">--</p>
+                <p class="episode-bgm-question">是否保留原音频背景音乐？</p>
+                <div class="episode-bgm-options">
+                    <button class="episode-bgm-btn" onclick="confirmEpisodeBgm(false)">
+                        <span class="episode-bgm-icon">🎙️</span>
+                        <span class="episode-bgm-label">仅人声</span>
+                        <span class="episode-bgm-desc">去除背景音，只保留语音</span>
+                    </button>
+                    <button class="episode-bgm-btn primary" onclick="confirmEpisodeBgm(true)">
+                        <span class="episode-bgm-icon">🎵</span>
+                        <span class="episode-bgm-label">保留背景音乐</span>
+                        <span class="episode-bgm-desc">人声分离后保留 BGM（需更长时间）</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>

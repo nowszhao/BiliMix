@@ -11,6 +11,8 @@ let episodesTimeRange = 'today';
 let episodesSearchQuery = '';
 let episodesExpandedId = null;
 let episodesCache = [];
+// BGM 弹窗临时上下文
+let pendingEpisode = null;
 
 // ============================================================
 // 页面导航
@@ -473,18 +475,39 @@ async function processEpisode(id, audioUrl, title) {
     const ep = episodesCache.find(e => e.id === id);
     const duration = ep ? ep.duration : '';
 
+    // 保存上下文，等待用户在弹窗中选择是否保留 BGM
+    pendingEpisode = { id, url: audioUrl, title, duration };
+
+    // 弹窗询问
+    document.getElementById('episode-bgm-title').textContent = title;
+    document.getElementById('episode-bgm-modal').style.display = 'flex';
+}
+
+function closeEpisodeBgmModal() {
+    document.getElementById('episode-bgm-modal').style.display = 'none';
+    pendingEpisode = null;
+}
+
+async function confirmEpisodeBgm(keepBgm) {
+    const ctx = pendingEpisode;
+    if (!ctx) return;
+    document.getElementById('episode-bgm-modal').style.display = 'none';
+    pendingEpisode = null;
+
     // 设置选中单集信息
-    selectedEpisodeUrl = audioUrl;
-    selectedEpisodeTitle = title;
+    selectedEpisodeUrl = ctx.url;
+    selectedEpisodeTitle = ctx.title;
 
     // 调用提交
     try {
         const body = {
-            url: audioUrl,
-            title: title,
+            url: ctx.url,
+            title: ctx.title,
             skip_confirmation: true,
+            type: 'audio',
+            keep_bgm: keepBgm,
         };
-        if (duration) body.duration = duration;
+        if (ctx.duration) body.duration = ctx.duration;
 
         const resp = await fetch('/api/submit', {
             method: 'POST',
@@ -494,15 +517,15 @@ async function processEpisode(id, audioUrl, title) {
         const data = await resp.json();
         if (resp.ok && data.task_id) {
             // 更新单集状态为已读 + 关联 task_id
-            await fetch(`/api/episodes/${id}`, {
+            await fetch(`/api/episodes/${ctx.id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: 'read', task_id: data.task_id }),
             });
 
             currentTaskId = data.task_id;
-            currentTaskTitle = title;
-            tasks_url = audioUrl;
+            currentTaskTitle = ctx.title;
+            tasks_url = ctx.url;
 
             // 跳转到任务页，新任务会自动出现在列表中
             showToast('✅ 任务已提交');
@@ -510,7 +533,7 @@ async function processEpisode(id, audioUrl, title) {
             // 稍等 loadHistory 完成后再展开该任务详情
             setTimeout(() => {
                 if (typeof toggleTaskDetail === 'function') {
-                    toggleTaskDetail(data.task_id, audioUrl);
+                    toggleTaskDetail(data.task_id, ctx.url);
                 }
             }, 800);
         } else {
