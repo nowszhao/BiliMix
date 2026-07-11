@@ -640,66 +640,45 @@ function _renderTaskDetailPanel(task) {
 
     let html = '';
 
-    // Hero: type + title + status tag
-    html += `<div class="task-detail-hero">`;
-    html += `<div class="task-detail-hero-main">`;
-    html += `<span class="task-detail-type ${typeCls}">${typeLabel}</span>`;
-    html += `<h2 class="task-detail-title">${escapeHtml(displayName)}</h2>`;
-    if (src.length > 80) {
-        html += `<span class="task-detail-filename">${escapeHtml(src.substring(0, 80))}…</span>`;
-    } else {
-        html += `<span class="task-detail-filename">${escapeHtml(src)}</span>`;
-    }
-    html += `</div>`;
-    html += `<span class="task-detail-status-tag ${status}">${statusLabel}</span>`;
-    html += `</div>`;
-
-    // 计算处理耗时
-    let elapsedStr = '';
+    // 副标题数据（极简一行）
+    const metaParts = [];
+    if (dur > 0) metaParts.push(formatTime(dur));
+    if (trCount > 0) metaParts.push(`${trCount} 句翻译`);
     if (task.created_at) {
         const created = new Date(task.created_at);
         const now = new Date();
         const elapsedSec = Math.floor((now - created) / 1000);
         if (elapsedSec > 0) {
             const mins = Math.floor(elapsedSec / 60);
-            const secs = elapsedSec % 60;
-            elapsedStr = mins > 0 ? `${mins} 分 ${secs} 秒` : `${secs} 秒`;
+            metaParts.push(`${mins} 分钟完成`);
         }
     }
+    const metaLine = metaParts.length > 0 ? ` · ${metaParts.join(' · ')}` : '';
 
-    // Meta grid: duration, mixed duration, translated count, created time, processing time
-    html += `<div class="task-detail-meta">`;
-    html += `<div class="task-detail-meta-item"><span class="task-detail-meta-label">原时长</span><span class="task-detail-meta-value">${formatTime(dur)}</span></div>`;
-    if (mixedDur > 0) {
-        html += `<div class="task-detail-meta-item"><span class="task-detail-meta-label">译时长</span><span class="task-detail-meta-value">${formatTime(mixedDur)}</span></div>`;
-    }
-    if (trCount > 0) {
-        html += `<div class="task-detail-meta-item"><span class="task-detail-meta-label">翻译句数</span><span class="task-detail-meta-value">${trCount} 句</span></div>`;
-    }
-    html += `<div class="task-detail-meta-item"><span class="task-detail-meta-label">创建时间</span><span class="task-detail-meta-value">${escapeHtml(cAt)}</span></div>`;
-    if (elapsedStr) {
-        const label = (status === 'completed') ? '处理耗时' : '已运行';
-        html += `<div class="task-detail-meta-item meta-elapsed"><span class="task-detail-meta-label">${label}</span><span class="task-detail-meta-value" id="detail-elapsed">${escapeHtml(elapsedStr)}</span></div>`;
-    }
-    html += `</div>`;
-
-    // 步骤耗时明细（紧凑单行，仅辅助信息）
-    if (stepTiming.length > 0 && (status === 'completed' || status === 'error')) {
+    // 步骤耗时简写（展开按钮触发）
+    let timingShort = '';
+    if (stepTiming.length > 0) {
         const parts = [];
         stepTiming.forEach(st => {
             const lbl = stepLabels[st.step] || st.step;
             const dur = (st.end || 0) > (st.start || 0) ? (st.end - st.start) : 0;
-            if (dur > 0) {
-                const durStr = dur > 59
-                    ? `${Math.floor(dur / 60)}分${Math.floor(dur % 60)}秒`
-                    : `${Math.round(dur)}秒`;
-                parts.push(`${lbl} ${durStr}`);
-            }
+            if (dur > 0) parts.push(`${lbl} ${dur > 59
+                ? Math.floor(dur/60) + '分' + Math.floor(dur%60) + '秒' : Math.round(dur) + '秒'}`);
         });
-        if (parts.length > 0) {
-            html += `<div class="task-detail-timing">⏱ ${parts.join(' · ')}</div>`;
-        }
+        if (parts.length > 0) timingShort = ` · ${parts.join('  ')}`;
     }
+
+    // Hero: 极简两行
+    html += `<div class="task-detail-hero">`;
+    html += `<div class="task-detail-hero-main">`;
+    html += `<h2 class="task-detail-title">`;
+    html += `<span class="task-detail-type-dot ${typeCls}"></span>`;
+    html += `${escapeHtml(displayName)}`;
+    html += `<span class="task-detail-status-dot ${status}" title="${statusLabel}"></span>`;
+    html += `</h2>`;
+    html += `<p class="task-detail-subtitle">${typeLabel}${metaLine}<span class="task-detail-timing-inline">${timingShort}</span></p>`;
+    html += `</div>`;
+    html += `</div>`;
 
     // Processing: progress + steps + estimated remaining time
     if (status === 'processing' || status === 'downloading') {
