@@ -630,6 +630,14 @@ function _renderTaskDetailPanel(task) {
     const cAt = (task.created_at || '').substring(0, 16);
     const trCount = (task.translated_indices || []).length;
 
+    // 步骤耗时
+    const stepTiming = task._step_timing || [];
+    const stepLabels = {
+        'download': '下载', 'separate': '分离', 'transcribe': '转录',
+        'translate': '翻译', 'confirm': '确认', 'synthesize': '合成',
+        'merge': '拼接', 'mix': '混音', 'subtitle': '字幕', 'assemble': '组装',
+    };
+
     let html = '';
 
     // Hero: type + title + status tag
@@ -674,6 +682,20 @@ function _renderTaskDetailPanel(task) {
         html += `<div class="task-detail-meta-item meta-elapsed"><span class="task-detail-meta-label">${label}</span><span class="task-detail-meta-value" id="detail-elapsed">${escapeHtml(elapsedStr)}</span></div>`;
     }
     html += `</div>`;
+
+    // 步骤耗时明细（仅在完成/出错态且有数据时显示）
+    if (stepTiming.length > 0 && (status === 'completed' || status === 'error')) {
+        html += `<div class="task-detail-meta" style="grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));">`;
+        stepTiming.forEach(st => {
+            const lbl = stepLabels[st.step] || st.step;
+            const dur = (st.end || 0) > (st.start || 0) ? (st.end - st.start) : 0;
+            const durStr = dur > 59
+                ? `${Math.floor(dur / 60)} 分 ${Math.floor(dur % 60)} 秒`
+                : `${Math.round(dur)} 秒`;
+            html += `<div class="task-detail-meta-item"><span class="task-detail-meta-label">${lbl} 耗时</span><span class="task-detail-meta-value">${durStr}</span></div>`;
+        });
+        html += `</div>`;
+    }
 
     // Processing: progress + steps + estimated remaining time
     if (status === 'processing' || status === 'downloading') {

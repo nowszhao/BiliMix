@@ -84,6 +84,21 @@ def update_task(task_id: str, **kwargs):
     """线程安全地更新任务状态"""
     with tasks_lock:
         if task_id in tasks:
+            # 记录步骤切换时间
+            if "step" in kwargs:
+                import time
+                now_ts = time.time()
+                step_timing = tasks[task_id].get("_step_timing", [])
+                # 上一个步骤的结束时间
+                if step_timing:
+                    step_timing[-1]["end"] = round(now_ts, 1)
+                # 新步骤的开始时间
+                step_timing.append({
+                    "step": kwargs["step"],
+                    "start": round(now_ts, 1),
+                    "end": 0,
+                })
+                kwargs["_step_timing"] = step_timing
             tasks[task_id].update(kwargs)
     # 持久化关键状态变更（processing 仅在轮询中频繁调用，不写盘）
     if "status" in kwargs and kwargs["status"] in (
@@ -91,6 +106,8 @@ def update_task(task_id: str, **kwargs):
         "awaiting_confirmation", "awaiting_sentence_confirmation",
         "queued",
     ):
+        # 终态时关闭最后一个步骤的计时
+        _finalize_step_timing(task_id)
         _persist_task(task_id)
     # basename / audio_path / original_duration 首次设置时也更新 SQLite
     elif "_basename" in kwargs and kwargs.get("_basename"):
@@ -99,6 +116,18 @@ def update_task(task_id: str, **kwargs):
         _persist_task(task_id)
     elif "original_duration" in kwargs and kwargs.get("original_duration"):
         _persist_task(task_id)
+
+
+def _finalize_step_timing(task_id: str):
+    """终态时关闭最后一个步骤的计时"""
+    import time
+    with tasks_lock:
+        task = tasks.get(task_id)
+        if not task:
+            return
+        step_timing = task.get("_step_timing", [])
+        if step_timing and step_timing[-1].get("end", 0) == 0:
+            step_timing[-1]["end"] = round(time.time(), 1)
 
 
 def _persist_task(task_id: str):

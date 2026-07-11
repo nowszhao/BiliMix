@@ -695,6 +695,8 @@ def continue_after_sentence_confirmation(task_id: str):
             "time_mapping": mix_result["time_mapping"],
             # 持久化 tts_audio_map 避免重启丢失
             "tts_audio_map": tts_audio_map,
+            # 步骤耗时
+            "_step_timing": task.get("_step_timing", []),
         })
 
         _cleanup_intermediate_files(result_dir)
