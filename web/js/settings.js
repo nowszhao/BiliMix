@@ -660,19 +660,6 @@ function _renderTaskDetailPanel(task) {
     }
     const metaLine = metaParts.length > 0 ? ` · ${metaParts.join(' · ')}` : '';
 
-    // 步骤耗时简写（展开按钮触发）
-    let timingShort = '';
-    if (stepTiming.length > 0) {
-        const parts = [];
-        stepTiming.forEach(st => {
-            const lbl = STEP_CONFIG.labels[st.step] || st.step;
-            const dur = (st.end || 0) > (st.start || 0) ? (st.end - st.start) : 0;
-            if (dur > 0) parts.push(`${lbl} ${dur > 59
-                ? Math.floor(dur/60) + '分' + Math.floor(dur%60) + '秒' : Math.round(dur) + '秒'}`);
-        });
-        if (parts.length > 0) timingShort = ` · ${parts.join('  ')}`;
-    }
-
     // Hero: 极简两行
     html += `<div class="task-detail-hero">`;
     html += `<div class="task-detail-hero-main">`;
@@ -681,7 +668,7 @@ function _renderTaskDetailPanel(task) {
     html += `${escapeHtml(displayName)}`;
     html += `<span class="task-detail-status-dot ${status}" title="${statusLabel}"></span>`;
     html += `</h2>`;
-    html += `<p class="task-detail-subtitle">${typeLabel}${metaLine}<span class="task-detail-timing-inline">${timingShort}</span></p>`;
+    html += `<p class="task-detail-subtitle">${typeLabel}${metaLine}</p>`;
     html += `</div>`;
     html += `</div>`;
 
