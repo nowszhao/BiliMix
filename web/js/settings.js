@@ -695,10 +695,16 @@ function _renderTaskDetailPanel(task) {
         const progress = task.progress || 0;
         const message = task.message || '';
         const step = task.step || '';
+        // 从 message 解析当前阶段，避免 step/message 不同步
+        let currentStep = step;
+        for (const s of ['download','separate','transcribe','translate','confirm','synthesize','merge','mix','subtitle','assemble']) {
+            const label = ({download:'下载',separate:'分离',transcribe:'转录',translate:'翻译',confirm:'确认',synthesize:'合成',merge:'混合',mix:'混合',subtitle:'字幕',assemble:'组装'})[s];
+            if (message.includes(label)) { currentStep = s; break; }
+        }
         const stepNames = ['download','separate','transcribe','translate','confirm','synthesize','merge','mix','subtitle','assemble'];
         const totalSteps = stepNames.length;
-        const stepLabels = {download:'下载',separate:'分离',transcribe:'转录',translate:'翻译',confirm:'确认',synthesize:'合成',merge:'拼接',mix:'混音',subtitle:'字幕',assemble:'组装'};
-        const stepIdx = stepNames.includes(step) ? stepNames.indexOf(step) : Math.min(totalSteps - 1, Math.floor(totalSteps * progress / 100));
+        const stepLabels = {download:'下载',separate:'分离',transcribe:'转录',translate:'翻译',confirm:'确认',synthesize:'合成',merge:'混合',mix:'混合',subtitle:'字幕',assemble:'组装'};
+        const stepIdx = stepNames.indexOf(currentStep);
 
         // 当前步骤描述（提取 message 中的人话）
         const currentLabel = stepLabels[step] || '处理中';
