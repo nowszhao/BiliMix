@@ -693,6 +693,8 @@ def continue_after_sentence_confirmation(task_id: str):
             "sentence_pairs": sentence_pairs,
             "result": result_data,
             "time_mapping": mix_result["time_mapping"],
+            # 持久化 tts_audio_map 避免重启丢失
+            "tts_audio_map": tts_audio_map,
         })
 
         _cleanup_intermediate_files(result_dir)

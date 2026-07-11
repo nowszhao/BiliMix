@@ -297,6 +297,29 @@ function toggleTaskListPanel() {
     if (btn) btn.title = panel.classList.contains('collapsed') ? '展开列表' : '收起列表';
 }
 
+// ============================================================
+// 任务徽标：处理中 + 出错数（任何页面都同步）
+// ============================================================
+
+async function refreshTaskBadge() {
+    try {
+        const resp = await fetch('/api/tasks?limit=200');
+        const data = await resp.json();
+        const tasks = data.tasks || [];
+        let processing = 0, errored = 0;
+        tasks.forEach(t => {
+            if (t.status === 'processing' || t.status === 'downloading' || t.status === 'queued') processing++;
+            else if (t.status === 'error') errored++;
+        });
+        const total = processing + errored;
+        const badge = document.getElementById('nav-badge-tasks');
+        if (badge) {
+            badge.textContent = total > 99 ? '99+' : total;
+            badge.style.display = total > 0 ? '' : 'none';
+        }
+    } catch (e) { /* 静默失败 */ }
+}
+
 async function loadHistory() {
     const container = document.getElementById('tasks-list-container');
     if (!container) return;
@@ -2060,6 +2083,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initPageConfig();
     loadSavedSubscriptions();
     initMiniPlayerProgressSeek();
+    // 初始化 + 定时刷新任务徽标（任何页面都可见）
+    refreshTaskBadge();
+    setInterval(refreshTaskBadge, 15000);
 });
 
 async function redoTask(taskId) {

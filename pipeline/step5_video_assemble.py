@@ -109,19 +109,23 @@ def generate_bilingual_srt(
     if not entries:
         return ""
 
-    font_size = max(20, video_height // 18)
-    margin_v = max(30, int(video_height * 0.07))  # 底部边距按视频高度 7% 计算
+    font_size = min(max(28, video_height // 28), 80)   # 限制最大字号并降低比例
+    margin_v = max(30, int(video_height * 0.07))
+    # 双语模式下英文上/中文下，margin 固定不随分辨率跳动
+    margin_en = margin_v + int(font_size * 1.4)
+    margin_cn = margin_v
 
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: {video_height if video_height >= 1080 else 1080}
 ScaledBorderAndShadow: yes
+WrapStyle: 2
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: English,Noto Sans CJK SC,{font_size},{_ASS_COLOR_ENGLISH},&H000000FF&,&H00000000&,&H00000000&,0,0,0,0,100,100,0,0,1,2,1,2,20,20,{margin_v + font_size + 6},1
-Style: Chinese,Noto Sans CJK SC,{font_size},{_ASS_COLOR_CHINESE},&H000000FF&,&H00000000&,&H00000000&,0,0,0,0,100,100,0,0,1,2,1,2,20,20,{margin_v},1
+Style: English,Noto Sans CJK SC,{font_size},{_ASS_COLOR_ENGLISH},&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,2.5,0,2,20,20,{margin_en},1
+Style: Chinese,Noto Sans CJK SC,{font_size},{_ASS_COLOR_CHINESE},&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,2.5,0,2,20,20,{margin_cn},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -135,18 +139,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         chn_text = e["chinese"].replace("\n", "\\N") if e["chinese"] else ""
         if subtitle_mode == "bilingual":
             if eng_text and chn_text:
-                lines.append(f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{eng_text}")
-                lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{chn_text}")
+                # 英文在上/中文在下，顺序固定，加 q0 自动换行
+                lines.append(f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{{\\q0}}{eng_text}")
+                lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{{\\q0}}{chn_text}")
             else:
                 text = chn_text or eng_text
                 style = "Chinese" if chn_text else "English"
-                lines.append(f"Dialogue: 0,{start_ts},{end_ts},{style},,0,0,0,,{text}")
+                lines.append(f"Dialogue: 0,{start_ts},{end_ts},{style},,0,0,0,,{{\\q0}}{text}")
         elif subtitle_mode == "chinese_only":
             text = chn_text or eng_text
-            lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{text}")
+            lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{{\\q0}}{text}")
         else:
             if eng_text:
-                lines.append(f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{eng_text}")
+                lines.append(f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{{\\q0}}{eng_text}")
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -244,8 +249,8 @@ def assemble_video(
         "-threads", _FFMPEG_THREADS,
         "-i", video_path, "-i", mixed_audio_path,
         "-vf", ",".join(vf_parts),
-        "-c:v", "libopenh264", "-b:v", "1500k",
-        "-c:a", "aac", "-b:a", "128k",
+        "-c:v", "libx264", "-b:v", "1500k",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
         "-map", "0:v:0", "-map", "1:a:0",
     ]
     if diff > 0.3:

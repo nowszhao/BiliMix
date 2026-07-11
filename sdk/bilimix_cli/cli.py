@@ -338,6 +338,14 @@ def cmd_task_submit(args, client):
     if args.title:
         body["title"] = args.title
 
+    # keep_bgm: 保留原音频背景音乐
+    if getattr(args, 'keep_bgm', False):
+        body["keep_bgm"] = True
+
+    # duration: 预知时长
+    if getattr(args, 'duration', None):
+        body["duration"] = args.duration
+
     # skip_confirmation: 默认 None(不传，服务端用默认 True)
     if args.skip_confirm:
         body["skip_confirmation"] = True
@@ -403,7 +411,10 @@ def cmd_task_wait(args, client):
 
 
 def cmd_task_list(args, client):
-    result = client.get("/api/tasks")
+    params = {}
+    if getattr(args, 'limit', None):
+        params['limit'] = args.limit
+    result = client.get("/api/tasks", params=params if params else None)
     emit(result, pretty=args.pretty, field=args.field)
     return EXIT_OK
 
@@ -483,6 +494,14 @@ def cmd_task_retry_synthesis(args, client):
 
 def cmd_task_delete(args, client):
     result = client.delete_json(f"/api/task/{args.task_id}")
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_task_redo(args, client):
+    result = client.post_json(f"/api/task/{args.task_id}/redo")
+    if args.wait and "task_id" in result:
+        return _wait_task(client, result["task_id"], args, until_terminal=True)
     emit(result, pretty=args.pretty, field=args.field)
     return EXIT_OK
 
@@ -873,12 +892,15 @@ def build_parser():
     g2.add_argument("--no-skip-confirm", action="store_true",
                     help="要求人工确认")
     p.add_argument("--title", help="任务标题")
+    p.add_argument("--keep-bgm", action="store_true", help="保留原音频/视频背景音乐")
+    p.add_argument("--duration", help="预知时长 (如 01:23:45 或 142)")
     p.add_argument("--wait", action="store_true", help="提交后阻塞等待完成")
     p.add_argument("--poll-interval", type=float, default=2.0,
                    help="轮询间隔秒数 (默认 2.0)")
     p.set_defaults(func=cmd_task_submit)
 
     p = add_cmd(task_sub, "list", help="任务列表")
+    p.add_argument("--limit", type=int, help="最大返回条数")
     p.set_defaults(func=cmd_task_list)
 
     p = add_cmd(task_sub, "status", help="任务状态")
@@ -927,6 +949,12 @@ def build_parser():
     p = add_cmd(task_sub, "delete", help="删除任务及其文件")
     p.add_argument("task_id")
     p.set_defaults(func=cmd_task_delete)
+
+    p = add_cmd(task_sub, "redo", help="完整重做（清除产物，从头执行）")
+    p.add_argument("task_id")
+    p.add_argument("--wait", action="store_true", help="重做后等待完成")
+    p.add_argument("--poll-interval", type=float, default=2.0)
+    p.set_defaults(func=cmd_task_redo)
 
     p = add_cmd(task_sub, "wait", help="等待任务完成")
     p.add_argument("task_id")
