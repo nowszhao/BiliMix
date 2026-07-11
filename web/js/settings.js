@@ -384,16 +384,13 @@ function renderTaskTable() {
     html += '</div>';
 
     html += '<div class="task-filter-right">';
-    // 类型下拉
     html += '<select class="task-filter-select" onchange="taskFilterType=this.value;renderTaskTable()">';
     html += `<option value="all"${taskFilterType === 'all' ? ' selected' : ''}>全部类型</option>`;
     html += `<option value="audio"${taskFilterType === 'audio' ? ' selected' : ''}>音频转录</option>`;
     html += `<option value="video"${taskFilterType === 'video' ? ' selected' : ''}>视频配音</option>`;
     html += '</select>';
-    // 搜索
     html += `<input type="text" class="task-filter-search" placeholder="搜索标题或URL..." value="${escapeAttr(taskSearchQuery)}" oninput="taskSearchQuery=this.value;renderTaskTable()">`;
-    html += '</div>';
-    html += '</div>';
+    html += '</div></div>';
 
     // ---- 空态 ----
     if (tasks.length === 0) {
@@ -402,77 +399,100 @@ function renderTaskTable() {
         return;
     }
 
-    // ---- 表格 ----
-    html += '<div class="task-table-wrap"><table class="task-table">';
-
-    // 表头
-    const cols = [
-        { key: 'title', label: '名称', class: 'col-title' },
-        { key: 'status', label: '状态', class: 'col-status' },
-        { key: 'duration', label: '时长', class: 'col-dur' },
-        { key: 'created_at', label: '创建时间', class: 'col-time' },
-    ];
-    html += '<thead><tr>';
-    cols.forEach(c => {
-        const active = taskSortField === c.key ? ` sorted-${taskSortDir}` : '';
-        html += `<th class="${c.class}${active}" onclick="toggleTaskSort('${c.key}')">${c.label}<span class="sort-arrow"></span></th>`;
-    });
-    html += '<th class="col-actions"></th></tr></thead>';
-
-    // 表体
-    html += '<tbody>';
+    // ---- 按状态分组 ----
+    const statusOrder = ['processing', 'downloading', 'queued', 'completed', 'error', 'cancelled'];
+    const groups = {};
     tasks.forEach(t => {
-        const status = t.status || '';
-        const statusMap = {
-            'processing': '处理中', 'downloading': '下载中', 'queued': '排队中',
-            'completed': '已完成', 'error': '出错', 'cancelled': '已终止',
-            'awaiting_confirmation': '待确认', 'awaiting_sentence_confirmation': '待确认翻译',
-        };
-        const statusLabel = statusMap[status] || status;
-        const statusClass = status || 'processing';
-        const isExpanded = taskExpandedId === t.task_id;
-
-        // 名称+类型
-        let nameHtml = '';
-        const displayName = t.title || t.url || '--';
-        const typeIcon = (t.process_mode === 'video') ? ' 🎬' : ' 🎵';
-        const typeLabel = (t.process_mode === 'video') ? '<span class="task-type-badge video">视频</span>'
-                       : '<span class="task-type-badge audio">音频</span>';
-        nameHtml = `${typeLabel} <span class="task-name-text">${escapeHtml(displayName)}</span>`;
-
-        // 时长
-        let durHtml = '--';
-        if (t.original_duration) durHtml = formatTime(t.original_duration);
-        else if (t.status === 'completed' && t.mixed_duration) durHtml = formatTime(t.mixed_duration);
-
-        // 时间
-        let timeHtml = t.created_at || '--';
-        if (timeHtml.length > 16) timeHtml = timeHtml.substring(0, 16);
-
-        html += `<tr class="task-row ${statusClass} ${isExpanded ? 'expanded' : ''}" onclick="toggleTaskDetail('${t.task_id}', '${escapeAttr(t.url)}')">`;
-        html += `<td class="col-title">${nameHtml}</td>`;
-        html += `<td class="col-status"><span class="task-status-dot ${statusClass}"></span>${statusLabel}</td>`;
-        html += `<td class="col-dur">${durHtml}</td>`;
-        html += `<td class="col-time">${timeHtml}</td>`;
-        html += `<td class="col-actions" onclick="event.stopPropagation()">`;
-
-        // 重做按钮（已完成/出错的视频/音频任务都可重做）
-        if (t.status === 'completed' || t.status === 'error' || t.status === 'cancelled') {
-            html += `<button class="task-row-btn redo" onclick="event.stopPropagation(); redoTask('${t.task_id}')" title="重新转录配音">↻</button>`;
+        const st = t.status || '';
+        // normalize processing-like group keys
+        let groupKey = st;
+        if (st === 'processing' || st === 'downloading' || st === 'queued' || st === 'awaiting_confirmation' || st === 'awaiting_sentence_confirmation') {
+            groupKey = '__processing';
         }
-        html += `<button class="task-row-btn del" onclick="event.stopPropagation(); confirmDeleteTask('${t.task_id}', '${escapeAttr(displayName)}')" title="删除">✕</button>`;
-
-        html += '</td></tr>';
-
-        // 展开详情行
-        html += `<tr class="task-detail-row" id="task-detail-row-${t.task_id}" style="${isExpanded ? '' : 'display:none'}">`;
-        html += `<td colspan="5"><div class="task-detail-inner" id="task-detail-${t.task_id}">`;
-        if (isExpanded) html += '<div class="task-detail-loading">加载中...</div>';
-        html += '</div></td></tr>';
+        if (!groups[groupKey]) groups[groupKey] = [];
+        groups[groupKey].push(t);
     });
-    html += '</tbody></table></div>';
+
+    const groupLabels = {
+        '__processing': { label: '⏳ 处理中', cls: 'processing' },
+        'completed': { label: '✅ 已完成', cls: 'completed' },
+        'error': { label: '❌ 出错', cls: 'error' },
+        'cancelled': { label: '⏹ 已终止', cls: 'cancelled' },
+    };
+
+    // render groups in order
+    const groupOrder = ['__processing', 'completed', 'error', 'cancelled'];
+    for (const key of groupOrder) {
+        if (!groups[key] || groups[key].length === 0) continue;
+        const info = groupLabels[key] || { label: key, cls: '' };
+        html += `<div class="task-card-group-label">${info.label}<span class="count">${groups[key].length}</span></div>`;
+
+        groups[key].forEach(t => {
+            html += _renderTaskCard(t);
+        });
+    }
 
     container.innerHTML = html;
+
+    // Restore active card highlight
+    if (taskExpandedId) {
+        const activeCard = document.querySelector(`.task-card[data-task-id="${taskExpandedId}"]`);
+        if (activeCard) activeCard.classList.add('active');
+    }
+}
+
+// Render a single task card
+function _renderTaskCard(t) {
+    const status = t.status || '';
+    const statusMap = {
+        'processing': '处理中', 'downloading': '下载中', 'queued': '排队中',
+        'completed': '已完成', 'error': '出错', 'cancelled': '已终止',
+        'awaiting_confirmation': '待确认', 'awaiting_sentence_confirmation': '待确认翻译',
+    };
+    const statusLabel = statusMap[status] || status;
+    const statusClass = status || 'processing';
+    const displayName = t.title || t.url || '--';
+    const typeLabel = (t.process_mode === 'video') ? '视频' : '音频';
+    const typeCls = (t.process_mode === 'video') ? 'video' : 'audio';
+    const isProcessing = status === 'processing' || status === 'downloading' || status === 'queued';
+    const progress = t.progress || 0;
+
+    // 时间截断
+    let timeHtml = t.created_at || '--';
+    if (timeHtml.length > 16) timeHtml = timeHtml.substring(0, 16);
+
+    let html = `<div class="task-card ${taskExpandedId === t.task_id ? 'active' : ''}" data-task-id="${t.task_id}" onclick="toggleTaskDetail('${t.task_id}', '${escapeAttr(t.url)}')">`;
+
+    // 头部：类型 + 标题
+    html += `<div class="task-card-header">`;
+    html += `<span class="task-card-type ${typeCls}">${typeLabel}</span>`;
+    html += `<span class="task-card-title">${escapeHtml(displayName)}</span>`;
+    html += `</div>`;
+
+    // meta：状态 + 时间
+    html += `<div class="task-card-meta">`;
+    html += `<span class="task-card-status ${statusClass}"><span class="task-card-status-dot"></span>${statusLabel}</span>`;
+    html += `<span>${timeHtml}</span>`;
+    html += `</div>`;
+
+    // 处理中的 mini 进度条
+    if (isProcessing && progress > 0) {
+        html += `<div class="task-card-progress"><div class="task-card-progress-fill" style="width:${progress}%"></div></div>`;
+    }
+
+    // 操作按钮
+    html += `<div class="task-card-actions" onclick="event.stopPropagation()">`;
+    if (t.status === 'completed') {
+        html += `<button class="task-card-action primary" onclick="event.stopPropagation(); toggleTaskDetail('${t.task_id}', '${escapeAttr(t.url)}')">查看详情</button>`;
+    }
+    if (t.status === 'completed' || t.status === 'error' || t.status === 'cancelled') {
+        html += `<button class="task-card-action primary" onclick="event.stopPropagation(); redoTask('${t.task_id}')">⟳ 重做</button>`;
+    }
+    html += `<button class="task-card-action danger" onclick="event.stopPropagation(); confirmDeleteTask('${t.task_id}', '${escapeAttr(displayName)}')">🗑</button>`;
+    html += `</div>`;
+
+    html += `</div>`;
+    return html;
 }
 
 function toggleTaskSort(field) {
@@ -489,31 +509,28 @@ async function toggleTaskDetail(taskId, url) {
     const prevExpanded = taskExpandedId;
     taskExpandedId = (taskExpandedId === taskId) ? null : taskId;
 
-    // 折叠上一个展开的
-    if (prevExpanded && prevExpanded !== taskId) {
-        const prevDetailRow = document.getElementById(`task-detail-row-${prevExpanded}`);
-        if (prevDetailRow) prevDetailRow.style.display = 'none';
-        const prevRow = document.querySelector(`.task-row[onclick*="${prevExpanded}"]`);
-        if (prevRow) prevRow.classList.remove('expanded');
-        stopTaskPoll();
-    }
+    // 更新卡片高亮
+    document.querySelectorAll('.task-card').forEach(card => {
+        card.classList.toggle('active', card.dataset.taskId === taskExpandedId);
+    });
 
+    // 显示/隐藏详情面板
+    const placeholder = document.getElementById('task-detail-placeholder');
+    const content = document.getElementById('task-detail-content');
     if (!taskExpandedId) {
+        if (placeholder) placeholder.style.display = '';
+        if (content) content.style.display = 'none';
         stopTaskPoll();
         return;
     }
 
-    // 展开当前行
-    const detailRow = document.getElementById(`task-detail-row-${taskId}`);
-    const taskRow = document.querySelector(`.task-row[onclick*="${taskId}"]`);
-    if (taskRow) taskRow.classList.add('expanded');
-    if (detailRow) detailRow.style.display = '';
+    if (placeholder) placeholder.style.display = 'none';
+    if (content) { content.style.display = ''; content.innerHTML = '<div class="task-detail-loading"><div class="spinner" style="margin:0 auto 12px;"></div><p>加载中...</p></div>'; }
 
-    // 加载并渲染详情
-    const detailEl = document.getElementById(`task-detail-${taskId}`);
-    if (!detailEl) return;
-
-    detailEl.innerHTML = '<div class="task-detail-loading">加载中...</div>';
+    // 如果不是折叠后就换成新任务，先停止上一个的轮询
+    if (prevExpanded && prevExpanded !== taskId) {
+        stopTaskPoll();
+    }
 
     try {
         const resp = await fetch(`/api/task/${taskId}`);
@@ -522,32 +539,128 @@ async function toggleTaskDetail(taskId, url) {
         currentTaskId = taskId;
         tasks_url = url || task.url || '';
 
-        renderTaskDetail(detailEl, task);
+        _renderTaskDetailPanel(task);
 
         // 进行中 / 下载中：自动轮询刷新
         if (task.status === 'processing' || task.status === 'downloading') {
             startTaskPoll(taskId, url);
         }
     } catch (err) {
-        detailEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--error);">加载失败</div>`;
+        if (content) content.innerHTML = `<div style="text-align:center;padding:32px;color:var(--error);">加载失败: ${escapeHtml(err.message)}</div>`;
     }
 }
 
-function renderTaskDetail(container, task) {
+// 在右侧面板渲染任务详情
+function _renderTaskDetailPanel(task) {
+    const content = document.getElementById('task-detail-content');
+    if (!content) return;
+
     const status = task.status || '';
+    const statusMap = {
+        'processing': '处理中', 'downloading': '下载中', 'queued': '排队中',
+        'completed': '已完成', 'error': '出错', 'cancelled': '已终止',
+        'awaiting_confirmation': '待确认', 'awaiting_sentence_confirmation': '待确认翻译',
+    };
+    const statusLabel = statusMap[status] || status;
+    const displayName = task.title || task.url || '--';
+    const typeLabel = (task.process_mode === 'video') ? '视频配音' : '音频转录';
+    const typeCls = (task.process_mode === 'video') ? 'video' : 'audio';
+    const dur = task.original_duration || 0;
+    const mixedDur = (task.result || {}).mixed_duration || task.mixed_duration || 0;
+    const src = task.url || '--';
+    const cAt = (task.created_at || '').substring(0, 16);
+
     let html = '';
 
-    if (status === 'completed') {
-        html = renderCompletedTaskDetail(task);
-    } else if (status === 'processing' || status === 'downloading') {
-        html = renderProcessingTaskDetail(task);
-    } else if (status === 'cancelled' || status === 'error') {
-        html = `<div class="task-detail-end">${status === 'cancelled' ? '已终止' : '出错'}: ${escapeHtml(task.message || '')}</div>`;
+    // Hero: type + title + status tag
+    html += `<div class="task-detail-hero">`;
+    html += `<div class="task-detail-hero-main">`;
+    html += `<span class="task-detail-type ${typeCls}">${typeLabel}</span>`;
+    html += `<h2 class="task-detail-title">${escapeHtml(displayName)}</h2>`;
+    if (src.length > 80) {
+        html += `<span class="task-detail-filename">${escapeHtml(src.substring(0, 80))}…</span>`;
     } else {
-        html = `<div class="task-detail-end">状态: ${status}</div>`;
+        html += `<span class="task-detail-filename">${escapeHtml(src)}</span>`;
+    }
+    html += `</div>`;
+    html += `<span class="task-detail-status-tag ${status}">${statusLabel}</span>`;
+    html += `</div>`;
+
+    // Meta grid: duration, mixed duration, translated count, created time
+    const trCount = (task.translated_indices || []).length;
+    html += `<div class="task-detail-meta">`;
+    html += `<div class="task-detail-meta-item"><span class="task-detail-meta-label">原时长</span><span class="task-detail-meta-value">${formatTime(dur)}</span></div>`;
+    if (mixedDur > 0) {
+        html += `<div class="task-detail-meta-item"><span class="task-detail-meta-label">译时长</span><span class="task-detail-meta-value">${formatTime(mixedDur)}</span></div>`;
+    }
+    if (trCount > 0) {
+        html += `<div class="task-detail-meta-item"><span class="task-detail-meta-label">翻译句数</span><span class="task-detail-meta-value">${trCount} 句</span></div>`;
+    }
+    html += `<div class="task-detail-meta-item"><span class="task-detail-meta-label">创建时间</span><span class="task-detail-meta-value">${escapeHtml(cAt)}</span></div>`;
+    html += `</div>`;
+
+    // Processing: progress + steps
+    if (status === 'processing' || status === 'downloading') {
+        const progress = task.progress || 0;
+        const message = task.message || '';
+        const step = task.step || '';
+        const steps = [
+            {key: 'download', label: '下载'}, {key: 'transcribe', label: '转录'},
+            {key: 'translate', label: '翻译'}, {key: 'confirm', label: '确认'},
+            {key: 'synthesize', label: '合成'}, {key: 'mix', label: '拼接'},
+        ];
+        const stepIdx = steps.findIndex(s => s.key === step);
+
+        html += `<div class="task-detail-progress">`;
+        html += `<div class="task-detail-progress-bar"><div class="task-detail-progress-fill" style="width:${progress}%"></div></div>`;
+        html += `<div class="task-detail-progress-info">${(progress || 0).toFixed(0)}% · ${escapeHtml(message)}</div>`;
+        html += `<div class="task-detail-steps">`;
+        steps.forEach((s, i) => {
+            const cls = i < stepIdx ? 'done' : i === stepIdx ? 'active' : '';
+            html += `<span class="task-detail-step ${cls}">${s.label}</span>`;
+            if (i < steps.length - 1) html += '<span class="task-detail-step-line"></span>';
+        });
+        html += `</div>`;
+        html += `</div>`;
+        // Cancel button
+        html += `<div class="task-detail-actions-bar">`;
+        html += `<button class="btn-cancel" onclick="cancelTaskInline('${task.task_id || currentTaskId}')">终止任务</button>`;
+        html += `</div>`;
+    }
+    // Completed: player + transcript
+    else if (status === 'completed') {
+        html += _renderCompletedTaskDetail(task);
+    }
+    // Error / cancelled
+    else if (status === 'error' || status === 'cancelled') {
+        const errMsg = task.message || '';
+        html += `<div class="task-detail-end" style="padding:16px;background:var(--error-light);border-radius:8px;color:var(--error);margin-bottom:14px;">`;
+        html += `${status === 'cancelled' ? '⏹ 已终止' : '❌ 出错'}: ${escapeHtml(errMsg)}`;
+        html += `</div>`;
+        // Actions
+        html += _renderDetailActionBar(task);
     }
 
-    container.innerHTML = html;
+    content.innerHTML = html;
+
+    // Store data for video/audio switch
+    if (status === 'completed') {
+        window._taskDetailData = task;
+        window._isDetailVideo = (task.type === 'video' || task.process_mode === 'video');
+    }
+}
+
+function _renderDetailActionBar(task) {
+    let html = '<div class="task-detail-actions-bar">';
+    if (task.status === 'error' || task.status === 'cancelled') {
+        html += `<button class="btn-primary" onclick="retryTask()" style="margin-right:8px;">↻ 重试</button>`;
+    }
+    if (task.status === 'completed' || task.status === 'error' || task.status === 'cancelled') {
+        html += `<button class="btn-secondary" onclick="redoTask('${task.task_id || currentTaskId}')">⟳ 重做</button>`;
+    }
+    html += `<button class="btn-skip" onclick="confirmDeleteTask('${task.task_id || currentTaskId}', '${escapeAttr(task.title || task.url || '')}')">🗑 删除</button>`;
+    html += '</div>';
+    return html;
 }
 
 function openTaskResultView(taskId, url) {
@@ -619,15 +732,120 @@ function renderTaskDetailPage(data) {
 }
 
 var _detailSource = 'dubbed';
+
+// 右面板专用：渲染已完成任务的播放器 + 字幕
+function _renderCompletedTaskDetail(task) {
+    const taskId = task.task_id || currentTaskId;
+    const isVideo = (task.type === 'video' || task.process_mode === 'video');
+    const basename = task.basename || ((task.result || {}).basename) || '';
+    const mixedAudio = (task.result || {}).mixed_audio || '';
+    const originalAudio = (task.result || {}).original_audio || '';
+    const segments = task.segments || [];
+    const pairs = task.sentence_pairs || [];
+    const mixedDur = formatTime(task.mixed_duration || 0);
+    const dlMedia = task.resolved_mixed_url || '';
+
+    let html = '';
+
+    // 播放器卡片
+    html += `<div class="task-detail-player">`;
+
+    if (isVideo) {
+        // 视频：双标签切换
+        html += `<div class="task-detail-source-tabs">`;
+        html += `<button class="task-detail-source-tab active" id="dp-tab-dub" onclick="_switchPanelSource('dubbed')">配音</button>`;
+        html += `<button class="task-detail-source-tab" id="dp-tab-orig" onclick="_switchPanelSource('original')">原始</button>`;
+        html += `</div>`;
+        html += `<div class="task-detail-player-box" id="dp-video-box"><video id="dp-video" controls preload="metadata"></video></div>`;
+    } else {
+        // 音频：双轨播放
+        html += `<div class="task-detail-player-box">`;
+        if (mixedAudio) {
+            html += `<div class="task-audio-item" style="margin-bottom:8px;">`;
+            html += `<span class="task-audio-label">混合</span>`;
+            html += `<audio id="dp-mixed-audio" controls preload="none" src="${escapeAttr(_resolveAudioUrl(mixedAudio))}" class="dp-audio"></audio>`;
+            html += `</div>`;
+        }
+        if (originalAudio) {
+            html += `<div class="task-audio-item">`;
+            html += `<span class="task-audio-label">原始</span>`;
+            html += `<audio id="dp-original-audio" controls preload="none" src="${escapeAttr(_resolveAudioUrl(originalAudio))}" class="dp-audio"></audio>`;
+            html += `</div>`;
+        }
+        html += `</div>`;
+    }
+
+    // 字幕下载
+    html += `<div class="task-detail-dl-actions">`;
+    if (dlMedia) {
+        html += `<a class="task-detail-dl-btn" href="${escapeAttr(dlMedia)}" download>📥 下载音频</a>`;
+    }
+    html += `<a class="task-detail-dl-btn" href="/api/audio/${basename}/${basename}.srt" download>📄 字幕</a>`;
+    html += `</div></div>`;
+
+    // 字幕列
+    if (segments.length > 0) {
+        html += `<div class="task-detail-transcript">`;
+        html += `<div class="task-detail-transcript-hd">📝 字幕 · 播放时自动高亮</div>`;
+        html += `<div class="task-detail-transcript-body" id="dp-transcript">`;
+        const tmap = {};
+        if (pairs) pairs.forEach(p => { tmap[p.index] = p.chinese; });
+        html += segments.map((seg, i) => {
+            const t = formatTime(seg.start || 0);
+            const en = (seg.text || '').trim();
+            const cn = tmap[i] || '';
+            return `<div class="transcript-segment ${cn ? 'has-translation' : ''}" data-start="${seg.start || 0}" data-end="${seg.end || (seg.start || 0) + 5}"
+                onclick="(function(){var a=document.getElementById('dp-mixed-audio')||document.getElementById('dp-original-audio');if(a){a.currentTime=${seg.start || 0};a.play().catch(function(){})}})()">
+                <span class="segment-time">${t}</span><div class="segment-content"><span class="segment-text">${escapeHtml(en)}</span>
+                ${cn ? `<span class="segment-chinese">${escapeHtml(cn)}</span>` : ''}</div></div>`;
+        }).join('');
+        html += `</div></div>`;
+    }
+
+    // 时间轴同步
+    setTimeout(() => {
+        const containers = document.querySelectorAll('#dp-transcript');
+        const audioEls = document.querySelectorAll('#dp-mixed-audio, #dp-original-audio');
+        if (containers.length && audioEls.length) {
+            audioEls.forEach(audio => {
+                audio.ontimeupdate = function () {
+                    const ct = audio.currentTime;
+                    containers.forEach(c => {
+                        c.querySelectorAll('.transcript-segment').forEach(el => {
+                            const s = parseFloat(el.dataset.start || 0), e = parseFloat(el.dataset.end || s + 5);
+                            el.classList.toggle('active', ct >= s - 0.1 && ct < e);
+                        });
+                    });
+                };
+            });
+        }
+    }, 200);
+
+    // 操作按钮
+    html += _renderDetailActionBar(task);
+
+    return html;
+}
+
+// 视频源的左右切换（右面板专用）
+function _switchPanelSource(src) {
+    const data = window._taskDetailData;
+    if (!data) return;
+    document.getElementById('dp-tab-dub').classList.toggle('active', src === 'dubbed');
+    document.getElementById('dp-tab-orig').classList.toggle('active', src === 'original');
+    const ve = document.getElementById('dp-video');
+    if (!ve) return;
+    let url = src === 'dubbed' ? ((data.video_result || {}).video_url || '') : (data.original_video_url || '');
+    if (url) { ve.src = url; ve.load(); }
+}
+
+// --- 完整详情页（旧版：task-detail-view）仍保留，以下为其专用函数 ---
+
 function switchDetailSource(src) {
-    _detailSource = src;
     const data = window._taskDetailData; if (!data) return;
     const isVideo = (data.type==='video'||data.process_mode==='video');
-
-    // tab active
     document.getElementById('dt-orig').classList.toggle('active', src==='original');
     document.getElementById('dt-dub').classList.toggle('active', src==='dubbed');
-
     const ve = document.getElementById('detail-video');
     const ae = document.getElementById('detail-audio');
     const vw = document.getElementById('detail-video-wrapper');
@@ -635,7 +853,6 @@ function switchDetailSource(src) {
     const dl = document.getElementById('detail-dl-media');
     const ds = document.getElementById('detail-dl-srt');
     if (ve) ve.pause(); if (ae) ae.pause();
-
     if (isVideo) {
         let url = src==='dubbed' ? ((data.video_result||{}).video_url||'') : (data.original_video_url||'');
         vw.style.display=''; aw.style.display='none';
@@ -644,13 +861,13 @@ function switchDetailSource(src) {
         dl.href = url || '#';
         ds.href = (src==='dubbed'&&(data.video_result||{}).srt_url) ? (data.video_result||{}).srt_url : '#';
     } else {
-        const r = data.result||{}; const bn = r.basename||data.basename||'';
-        let path = '';
+        var r = data.result||{}; var bn = r.basename||data.basename||'';
+        var path = '';
         if (src==='dubbed') {
             path = '/api/audio/'+bn+'/'+bn+'_sentence.mp3';
             dl.style.display=''; dl.href=path;
         } else {
-            const oa = r.original_audio||'';
+            var oa = r.original_audio||'';
             path = oa ? (typeof _resolveAudioUrl==='function'?_resolveAudioUrl(oa):oa) : ('/api/audio/'+bn+'.mp3');
             dl.style.display='none';
         }
@@ -768,14 +985,20 @@ function startTaskPoll(taskId, url) {
         try {
             const resp = await fetch(`/api/task/${taskId}`);
             const task = await resp.json();
-            const detailEl = document.getElementById(`task-detail-${taskId}`);
-            if (detailEl) {
-                renderTaskDetail(detailEl, task);
+            // 刷新右侧面板
+            const content = document.getElementById('task-detail-content');
+            if (content && content.style.display !== 'none') {
+                _renderTaskDetailPanel(task);
             }
-            // 如果终态，停止轮询并刷新列表
+            // 刷新左侧卡片进度条
+            const card = document.querySelector(`.task-card[data-task-id="${taskId}"]`);
+            if (card && (task.status === 'processing' || task.status === 'downloading')) {
+                const progressBar = card.querySelector('.task-card-progress-fill');
+                if (progressBar) progressBar.style.width = (task.progress || 0) + '%';
+            }
+            // 如果终态，停止轮询
             if (task.status === 'completed' || task.status === 'cancelled' || task.status === 'error') {
                 stopTaskPoll();
-                // 稍后刷新任务列表（更新卡片元数据）
                 setTimeout(() => loadHistory(), 500);
             }
         } catch (e) {}
@@ -915,7 +1138,18 @@ async function executeDeleteTask(taskId) {
         const resp = await fetch(`/api/task/${taskId}`, { method: 'DELETE' });
         const data = await resp.json();
         if (!resp.ok) { alert(data.error || '删除失败'); return; }
-        if (taskId === currentTaskId) resetAll();
+        // 删除的是当前查看的任务 → 清理右侧面板并停止轮询
+        if (taskId === currentTaskId) {
+            stopTaskPoll();
+            taskExpandedId = null;
+            currentTaskId = null;
+            tasks_url = '';
+            // 恢复右侧面板占位符
+            const placeholder = document.getElementById('task-detail-placeholder');
+            const content = document.getElementById('task-detail-content');
+            if (placeholder) placeholder.style.display = '';
+            if (content) { content.style.display = 'none'; content.innerHTML = ''; }
+        }
         loadHistory();
     } catch (err) {
         alert('网络错误: ' + err.message);

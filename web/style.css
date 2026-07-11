@@ -10,31 +10,40 @@
 }
 
 :root {
-    --bg: #FAFAFA;
+    /* ---- AI Hot 浅蓝主题色板 ---- */
+    --bg: #F4F5F7;
     --bg-card: #FFFFFF;
-    --bg-hover: #F5F5F7;
-    --text-primary: #1D1D1F;
-    --text-secondary: #6E6E73;
-    --text-tertiary: #AEAEB2;
-    --accent: #0071E3;
-    --accent-light: #EBF4FF;
-    --accent-gradient: linear-gradient(135deg, #667EEA 0%, #764BA2 100%);
-    --success: #34C759;
-    --success-light: #E8FAE8;
-    --warning: #FF9500;
-    --error: #FF3B30;
-    --border: #E5E5EA;
-    --border-light: #F2F2F7;
-    --shadow-sm: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06);
-    --shadow-md: 0 4px 16px rgba(0,0,0,0.06), 0 1px 4px rgba(0,0,0,0.04);
-    --shadow-lg: 0 12px 40px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.04);
-    --shadow-xl: 0 20px 60px rgba(0,0,0,0.1), 0 8px 20px rgba(0,0,0,0.06);
-    --radius-sm: 10px;
-    --radius-md: 16px;
-    --radius-lg: 24px;
-    --radius-xl: 32px;
+    --bg-hover: #F7F8FA;
+    --bg-active: #E8F2FF;
+    --text-primary: #1A1A1A;
+    --text-secondary: #5A5A5A;
+    --text-tertiary: #8C8C8C;
+    --accent: #2B7FFF;
+    --accent-light: #E8F2FF;
+    --accent-soft: #F0F6FF;
+    --accent-gradient: linear-gradient(135deg, #2B7FFF 0%, #1E5BD9 100%);
+    --success: #00B86B;
+    --success-light: #E6F8F0;
+    --warning: #FF8A00;
+    --warning-light: #FFF4E5;
+    --error: #F5222D;
+    --error-light: #FFECE8;
+    --border: #E8EAED;
+    --border-light: #F0F1F3;
+    --recommendation-bg: #FFFBE6;
+    --recommendation-border: #FFE58F;
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+    --shadow-md: 0 1px 3px rgba(15, 23, 42, 0.05), 0 1px 2px rgba(15, 23, 42, 0.03);
+    --shadow-lg: 0 4px 12px rgba(15, 23, 42, 0.06), 0 2px 4px rgba(15, 23, 42, 0.04);
+    --shadow-xl: 0 12px 32px rgba(15, 23, 42, 0.08), 0 4px 12px rgba(15, 23, 42, 0.04);
+    --radius-xs: 6px;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-xl: 24px;
+    --radius-pill: 999px;
     --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    --transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    --transition: all 0.18s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 html {
@@ -195,8 +204,8 @@ body {
 }
 
 .input-card:focus-within {
-    box-shadow: var(--shadow-xl), 0 0 0 3px rgba(0, 113, 227, 0.15);
-    border-color: rgba(0, 113, 227, 0.3);
+    box-shadow: var(--shadow-xl), 0 0 0 3px rgba(43, 127, 255, 0.15);
+    border-color: rgba(43, 127, 255, 0.3);
 }
 
 .input-row {
@@ -323,9 +332,9 @@ body {
 }
 
 .btn-primary:hover {
-    background: #0077ED;
+    background: #1E6FE5;
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 113, 227, 0.3);
+    box-shadow: 0 4px 12px rgba(43, 127, 255, 0.3);
 }
 
 .btn-primary:active {
@@ -360,7 +369,7 @@ body {
 }
 
 .btn-secondary:hover {
-    background: #D6E8FF;
+    background: #D9E7FB;
 }
 
 /* ---- Progress Section ---- */
@@ -526,7 +535,7 @@ body {
 
 .step-item.active .step-dot {
     background: var(--accent);
-    box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.15);
+    box-shadow: 0 0 0 4px rgba(43, 127, 255, 0.15);
 }
 
 .step-item.active span {
@@ -795,7 +804,7 @@ body {
 .transcript-segment.active-segment {
     background: var(--accent-light);
     border-left-color: var(--accent);
-    box-shadow: inset 0 0 0 1px rgba(0, 113, 227, 0.1);
+    box-shadow: inset 0 0 0 1px rgba(43, 127, 255, 0.1);
 }
 
 .transcript-segment.active-segment .segment-time {
@@ -1615,8 +1624,8 @@ body {
 }
 
 .confirm-primary:hover {
-    background: #0077ED;
-    box-shadow: 0 4px 12px rgba(0, 113, 227, 0.3);
+    background: #1E6FE5;
+    box-shadow: 0 4px 12px rgba(43, 127, 255, 0.3);
 }
 
 /* ---- Confirm Section (生词确认页) ---- */
@@ -1674,13 +1683,13 @@ body {
     background: var(--accent);
     color: #fff;
     border-color: var(--accent);
-    box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.15);
+    box-shadow: 0 0 0 4px rgba(43, 127, 255, 0.15);
     animation: stepperPulse 2s ease-in-out infinite;
 }
 
 @keyframes stepperPulse {
-    0%, 100% { box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.15); }
-    50% { box-shadow: 0 0 0 8px rgba(0, 113, 227, 0.08); }
+    0%, 100% { box-shadow: 0 0 0 4px rgba(43, 127, 255, 0.15); }
+    50% { box-shadow: 0 0 0 8px rgba(43, 127, 255, 0.08); }
 }
 
 .stepper-label {
@@ -1834,7 +1843,7 @@ body {
 
 .filter-btn {
     background: var(--accent-light) !important;
-    border-color: rgba(0, 113, 227, 0.2) !important;
+    border-color: rgba(43, 127, 255, 0.2) !important;
     color: var(--accent) !important;
 }
 
@@ -2093,7 +2102,7 @@ body {
 
 .confirm-add-input:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px rgba(0, 113, 227, 0.1);
+    box-shadow: 0 0 0 2px rgba(43, 127, 255, 0.1);
 }
 
 .confirm-add-input::placeholder {
@@ -2111,7 +2120,7 @@ body {
     font-weight: 600;
     color: var(--accent);
     background: var(--accent-light);
-    border: 1px solid rgba(0, 113, 227, 0.2);
+    border: 1px solid rgba(43, 127, 255, 0.2);
     border-radius: 6px;
     cursor: pointer;
     flex-shrink: 0;
@@ -2203,7 +2212,7 @@ body {
 }
 
 .phrase-popover-btn.confirm:hover {
-    background: #0077ED;
+    background: #1E6FE5;
 }
 
 .phrase-popover-btn.cancel {
@@ -2376,7 +2385,7 @@ body {
     font-size: 14px;
     color: var(--accent);
     background: var(--accent-light);
-    border: 1px solid rgba(0, 113, 227, 0.15);
+    border: 1px solid rgba(43, 127, 255, 0.15);
     border-radius: 8px;
     resize: vertical;
     min-height: 36px;
@@ -2387,7 +2396,7 @@ body {
 
 .sentence-confirm-chi:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px rgba(0, 113, 227, 0.1);
+    box-shadow: 0 0 0 2px rgba(43, 127, 255, 0.1);
 }
 
 .sentence-confirm-chi:disabled {
@@ -2549,7 +2558,7 @@ body {
     border-left-color: var(--accent);
     border-left-width: 3px;
     border-left-style: solid;
-    background: rgba(0, 113, 227, 0.02);
+    background: rgba(43, 127, 255, 0.02);
 }
 
 /* Sentence Pair Cards */
@@ -3365,7 +3374,7 @@ body {
 }
 
 .search-btn:hover {
-    background: #0077ED;
+    background: #1E6FE5;
 }
 
 /* File Upload */
@@ -3703,7 +3712,7 @@ body {
 
 .episode-item:hover {
     background: var(--accent-light);
-    border-color: rgba(0, 113, 227, 0.15);
+    border-color: rgba(43, 127, 255, 0.15);
 }
 
 .episode-item-main {
@@ -3739,7 +3748,7 @@ body {
     font-size: 14px;
     color: var(--accent);
     background: var(--accent-light);
-    border: 1px solid rgba(0, 113, 227, 0.2);
+    border: 1px solid rgba(43, 127, 255, 0.2);
     border-radius: 50%;
     cursor: pointer;
     transition: var(--transition);
@@ -4281,7 +4290,7 @@ body {
     font-weight: 600;
     color: var(--accent);
     background: var(--accent-light);
-    border: 1px solid rgba(0, 113, 227, 0.2);
+    border: 1px solid rgba(43, 127, 255, 0.2);
     border-radius: 6px;
     cursor: pointer;
     transition: var(--transition);
@@ -4363,7 +4372,7 @@ body {
     background: #fff;
     border: 2px solid var(--accent);
     border-radius: 50%;
-    box-shadow: 0 1px 4px rgba(0, 113, 227, 0.3);
+    box-shadow: 0 1px 4px rgba(43, 127, 255, 0.3);
     transition: transform 0.2s ease;
     pointer-events: none;
 }
@@ -4414,13 +4423,13 @@ body {
     cursor: pointer;
     transition: var(--transition);
     flex-shrink: 0;
-    box-shadow: 0 2px 8px rgba(0, 113, 227, 0.25);
+    box-shadow: 0 2px 8px rgba(43, 127, 255, 0.25);
 }
 
 .mini-player-play-btn:hover {
-    background: #0077ED;
+    background: #1E6FE5;
     transform: scale(1.08);
-    box-shadow: 0 4px 16px rgba(0, 113, 227, 0.35);
+    box-shadow: 0 4px 16px rgba(43, 127, 255, 0.35);
 }
 
 .mini-player-play-btn:active {
@@ -4831,7 +4840,7 @@ body {
 .main-area {
     flex: 1;
     margin: 0;
-    padding: 32px 32px 80px;
+    padding: 20px 28px 60px;
     min-width: 0;
     max-width: none;
 }
@@ -6061,7 +6070,7 @@ body {
 .mode-card:hover {
     border-color: var(--accent);
     background: var(--accent-light);
-    box-shadow: 0 2px 8px rgba(0, 113, 227, 0.08);
+    box-shadow: 0 2px 8px rgba(43, 127, 255, 0.08);
 }
 
 .mode-card.active {
@@ -6243,7 +6252,7 @@ body {
     font-weight: 500;
     color: var(--accent);
     background: var(--accent-light);
-    border: 1px solid rgba(0, 113, 227, 0.12);
+    border: 1px solid rgba(43, 127, 255, 0.12);
     border-radius: 10px;
     line-height: 1.5;
     margin-top: 2px;
@@ -6517,7 +6526,7 @@ body {
 
 .number-input:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.1);
+    box-shadow: 0 0 0 3px rgba(43, 127, 255, 0.1);
 }
 
 /* ============================================================
@@ -6654,7 +6663,7 @@ body {
 
 .video-option-select:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.1);
+    box-shadow: 0 0 0 3px rgba(43, 127, 255, 0.1);
 }
 
 /* YouTube 预览 */
@@ -6734,7 +6743,7 @@ body {
 }
 
 .video-download-bar .btn-primary:hover {
-    background: #0077ED;
+    background: #1E6FE5;
 }
 
 .video-download-bar .btn-secondary {

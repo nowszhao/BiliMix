@@ -19,6 +19,15 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
+/** 去除 HTML 标签与多余空白，保留纯文本（用于卡片摘要） */
+function stripHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.innerHTML = str;
+    const text = (div.textContent || div.innerText || '').replace(/\s+/g, ' ').trim();
+    return text;
+}
+
 function escapeAttr(str) {
     return (str || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }

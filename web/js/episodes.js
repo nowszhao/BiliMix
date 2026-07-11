@@ -8,6 +8,7 @@ let episodesCurrentPage = 1;
 let episodesStatusFilter = 'all';
 let episodesRssFilter = '';
 let episodesTimeRange = 'today';
+let episodesSearchQuery = '';
 let episodesExpandedId = null;
 let episodesCache = [];
 
@@ -104,7 +105,26 @@ function renderFilteredEpisodes() {
     if (episodesRssFilter) {
         filtered = filtered.filter(ep => ep.rss_url === episodesRssFilter);
     }
+    if (episodesSearchQuery) {
+        const q = episodesSearchQuery.toLowerCase();
+        filtered = filtered.filter(ep => {
+            const title = (ep.title || '').toLowerCase();
+            const subTitle = (ep.sub_title || '').toLowerCase();
+            const desc = (ep.description ? stripHtml(ep.description) : '').toLowerCase();
+            return title.includes(q) || subTitle.includes(q) || desc.includes(q);
+        });
+    }
     renderEpisodes(filtered);
+}
+
+// 搜索输入（防抖）
+let _searchDebounceTimer = null;
+function onUpdatesSearch(value) {
+    episodesSearchQuery = (value || '').trim();
+    if (_searchDebounceTimer) clearTimeout(_searchDebounceTimer);
+    _searchDebounceTimer = setTimeout(() => {
+        renderFilteredEpisodes();
+    }, 200);
 }
 
 async function loadEpisodeStats(overrideTotal) {
@@ -137,6 +157,14 @@ async function loadEpisodeStats(overrideTotal) {
             item.classList.toggle('active', episodesStatusFilter === key);
         });
 
+        // 更新侧边栏 nav badge（未读数）
+        const navBadgeUpdates = document.getElementById('nav-badge-updates');
+        if (navBadgeUpdates) {
+            const unreadCount = counts.unread || 0;
+            navBadgeUpdates.textContent = unreadCount > 99 ? '99+' : unreadCount;
+            navBadgeUpdates.style.display = unreadCount > 0 ? '' : 'none';
+        }
+
         // 更新侧边栏订阅未读数
         renderSidebarSubscriptions(data.subscriptions || []);
     } catch (e) {}
@@ -161,43 +189,83 @@ function renderEpisodes(episodes) {
         return;
     }
 
-    // 按订阅源分组
+    // 按日期分组
     const groups = {};
     episodes.forEach(ep => {
-        const key = ep.rss_url;
-        if (!groups[key]) {
-            groups[key] = {
-                title: ep.sub_title || '未知播客',
-                image: ep.sub_image || '',
-                author: ep.sub_author || '',
-                episodes: [],
+        const dateKey = _formatDateKey(ep.published_at);
+        if (!groups[dateKey]) {
+            groups[dateKey] = {
+                label: _formatDateLabel(ep.published_at),
+                items: [],
             };
         }
-        groups[key].episodes.push(ep);
+        groups[dateKey].items.push(ep);
     });
 
     let html = '';
-    for (const [rssUrl, group] of Object.entries(groups)) {
-        html += `<div class="episode-group">`;
-        html += `<div class="episode-group-header">`;
-        if (group.image) {
-            html += `<img src="${escapeAttr(group.image)}" class="episode-group-img" alt="" onerror="this.style.display='none'">`;
-        } else {
-            html += `<div class="episode-group-img episode-group-img-placeholder">🎙️</div>`;
-        }
-        html += `<span class="episode-group-title">${escapeHtml(group.title)}</span>`;
-        html += `<span class="episode-group-count">${group.episodes.length} 集</span>`;
+    // 按日期倒序
+    const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+    for (const dateKey of sortedKeys) {
+        const group = groups[dateKey];
+        html += `<div class="episode-date-group">`;
+        html += `<div class="episode-date-header">`;
+        html += `<span class="episode-date-label">${escapeHtml(group.label)}</span>`;
+        html += `<svg class="episode-date-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+        html += `<span class="episode-date-count">${group.items.length} 条</span>`;
         html += `</div>`;
-        html += `<div class="episode-group-body">`;
+        html += `<div class="episodes-timeline">`;
 
-        group.episodes.forEach(ep => {
-            html += renderEpisodeCard(ep);
+        group.items.forEach((ep, idx) => {
+            const time = _formatTime(ep.published_at);
+            const isLast = idx === group.items.length - 1;
+            html += `<div class="timeline-row ${isLast ? 'timeline-row-last' : ''}">`;
+            html += `<div class="timeline-time">`;
+            html += `<span class="timeline-time-text">${escapeHtml(time)}</span>`;
+            html += `<span class="timeline-dot"></span>`;
+            html += `<span class="timeline-line"></span>`;
+            html += `</div>`;
+            html += `<div class="timeline-card">${renderEpisodeCard(ep)}</div>`;
+            html += `</div>`;
         });
 
         html += `</div></div>`;
     }
 
     container.innerHTML = html;
+}
+
+// 日期 key: YYYY-MM-DD（用于排序与去重）
+function _formatDateKey(dateStr) {
+    if (!dateStr) return 'unknown';
+    const d = new Date(dateStr);
+    if (isNaN(d)) return 'unknown';
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
+// 中文日期标签：今日/昨日/M月D日
+function _formatDateLabel(dateStr) {
+    if (!dateStr) return '未知日期';
+    const d = new Date(dateStr);
+    if (isNaN(d)) return '未知日期';
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diffDays = Math.round((today - target) / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) return '今日';
+    if (diffDays === 1) return '昨日';
+    if (diffDays > 1 && diffDays < 7) return `${diffDays} 天前`;
+    return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+// 时间格式：HH:MM
+function _formatTime(dateStr) {
+    if (!dateStr) return '--:--';
+    const d = new Date(dateStr);
+    if (isNaN(d)) return '--:--';
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 function renderEpisodeCard(ep) {
@@ -217,20 +285,34 @@ function renderEpisodeCard(ep) {
     const statusLabel = statusLabels[ep.status] || '未读';
     const isExpanded = episodesExpandedId === ep.id;
 
+    // 来源名（显示订阅名 + 作者，去重）
+    const sourceTitle = ep.sub_title || '未知来源';
+    let sourceAuthor = '';
+    if (ep.sub_author && ep.sub_author !== ep.sub_title) {
+        sourceAuthor = ` · ${ep.sub_author}`;
+    }
+    // 头像或首字母占位
+    const sourceSubIcon = (ep.sub_title || '🎙').slice(0, 1);
+    const sourceImg = ep.sub_image
+        ? `<img src="${escapeAttr(ep.sub_image)}" class="episode-source-img" alt="" onerror="this.outerHTML='<span class=&quot;episode-source-icon&quot;>${escapeHtml(sourceSubIcon)}</span>'">`
+        : `<span class="episode-source-icon">${escapeHtml(sourceSubIcon)}</span>`;
+
+    // 派生标签：基于现有字段（无固定 tag 字段时给出一些可读 chip）
+    const derivedTags = [];
+    if (ep.task_id) derivedTags.push({ label: '已转录', cls: 'transcribed' });
+    if (ep.duration) derivedTags.push({ label: `时长 ${ep.duration}`, cls: '' });
+    if (ep.published_at) derivedTags.push({ label: ep.published_at, cls: '' });
+
     let html = `<div class="episode-card ${statusClass} ${isExpanded ? 'expanded' : ''}" onclick="toggleEpisode(${ep.id})">`;
-    html += `<div class="episode-card-main">`;
-    html += `<div class="episode-card-left">`;
-    html += `<span class="episode-status-dot ${statusClass}"></span>`;
-    html += `<div class="episode-card-text">`;
-    html += `<div class="episode-card-title">${escapeHtml(ep.title || '未知单集')}</div>`;
-    html += `<div class="episode-card-meta">`;
-    if (ep.duration) html += `<span>${escapeHtml(ep.duration)}</span>`;
-    if (ep.published_at) html += `<span>${escapeHtml(ep.published_at)}</span>`;
-    html += `<span class="episode-status-label">${statusLabel}</span>`;
-    html += `</div>`;
-    html += `</div>`;
-    html += `</div>`;
-    html += `<div class="episode-card-actions" onclick="event.stopPropagation()">`;
+
+    // 来源行
+    html += `<div class="episode-card-source">`;
+    html += sourceImg;
+    html += `<span class="episode-source-name">${escapeHtml(sourceTitle)}<span class="episode-source-meta">${escapeHtml(sourceAuthor)}</span></span>`;
+    html += `<span class="episode-source-spacer"></span>`;
+    html += `<span class="episode-status-badge ${statusClass}"><span class="dot"></span>${statusLabel}</span>`;
+    // 动作按钮移到源行右侧
+    html += `<span class="episode-card-actions" onclick="event.stopPropagation()">`;
     if (ep.status === 'transcribed' && ep.task_id) {
         html += `<button class="ep-btn ep-btn-primary" onclick="viewEpisodeResult('${escapeAttr(ep.task_id)}')">查看结果</button>`;
     } else if (ep.status !== 'dismissed') {
@@ -238,26 +320,40 @@ function renderEpisodeCard(ep) {
     } else {
         html += `<button class="ep-btn ep-btn-secondary" onclick="restoreEpisode(${ep.id})">恢复</button>`;
     }
-    html += `</div>`;
+    html += `</span>`;
     html += `</div>`;
 
+    // 标题
+    html += `<div class="episode-card-title">${escapeHtml(ep.title || '未知单集')}</div>`;
+
+    // 描述（先去除 HTML 标签）
+    if (ep.description) {
+        const plainDesc = stripHtml(ep.description);
+        if (plainDesc) {
+            const truncated = plainDesc.length > 160 ? plainDesc.slice(0, 160) + '…' : plainDesc;
+            html += `<div class="episode-card-desc">${escapeHtml(truncated)}</div>`;
+        }
+    }
+
+    // 标签
+    if (derivedTags.length > 0) {
+        html += `<div class="episode-card-tags">`;
+        derivedTags.forEach(t => {
+            html += `<span class="episode-tag ${t.cls}">${escapeHtml(t.label)}</span>`;
+        });
+        html += `</div>`;
+    }
+
+    // 推荐理由（可选）
+    if (ep.recommendation) {
+        html += `<div class="episode-recommendation">`;
+        html += `<span class="episode-recommendation-label">推荐理由</span>`;
+        html += `<span class="episode-recommendation-text">${escapeHtml(ep.recommendation)}</span>`;
+        html += `</div>`;
+    }
+
     if (isExpanded) {
-        html += `<div class="episode-card-detail">`;
-        if (ep.description) {
-            html += `<p class="episode-detail-desc">${escapeHtml(ep.description)}</p>`;
-        }
-        html += `<div class="episode-detail-actions">`;
-        if (ep.status === 'unread') {
-            html += `<button class="ep-btn-small" onclick="markEpisode(${ep.id}, 'read')">✓ 标记已读</button>`;
-            html += `<button class="ep-btn-small" onclick="markEpisode(${ep.id}, 'dismissed')">忽略</button>`;
-        } else if (ep.status === 'read') {
-            html += `<button class="ep-btn-small" onclick="markEpisode(${ep.id}, 'unread')">标记未读</button>`;
-            html += `<button class="ep-btn-small" onclick="markEpisode(${ep.id}, 'dismissed')">忽略</button>`;
-        } else if (ep.status === 'transcribed') {
-            html += `<button class="ep-btn-small" onclick="markEpisode(${ep.id}, 'unread')">标记未读</button>`;
-        }
-        html += `</div>`;
-        html += `</div>`;
+        html += renderEpisodeDetail(ep);
     }
 
     html += `</div>`;
@@ -303,14 +399,11 @@ async function toggleEpisode(id) {
             const statusClass = {unread:'unread',read:'read',transcribed:'transcribed',dismissed:'dismissed'}[ep.status] || 'unread';
             card.className = card.className.replace(/unread|read|transcribed|dismissed/g, '');
             card.classList.add(statusClass, episodesExpandedId === id ? 'expanded' : '');
-            const dot = card.querySelector('.episode-status-dot');
-            if (dot) {
-                dot.className = dot.className.replace(/unread|read|transcribed|dismissed/g, '');
-                dot.classList.add(statusClass);
-            }
-            const label = card.querySelector('.episode-status-label');
-            if (label) {
-                label.textContent = {unread:'未读',read:'已读',transcribed:'已转录',dismissed:'已忽略'}[ep.status] || '未读';
+            const badge = card.querySelector('.episode-status-badge');
+            if (badge) {
+                badge.className = badge.className.replace(/unread|read|transcribed|dismissed/g, '');
+                badge.classList.add('episode-status-badge', statusClass);
+                badge.innerHTML = '<span class="dot"></span>' + ({unread:'未读',read:'已读',transcribed:'已转录',dismissed:'已忽略'}[ep.status] || '未读');
             }
         }
     }
@@ -319,7 +412,10 @@ async function toggleEpisode(id) {
 function renderEpisodeDetail(ep) {
     let html = `<div class="episode-card-detail">`;
     if (ep.description) {
-        html += `<p class="episode-detail-desc">${escapeHtml(ep.description)}</p>`;
+        const plainDesc = stripHtml(ep.description);
+        if (plainDesc) {
+            html += `<p class="episode-detail-desc">${escapeHtml(plainDesc)}</p>`;
+        }
     }
     html += `<div class="episode-detail-actions">`;
     if (ep.status === 'unread') {
