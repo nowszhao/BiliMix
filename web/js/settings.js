@@ -646,7 +646,20 @@ function _renderTaskDetailPanel(task) {
     html += `<span class="task-detail-status-tag ${status}">${statusLabel}</span>`;
     html += `</div>`;
 
-    // Meta grid: duration, mixed duration, translated count, created time
+    // 计算处理耗时
+    let elapsedStr = '';
+    if (task.created_at) {
+        const created = new Date(task.created_at);
+        const now = new Date();
+        const elapsedSec = Math.floor((now - created) / 1000);
+        if (elapsedSec > 0) {
+            const mins = Math.floor(elapsedSec / 60);
+            const secs = elapsedSec % 60;
+            elapsedStr = mins > 0 ? `${mins} 分 ${secs} 秒` : `${secs} 秒`;
+        }
+    }
+
+    // Meta grid: duration, mixed duration, translated count, created time, processing time
     html += `<div class="task-detail-meta">`;
     html += `<div class="task-detail-meta-item"><span class="task-detail-meta-label">原时长</span><span class="task-detail-meta-value">${formatTime(dur)}</span></div>`;
     if (mixedDur > 0) {
@@ -656,27 +669,62 @@ function _renderTaskDetailPanel(task) {
         html += `<div class="task-detail-meta-item"><span class="task-detail-meta-label">翻译句数</span><span class="task-detail-meta-value">${trCount} 句</span></div>`;
     }
     html += `<div class="task-detail-meta-item"><span class="task-detail-meta-label">创建时间</span><span class="task-detail-meta-value">${escapeHtml(cAt)}</span></div>`;
+    if (elapsedStr) {
+        const label = (status === 'completed') ? '处理耗时' : '已运行';
+        html += `<div class="task-detail-meta-item meta-elapsed"><span class="task-detail-meta-label">${label}</span><span class="task-detail-meta-value" id="detail-elapsed">${escapeHtml(elapsedStr)}</span></div>`;
+    }
     html += `</div>`;
 
-    // Processing: progress + steps
+    // Processing: progress + steps + estimated remaining time
     if (status === 'processing' || status === 'downloading') {
         const progress = task.progress || 0;
         const message = task.message || '';
         const step = task.step || '';
         const steps = [
-            {key: 'download', label: '下载'}, {key: 'transcribe', label: '转录'},
-            {key: 'translate', label: '翻译'}, {key: 'confirm', label: '确认'},
-            {key: 'synthesize', label: '合成'}, {key: 'mix', label: '拼接'},
+            {key: 'download', label: '下载', icon: '⬇'},
+            {key: 'transcribe', label: '转录', icon: '🎙'},
+            {key: 'translate', label: '翻译', icon: '🌐'},
+            {key: 'confirm', label: '确认', icon: '✅'},
+            {key: 'synthesize', label: '合成', icon: '🔊'},
+            {key: 'mix', label: '拼接', icon: '🎬'},
         ];
         const stepIdx = steps.findIndex(s => s.key === step);
 
+        // 估算剩余时间（基于已用时间和进度）
+        let etaStr = '';
+        if (task.created_at && progress > 0 && progress < 100) {
+            const created = new Date(task.created_at);
+            const now = new Date();
+            const elapsedMs = now - created;
+            const totalEstimated = elapsedMs / (progress / 100);
+            const remainingMs = totalEstimated - elapsedMs;
+            if (remainingMs > 0) {
+                const mins = Math.floor(remainingMs / 60000);
+                if (mins > 0) etaStr = `约 ${mins} 分钟`;
+                else etaStr = '不到 1 分钟';
+            }
+        }
+
         html += `<div class="task-detail-progress">`;
-        html += `<div class="task-detail-progress-bar"><div class="task-detail-progress-fill" style="width:${progress}%"></div></div>`;
-        html += `<div class="task-detail-progress-info">${(progress || 0).toFixed(0)}% · ${escapeHtml(message)}</div>`;
+        html += `<div class="task-detail-progress-bar" style="position:relative;">`;
+        html += `<div class="task-detail-progress-fill" style="width:${progress}%"><div class="task-detail-progress-glow"></div></div>`;
+        html += `</div>`;
+        html += `<div class="task-detail-progress-info">`;
+        html += `<span class="task-detail-progress-pct">${(progress || 0).toFixed(0)}%</span>`;
+        html += `<span class="task-detail-progress-msg">${escapeHtml(message)}</span>`;
+        if (etaStr) {
+            html += `<span class="task-detail-progress-eta">⏱ ${etaStr}</span>`;
+        }
+        html += `</div>`;
         html += `<div class="task-detail-steps">`;
         steps.forEach((s, i) => {
-            const cls = i < stepIdx ? 'done' : i === stepIdx ? 'active' : '';
-            html += `<span class="task-detail-step ${cls}">${s.label}</span>`;
+            let cls = '';
+            if (i < stepIdx) cls = 'done';
+            else if (i === stepIdx) cls = 'active';
+            html += `<span class="task-detail-step ${cls}">`;
+            html += `<span class="task-detail-step-dot">${i < stepIdx ? '✓' : s.icon}</span>`;
+            html += `<span class="task-detail-step-label">${s.label}</span>`;
+            html += `</span>`;
             if (i < steps.length - 1) html += '<span class="task-detail-step-line"></span>';
         });
         html += `</div>`;
