@@ -2190,6 +2190,7 @@ def get_task_result(task_id):
         "progress": task.get("progress", 0),
         "message": task.get("message", ""),
         "process_mode": task.get("process_mode", "word_replace"),
+        "step": task.get("step", ""),
         "type": task.get("type", "audio"),
         "title": task.get("title", ""),
         "url": task.get("url", ""),

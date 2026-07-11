@@ -698,15 +698,7 @@ function _renderTaskDetailPanel(task) {
         const stepNames = ['download','separate','transcribe','translate','confirm','synthesize','merge','mix','subtitle','assemble'];
         const stepLabels = {download:'下载',separate:'分离',transcribe:'转录',translate:'翻译',confirm:'确认',synthesize:'合成',merge:'混合',mix:'混合',subtitle:'字幕',assemble:'组装'};
         const totalSteps = stepNames.length;
-        // 根据 progress 推算 step 索引（覆盖 step 字段延迟场景）
-        let stepIdx = -1;
-        if (stepNames.includes(step)) {
-            stepIdx = stepNames.indexOf(step);
-        } else if (progress >= 80) stepIdx = 5;
-        else if (progress >= 60) stepIdx = 4;
-        else if (progress >= 30) stepIdx = 2;
-        else if (progress >= 5) stepIdx = 1;
-        else stepIdx = 0;
+        const stepIdx = stepNames.includes(step) ? stepNames.indexOf(step) : 0;
 
         // 当前步骤描述
         const currentLabel = stepLabels[step] || '处理中';
