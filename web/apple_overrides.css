@@ -289,7 +289,7 @@ body { background: var(--bg-page); color: var(--text-1); }
     align-items: flex-start;
     justify-content: space-between;
     gap: 24px;
-    padding: 4px 0 22px;
+    padding: 4px 0 12px;
 }
 .content-title {
     font-size: 30px;
