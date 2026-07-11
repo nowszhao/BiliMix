@@ -16,8 +16,16 @@ bmx task submit --url "https://example.com/podcast.mp3" --title "My Podcast" --w
 ```
 
 参数:
-- `--url`: 音频文件 URL（必填）
-- `--title`: 任务标题（可选）
+- `--url`: 音频文件 URL
+- `--local-path`: 本地文件路径（需先 audio upload）
+- `--type audio|video`: 任务类型（默认 audio）
+- `--video-url`: YouTube 视频 URL
+- `--title`: 任务标题
+- `--keep-bgm`: 保留原音频/视频背景音乐
+- `--duration`: 预知时长
+- `--subtitle-mode bilingual|chinese_only|none`: 字幕模式（video only）
+- `--subtitle-font-size`: 字幕字号（video only）
+- `--skip-confirm / --no-skip-confirm`: 跳过/要求人工确认
 - `--wait`: 等待任务完成
 
 处理模式固定为 `sentence_translate`（100% 全文翻译）。
@@ -52,6 +60,15 @@ bmx task cancel <task_id>
 
 ```bash
 bmx task retry <task_id>
+```
+
+### 完整重做任务
+
+```bash
+# 清除所有产物，从头执行 pipeline
+bmx task redo <task_id>
+# 重做并等待完成
+bmx task redo <task_id> --wait
 ```
 
 ### 确认翻译结果

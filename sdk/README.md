@@ -73,15 +73,20 @@ bmx auth login --username admin --password bilimix2024
 
 | 命令 | 说明 |
 |------|------|
-| `bmx task submit --url <URL> [--wait]` | 提交音频处理 |
-| `bmx task submit --local-path <FILE> [--wait]` | 提交本地文件 |
-| `bmx task list` | 任务列表 |
+| `bmx task submit --url <URL> [--wait]` | 提交音频配音 |
+| `bmx task submit --url <URL> --type video [--subtitle-mode bilingual]` | 提交视频配音 |
+| `bmx task submit --local-path <FILE> [--keep-bgm]` | 提交本地文件，可选保留背景音 |
+| `bmx task list [--limit N]` | 任务列表（可限制返回条数） |
 | `bmx task status <id>` | 查询状态 |
-| `bmx task result <id>` | 获取结果 |
+| `bmx task result <id>` | 获取完整结果 |
 | `bmx task cancel <id>` | 终止任务 |
 | `bmx task retry <id>` | 断点续传 |
+| `bmx task redo <id> [--wait]` | 完整重做（清除产物，从头执行） |
 | `bmx task delete <id>` | 删除任务及文件 |
 | `bmx task wait <id> [--until STATUS]` | 阻塞等待 |
+| `bmx task confirm <id> --words <JSON>` | 确认生词替换 |
+| `bmx task confirm-sentences <id> --translations <JSON>` | 确认句子翻译 |
+| `bmx task retry-synthesis <id>` | 仅重试 TTS 合成 |
 
 ### 播客 & 内容
 
@@ -91,6 +96,15 @@ bmx auth login --username admin --password bilimix2024
 | `bmx podcast rss <url>` | 解析 RSS Feed |
 | `bmx subscriptions list / add / remove` | RSS 订阅管理 |
 | `bmx favorites list / add / remove / check` | 播客收藏管理 |
+
+### 音频 / 视频
+
+| 命令 | 说明 |
+|------|------|
+| `bmx audio upload <file>` | 上传音频/视频文件 |
+| `bmx audio download [--task-id\|--path]` | 下载音频 |
+| `bmx video download --task-id <id>` | 下载配音视频 |
+| `bmx video download-srt --task-id <id>` | 下载字幕 SRT |
 
 ### 翻译 & 工具
 
@@ -114,8 +128,14 @@ bmx auth login --username admin --password bilimix2024
 ## 一行完成
 
 ```bash
-# 提交 + 等待完成 + 提取混合音频 URL
+# 音频配音：提交 + 等待完成 + 提取混合音频 URL
 bmx task submit --url https://example.com/ep.mp3 --wait --field result.mixed_audio
+
+# 视频配音：本地文件 + 双语字幕 + 保留背景音 + 等待完成
+bmx task submit --type video --local-path ./test.mp4 --subtitle-mode bilingual --keep-bgm --wait
+
+# 完整重做失败的任务
+bmx task redo <task_id> --wait
 
 # 查今天新增的单集
 bmx episodes list --time-range today
