@@ -59,23 +59,60 @@ install_miniconda() {
     ok "Miniconda 安装完成"
 }
 
-if ! command -v conda &>/dev/null; then
-    if [ -f "$HOME/miniconda3/bin/conda" ]; then
-        info "找到已安装的 Miniconda，加入 PATH"
+if ! command -v conda &>/dev/null && ! type conda &>/dev/null; then
+    if [ -x "$HOME/miniconda3/bin/conda" ]; then
+        info "找到已安装的 Miniconda: $HOME/miniconda3"
     else
         warn "未检测到 conda，开始安装 Miniconda"
         install_miniconda
     fi
 fi
 
+# 定位 conda.sh（conda 可能是 shell 函数而非可执行文件）
+if [ -x "$HOME/miniconda3/bin/conda" ]; then
+    CONDA_BASE="$("$HOME/miniconda3/bin/conda" info --base)"
+elif command -v conda &>/dev/null; then
+    CONDA_BASE="$(conda info --base 2>/dev/null)"
+else
+    # conda 是 shell 函数，通过 CONDA_EXE 定位
+    if [ -n "$CONDA_EXE" ] && [ -x "$CONDA_EXE" ]; then
+        CONDA_BASE="$("$CONDA_EXE" info --base)"
+    else
+        err "无法定位 conda，请手动运行 'conda init' 后重开终端，再运行 ./setup.sh"
+        exit 1
+    fi
+fi
+
 # 激活 conda
-CONDA_BASE="$("$HOME/miniconda3/bin/conda" info --base 2>/dev/null || command -v conda &>/dev/null && conda info --base)"
 if [ -z "$CONDA_BASE" ] || [ ! -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
-    err "无法定位 conda.sh，请手动 source conda 初始化后重试"
+    err "无法定位 conda.sh，请手动运行 'conda init' 后重开终端，再运行 ./setup.sh"
     exit 1
 fi
 source "$CONDA_BASE/etc/profile.d/conda.sh"
 ok "conda 已激活: $CONDA_BASE"
+
+# ---------- 1b. 中国大陆镜像检测 ----------
+# 测试官方源响应时间，>3s 则切换到清华镜像
+setup_mirrors() {
+    local pypi_time conda_time
+    pypi_time=$(curl -s -o /dev/null -w "%{time_total}" --max-time 5 https://pypi.org/simple/flask/ 2>/dev/null || echo "99")
+    conda_time=$(curl -s -o /dev/null -w "%{time_total}" --max-time 5 https://repo.anaconda.org/pkgs/main/noarch/ 2>/dev/null || echo "99")
+
+    if awk "BEGIN{exit !($pypi_time > 3 || $conda_time > 3)}"; then
+        warn "检测到网络较慢（PyPI: ${pypi_time}s, conda: ${conda_time}s），切换到中国大陆镜像"
+        # conda 镜像
+        conda config --set channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main/ \
+                           https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r/ --force 2>/dev/null || true
+        conda config --set show_channel_urls yes 2>/dev/null || true
+        # pip 镜像（写入环境变量，后续 pip install 自动使用）
+        export PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+        export PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
+        ok "已切换：pip → 清华，conda → 清华"
+    else
+        info "网络良好（PyPI: ${pypi_time}s, conda: ${conda_time}s），使用官方源"
+    fi
+}
+setup_mirrors
 
 # ---------- 2. 创建 bilimix env ----------
 if conda env list | grep -q "^bilimix\b"; then
@@ -91,6 +128,10 @@ ENV_BIN="$(dirname "$ENV_PYTHON")"
 ok "激活 bilimix env: $ENV_PYTHON"
 
 # ---------- 3. 系统依赖 ----------
+# HuggingFace 镜像（中国大陆访问 huggingface.co 常被墙）
+export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
+export HF_HUB_ENABLE_HF_TRANSFER=0
+
 if [ "$OS" = "Darwin" ]; then
     if ! command -v brew &>/dev/null; then
         warn "未检测到 Homebrew，请先安装：https://brew.sh"
@@ -170,6 +211,30 @@ python -c "import flask, torch, torchaudio, demucs, soundfile, transformers, pyd
     exit 1
 }
 ok "依赖验证通过"
+
+# ---------- 10b. 持久化环境变量到 shell rc（便于后续启动）----------
+persist_env_to_shell() {
+    local rc_file=""
+    case "$SHELL" in
+        */zsh)  rc_file="$HOME/.zshrc" ;;
+        */bash) rc_file="$HOME/.bashrc" ;;
+        *) rc_file="$HOME/.profile" ;;
+    esac
+    [ -z "$rc_file" ] && return
+    touch "$rc_file"
+
+    # HuggingFace 镜像（中国大陆必需）
+    if ! grep -q "HF_ENDPOINT" "$rc_file" 2>/dev/null; then
+        echo '' >> "$rc_file"
+        echo '# BiliMix 环境变量' >> "$rc_file"
+        echo 'export HF_ENDPOINT=https://hf-mirror.com' >> "$rc_file"
+        echo "已写入 HF_ENDPOINT 到 $rc_file"
+    fi
+}
+if [ -n "${PIP_INDEX_URL:-}" ]; then
+    info "持久化镜像配置到 shell rc ..."
+    persist_env_to_shell
+fi
 
 # ---------- 11. 后续步骤提示 ----------
 echo ""

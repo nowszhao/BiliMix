@@ -117,6 +117,8 @@ python services/web_app.py 5555
 | TTS 首次运行慢 | 自动从 HuggingFace 下载模型权重 ~3GB，属正常 |
 | 环境损坏 | 重新运行 `./setup.sh`（幂等，会修复缺失部分） |
 | demucs 子进程失败 | 检查 `sys.executable` 是否在 bilimix env 中 |
+| 下载慢/超时 | setup.sh 自动检测网络，慢时切换清华镜像（pip + conda + HuggingFace）|
+| HuggingFace 模型下载失败 | 确认 `export HF_ENDPOINT=https://hf-mirror.com`（setup.sh 已持久化到 shell rc）|
 
 ## 目录结构
 
