@@ -1566,7 +1566,7 @@ def redo_task(task_id):
                             shutil.rmtree(full)
                         else:
                             os.remove(full)
-                    except:
+                    except Exception:
                         pass
 
     # ---- 2. 清空内存 task 中的所有处理状态 ----
@@ -1618,7 +1618,7 @@ def redo_task(task_id):
             "total_words": 0,
             "total_replacements": 0,
         })
-    except:
+    except Exception:
         pass
 
     # ---- 4. 启动重做线程 ----

@@ -101,6 +101,7 @@ def init_db():
                 title         TEXT DEFAULT '',
                 difficulty    TEXT DEFAULT '',
                 process_mode  TEXT DEFAULT 'sentence_translate',
+                type          TEXT DEFAULT 'audio',
                 status        TEXT DEFAULT '',
                 progress      INTEGER DEFAULT 0,
                 message       TEXT DEFAULT '',
@@ -168,6 +169,11 @@ def init_db():
         # 向已有的 tasks 表添加 title 列（兼容旧数据库）
         try:
             conn.execute("ALTER TABLE tasks ADD COLUMN title TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass  # 列已存在，忽略
+        # 向已有的 tasks 表添加 type 列（兼容旧数据库）
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN type TEXT DEFAULT 'audio'")
         except sqlite3.OperationalError:
             pass  # 列已存在，忽略
         # 向已有的 episodes 表添加 published_at_ts 列（兼容旧数据库）
