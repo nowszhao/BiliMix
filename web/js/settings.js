@@ -703,53 +703,10 @@ function _renderTaskDetailPanel(task) {
         // 当前步骤描述
         const currentLabel = stepLabels[step] || '处理中';
 
-        // ETA —— 基于当前步骤的实际速率（而非整体进度线性估算）
-        let etaStr = '';
-        if (progress > 0 && progress < 100) {
-            // 从 message 中提取 "(N/M)" 计数（如 "(5/40)"）
-            const countMatch = message.match(/\((\d+)\/(\d+)\)/);
-            if (countMatch) {
-                const done = parseInt(countMatch[1], 10);
-                const total = parseInt(countMatch[2], 10);
-                // 从 _step_timing 中取当前步骤的已流逝时间
-                const timing = (task._step_timing || []);
-                let stepElapsedSec = 0;
-                for (let ti = timing.length - 1; ti >= 0; ti--) {
-                    if (timing[ti].step === step && timing[ti].start > 0) {
-                        const end = timing[ti].end > 0 ? timing[ti].end : Date.now() / 1000;
-                        stepElapsedSec = end - timing[ti].start;
-                        break;
-                    }
-                }
-                // 有计数 + 有时序 → 根据当前步骤速率估算
-                if (stepElapsedSec > 0 && done > 0 && total > done) {
-                    const rate = done / Math.max(stepElapsedSec, 1);
-                    const remainingSec = (total - done) / rate;
-                    if (remainingSec > 0) {
-                        const mins = Math.floor(remainingSec / 60);
-                        etaStr = mins > 0 ? `约 ${mins} 分钟` : '不到 1 分钟';
-                    }
-                }
-            }
-            // 兜底：整体线性（用于没有计数的步骤：download/transcribe/merge）
-            if (!etaStr && task.created_at) {
-                const created = new Date(task.created_at);
-                const elapsed = new Date() - created;
-                const remaining = elapsed / (progress / 100) - elapsed;
-                if (remaining > 0) {
-                    const mins = Math.floor(remaining / 60000);
-                    etaStr = mins > 0 ? `约 ${mins} 分钟` : '不到 1 分钟';
-                }
-            }
-        }
-
         html += `<div class="task-detail-progress">`;
         // 主数字
         html += `<div class="progress-hero">${progress}%</div>`;
         html += `<div class="progress-label">${escapeHtml(currentLabel)}</div>`;
-        if (etaStr) {
-            html += `<div class="progress-eta">预计还剩 ${etaStr}</div>`;
-        }
 
         // 圆点线
         html += `<div class="progress-dots">`;
