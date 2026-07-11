@@ -607,8 +607,12 @@ def continue_after_sentence_confirmation(task_id: str):
                 print(f"[Confucius] 提取了 {len(confucius_ref_map)} 个参考音频 (mode={ref_mode})")
 
             def _confucius_progress(current, total):
+                # 防止 TTS 完成后回调仍然修改 message 导致 step/message 不同步
+                task_cur = get_task(task_id)
+                if task_cur and task_cur.get("step") != "synthesize":
+                    return
                 pct = 60 + int((current / max(total, 1)) * 20)
-                update_task(task_id, progress=pct,
+                update_task(task_id, step="synthesize", progress=pct,
                             message=f"Step 3/4: Confucius4-TTS 句子合成 ({current}/{total})",
                             _tts_completed_count=current)
 
