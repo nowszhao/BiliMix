@@ -142,8 +142,38 @@ def _check_required_dependencies():
             "    安装：pip install whisperx"
         )
 
+    # ---- 4b. Confucius4-TTS root & python ----
+    confucius_root = getattr(config, "CONFUCIUS4_TTS_ROOT", "")
+    if confucius_root:
+        if not os.path.isdir(confucius_root):
+            missing_hints.append(
+                f"  - Confucius4-TTS 目录不存在: {confucius_root}\n"
+                f"    配置项 CONFUCIUS4_TTS_ROOT\n"
+                f"    安装：git clone https://github.com/nowszhao/Confucius4-TTS-CPU.git ../Confucius4-TTS-CPU"
+            )
+    else:
+        _default_root = os.path.join(config.BASE_DIR, "..", "Confucius4-TTS-CPU")
+        if not os.path.isdir(_default_root):
+            missing_hints.append(
+                "  - Confucius4-TTS 目录未配置（CONFUCIUS4_TTS_ROOT 为空且默认路径不存在）\n"
+                "    默认路径: " + os.path.abspath(_default_root) + "\n"
+                "    安装：git clone https://github.com/nowszhao/Confucius4-TTS-CPU.git ../Confucius4-TTS-CPU"
+            )
+
+    tts_python = getattr(config, "CONFUCIUS4_TTS_PYTHON", "")
+    tts_python_bin = tts_python or sys.executable
+    if not os.path.isfile(tts_python_bin):
+        missing_hints.append(
+            f"  - TTS Python 解释器不存在: {tts_python_bin}\n"
+            f"    配置项 CONFUCIUS4_TTS_PYTHON（留空则使用当前解释器 sys.executable）"
+        )
+
+    worker_script = os.path.join(config.BASE_DIR, "workers", "confucius_tts_worker.py")
+    if not os.path.isfile(worker_script):
+        missing_hints.append(f"  - TTS worker 脚本缺失: {worker_script}")
+
     # ---- 5. Ollama 服务（LLM 翻译依赖）----
-    ollama_url = getattr(config, "OLLAMA_URL", "http://localhost:11434")
+    ollama_url = getattr(config, "OLLAMA_BASE_URL", "http://localhost:11434")
     try:
         import urllib.request as _urllib_req
         _urllib_req.urlopen(f"{ollama_url}/api/tags", timeout=3)

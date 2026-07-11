@@ -1,0 +1,41 @@
+# ============================================================
+# BiliMix Confucius4-TTS 运行时依赖
+#
+# - 本文件仅包含 TTS 运行时所需的 Python 包
+# - torch / torchaudio 由 setup.sh 单独安装（控制 CPU/CUDA index URL）
+# - Confucius4-TTS 本体不 pip install，通过 sys.path 从 clone 的源码树加载
+#   （workers/confucius_tts_worker.py 用 sys.path.insert(0, CONFUCIUS4_TTS_ROOT)）
+# - 已剔除训练专用包（pytorch-lightning / datasets / matplotlib / tensorboard）
+# - 版本对齐 Confucius4-TTS-CPU/requirements.txt
+# ============================================================
+
+# ---- Hugging Face 生态 ----
+transformers==4.52.4
+tokenizers==0.21.4
+safetensors==0.7.0
+huggingface_hub==0.36.2
+sentencepiece==0.2.1
+
+# ---- 科学计算 ----
+numpy==1.26.4
+scipy==1.15.3
+
+# ---- 音频处理 ----
+librosa==0.10.2.post1
+soundfile==0.13.1
+
+# ---- 文本/语言处理 ----
+inflect==7.5.0
+regex==2026.3.32
+jaconv==0.5.0
+pykakasi==2.3.0
+ema-pytorch==0.7.9
+wetext==0.1.4
+
+# ---- 配置 & 工具 ----
+PyYAML==6.0.3
+tqdm==4.67.3
+packaging==26.0
+filelock==3.25.2
+fsspec==2026.2.0
+protobuf==3.19.6

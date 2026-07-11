@@ -1,6 +1,7 @@
 # ============================================================
 # BiliMix 主项目依赖
-# 一次性安装：pip install -r requirements.txt
+# 一次性安装：./setup.sh  或  pip install -r requirements.txt
+# TTS 依赖见 requirements-tts.txt（由 setup.sh 自动安装）
 # ============================================================
 
 # ---- Web 服务 ----
@@ -18,7 +19,7 @@ yt-dlp>=2024.0
 demucs>=4.0
 
 # ---- Whisper 转录 ----
-# 注意：WhisperX 是通过 subprocess 调用 whisperx 二进制，不是 import
+# WhisperX 通过 subprocess 调用 whisperx 二进制，不是 import
 # 但仍然需要 torch / torchaudio 用于 demucs 和 TTS
 torch>=2.0
 torchaudio>=2.0
@@ -30,19 +31,9 @@ ffmpeg-python>=0.2
 
 
 # ============================================================
-# Confucius4-TTS-CPU 子进程依赖
-# TTS 是独立子进程运行，主进程只需通过 subprocess 启动它。
-# TTS 子进程的 Python 环境（CONFUCIUS4_TTS_PYTHON）必须装齐以下包：
-#
-#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-#   pip install \
-#       transformers safetensors huggingface_hub \
-#       librosa scipy tqdm PyYAML \
-#       inflect jaconv pykakasi sentencepiece wetext ema-pytorch
-#
-# 以及 Confucius4-TTS 本身：
-#   pip install git+https://github.com/netease-youdao/Confucius4-TTS.git
-#
-# 首次运行会自动从 HuggingFace 下载模型权重：
-#   netease-youdao/Confucius4-TTS (~3GB)
+# Confucius4-TTS-CPU 依赖见 requirements-tts.txt
+# setup.sh 会自动：
+#   1. pip install -r requirements-tts.txt
+#   2. git clone https://github.com/nowszhao/Confucius4-TTS-CPU.git ../Confucius4-TTS-CPU
+# Confucius4-TTS 本体不 pip install，运行时通过 sys.path 从源码树加载
 # ============================================================

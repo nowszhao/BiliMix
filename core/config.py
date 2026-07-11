@@ -30,7 +30,7 @@ for _d in (DATA_DIR, OUTPUT_DIR, TTS_CACHE_DIR, RESULT_DIR, DOWNLOAD_DIR):
 # WhisperX 配置
 # ========================
 # whisperx 可执行文件路径（conda 环境中的绝对路径，避免 PATH 找不到）
-WHISPERX_BIN = "/root/miniconda3/envs/whisperx_new/bin/whisperx"
+WHISPERX_BIN = "whisperx"
 WHISPERX_MODEL = "medium"
 WHISPERX_DEVICE = "cpu"
 WHISPERX_COMPUTE_TYPE = "int8"
@@ -88,7 +88,7 @@ TTS_ENGINE = "confucius-tts"
 CONFUCIUS4_TTS_ROOT = ""
 # Confucius4-TTS-CPU 使用的 Python 解释器（需已安装 torch/transformers 等依赖）
 # 留空则使用当前 Python 解释器 (sys.executable)
-CONFUCIUS4_TTS_PYTHON = "/root/miniconda3/envs/qwen3-tts/bin/python"
+CONFUCIUS4_TTS_PYTHON = ""
 # 推理设备: "cpu" 或 "cuda"
 CONFUCIUS4_TTS_DEVICE = "cpu"
 # 单条 TTS 合成超时（秒），CPU 推理较慢，长句可能需要 60-120s

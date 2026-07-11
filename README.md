@@ -48,58 +48,75 @@
 
 ## 快速开始
 
-### 1. 系统依赖（必须先安装）
-
-| 依赖 | macOS 安装 | 说明 |
-|------|-----------|------|
-| **FFmpeg** | `brew install ffmpeg` | 音视频转码、字幕烧录、人声分离底层依赖 |
-| **Ollama** | [ollama.com](https://ollama.com) | 本地 LLM 运行时，启动后默认监听 11434 |
-| **WhisperX** | `pip install whisperx` | 语音转录命令行工具（通过 `config.WHISPERX_BIN` 指定路径） |
-
-### 2. Python 依赖
-
-> ⚠️ **启动时会强制检测以下依赖**，缺失任何一项服务都会直接退出，不会静默降级。
-> 检测范围：Python 包（import）+ CLI 工具（PATH 可执行）+ demucs 子进程可用性 + Ollama 服务可达。
+### 一键安装（推荐）
 
 ```bash
-# 推荐使用 Python 3.10+
-pip install -r requirements.txt
+./setup.sh
 ```
 
-完整依赖清单（详见 `requirements.txt`）：
+`setup.sh` 会自动完成：
+1. 安装 Miniconda（如未安装）并创建 `bilimix` conda env（Python 3.10）
+2. 安装系统依赖（FFmpeg / Ollama，macOS 用 brew，Linux 用 apt）
+3. 安装 Python 依赖（`requirements.txt` + whisperx + `requirements-tts.txt`）
+4. clone Confucius4-TTS-CPU 到 `../Confucius4-TTS-CPU`
+5. 从模板 `core/config_local.example.py` 生成 `core/config_local.py`（自动填入检测到的路径）
 
-| 包 | 用途 |
-|-----|------|
-| `flask` | Web 服务 + REST API |
-| `requests` | HTTP 客户端（Ollama API 调用） |
-| `pydub` | 音频片段拼接 |
-| `soundfile` | 音频文件读写 |
-| `torch` / `torchaudio` | 模型推理（demucs / TTS） |
-| `demucs` | 人声/背景音分离（必须装在主 Python 环境） |
-| `ffmpeg-python` | FFmpeg Python 绑定 |
-| `yt-dlp` | YouTube 视频下载（命令行） |
+> 幂等：可重复运行 `./setup.sh`，已完成的步骤会自动跳过。
 
-### 3. 启动
+### 启动
 
 ```bash
+# 1. 启动 Ollama 服务（首次需要）
+ollama serve                   # 或 brew services start ollama
+
+# 2. 拉取翻译模型
+ollama pull translategemma:4b
+
+# 3. 激活 conda env 并启动 BiliMix
+conda activate bilimix
 python services/web_app.py 5555
-# 浏览器访问 http://localhost:5555
-# 认证默认关闭，可在设置中开启
+
+# 4. 浏览器访问 http://localhost:5555
 ```
 
-如果依赖缺失，启动时会看到类似错误：
+### 启动时依赖检测
+
+> ⚠️ **启动时会强制检测所有依赖**，缺失任何一项服务都会直接退出，**不会静默降级**。
+
+检测范围：
+- Python 包（flask / pydub / torch / torchaudio / soundfile / transformers）
+- CLI 工具（ffmpeg / yt-dlp / whisperx）
+- demucs 子进程（`sys.executable -m demucs`）
+- Confucius4-TTS 目录 + worker 脚本
+- Ollama 服务可达
+
+如果依赖缺失，启动会看到类似错误：
 ```
 ============================================================
 ❌ 启动失败：缺少以下依赖：
   - Python 模块 demucs (pip install demucs)
-  - ffmpeg（音视频转码/字幕烧录/人声分离）不在 PATH
-      安装：brew install ffmpeg
-  - WhisperX 二进制不存在: /path/to/whisperx
-      ...
+  - ffmpeg 不在 PATH（brew install ffmpeg）
+  - Confucius4-TTS 目录未配置
+      安装：git clone https://github.com/nowszhao/Confucius4-TTS-CPU.git ../Confucius4-TTS-CPU
   - Ollama 服务不可达 (http://localhost:11434)
-      ...
+      启动：ollama serve
 ============================================================
 ```
+
+### 手动配置
+
+如需自定义配置（如不同模型、不同 Python 环境），编辑 `core/config_local.py`。模板参考 `core/config_local.example.py`。
+
+### Troubleshooting
+
+| 问题 | 解决方案 |
+|------|---------|
+| `conda: command not found` | `source ~/.zshrc` 或 `source ~/.bashrc` 后重试 |
+| Ollama 不可达 | 确认 `ollama serve` 已启动，监听 11434 |
+| WhisperX not found | 确保已 `conda activate bilimix`（whisperx 在 env PATH） |
+| TTS 首次运行慢 | 自动从 HuggingFace 下载模型权重 ~3GB，属正常 |
+| 环境损坏 | 重新运行 `./setup.sh`（幂等，会修复缺失部分） |
+| demucs 子进程失败 | 检查 `sys.executable` 是否在 bilimix env 中 |
 
 ## 目录结构
 
