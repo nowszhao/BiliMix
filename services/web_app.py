@@ -251,6 +251,21 @@ def generate_task_id(url: str) -> str:
     return hashlib.md5(url.encode("utf-8")).hexdigest()
 
 
+def _load_step_timing_from_disk(task: dict) -> list:
+    """从磁盘的 task_result.json 中加载步骤耗时数据"""
+    basename = task.get("_basename", "") or (task.get("result", {}).get("basename", ""))
+    if not basename:
+        return []
+    result_file = os.path.join(config.RESULT_DIR, basename, "task_result.json")
+    if not os.path.exists(result_file):
+        return []
+    try:
+        with open(result_file, "r") as f:
+            disk = json.load(f)
+        return disk.get("_step_timing", [])
+    except Exception:
+        return []
+
 def _cleanup_intermediate_files(result_dir: str):
     """删除任务完成后不再需要的中间文件（参考音频、TTS 缓存）"""
     cleanup_dirs = [
@@ -2154,6 +2169,8 @@ def get_task_result(task_id):
         "result": task.get("result"),
         "time_mapping": task.get("time_mapping", []),
         "video_result": task.get("video_result"),
+        # 步骤耗时：内存没有时从磁盘 task_result.json 恢复
+        "_step_timing": task.get("_step_timing") or _load_step_timing_from_disk(task),
     }
     # 视频任务：暴露原始视频 URL
     # 优先 _video_path（step0 下载的），fallback 到任务 url

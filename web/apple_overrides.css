@@ -2864,3 +2864,18 @@ body { background: var(--bg-page); color: var(--text-1); }
     gap: 8px;
 }
 .confirm-actions-right { display: flex; gap: 8px; align-items: center; }
+
+/* ============================================================
+   COMPACT STEP TIMING LINE
+   ============================================================ */
+.task-detail-timing {
+    font-size: 12px;
+    color: var(--text-3);
+    padding: 6px 14px;
+    background: var(--bg-hover);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    white-space: nowrap;
+    overflow-x: auto;
+}
+.task-detail-timing::-webkit-scrollbar { display: none; }

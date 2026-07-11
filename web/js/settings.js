@@ -683,18 +683,22 @@ function _renderTaskDetailPanel(task) {
     }
     html += `</div>`;
 
-    // 步骤耗时明细（仅在完成/出错态且有数据时显示）
+    // 步骤耗时明细（紧凑单行，仅辅助信息）
     if (stepTiming.length > 0 && (status === 'completed' || status === 'error')) {
-        html += `<div class="task-detail-meta" style="grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));">`;
+        const parts = [];
         stepTiming.forEach(st => {
             const lbl = stepLabels[st.step] || st.step;
             const dur = (st.end || 0) > (st.start || 0) ? (st.end - st.start) : 0;
-            const durStr = dur > 59
-                ? `${Math.floor(dur / 60)} 分 ${Math.floor(dur % 60)} 秒`
-                : `${Math.round(dur)} 秒`;
-            html += `<div class="task-detail-meta-item"><span class="task-detail-meta-label">${lbl} 耗时</span><span class="task-detail-meta-value">${durStr}</span></div>`;
+            if (dur > 0) {
+                const durStr = dur > 59
+                    ? `${Math.floor(dur / 60)}分${Math.floor(dur % 60)}秒`
+                    : `${Math.round(dur)}秒`;
+                parts.push(`${lbl} ${durStr}`);
+            }
         });
-        html += `</div>`;
+        if (parts.length > 0) {
+            html += `<div class="task-detail-timing">⏱ ${parts.join(' · ')}</div>`;
+        }
     }
 
     // Processing: progress + steps + estimated remaining time
