@@ -27,7 +27,7 @@ Thumbs.db
 
 # 视频文件
 *.mp4
-
+*.mp3
 # SQLite 数据库文件
 data/bilimix.db
 data/bilimix.db-shm
@@ -46,3 +46,4 @@ core/config_local.py
 .playwright-cli
 .venv_whisperx
 scripts/whisperx_run.py
+.claude

@@ -3094,7 +3094,7 @@ body {
 
 /* Settings Group */
 .settings-group {
-    margin-bottom: 20px;
+    margin-bottom: 0;
 }
 
 .settings-group-title {
@@ -3139,7 +3139,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 4px;
+    padding: 10px 16px;
     gap: 12px;
     border-bottom: 1px solid var(--border-light);
 }

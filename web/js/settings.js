@@ -285,6 +285,18 @@ let allTasksCache = [];             // 全部任务缓存
 // 任务列表 — 表格式视图 + 筛选 / 排序 / 搜索
 // ============================================================
 
+// ============================================================
+// 任务列表面板折叠/展开
+// ============================================================
+
+function toggleTaskListPanel() {
+    const panel = document.querySelector('.task-list-panel');
+    const btn = document.getElementById('btn-toggle-panel');
+    if (!panel) return;
+    panel.classList.toggle('collapsed');
+    if (btn) btn.title = panel.classList.contains('collapsed') ? '展开列表' : '收起列表';
+}
+
 async function loadHistory() {
     const container = document.getElementById('tasks-list-container');
     if (!container) return;
@@ -365,6 +377,14 @@ function renderTaskTable() {
         else if (t.status in counts) counts[t.status]++;
     });
 
+    // 同步侧边栏任务徽标：处理中 + 出错的任务数
+    const navBadgeTasks = document.getElementById('nav-badge-tasks');
+    if (navBadgeTasks) {
+        const badgeTotal = (counts.processing || 0) + (counts.error || 0);
+        navBadgeTasks.textContent = badgeTotal > 99 ? '99+' : badgeTotal;
+        navBadgeTasks.style.display = badgeTotal > 0 ? '' : 'none';
+    }
+
     let html = '';
 
     // ---- 筛选栏 ----
@@ -425,7 +445,7 @@ function renderTaskTable() {
     for (const key of groupOrder) {
         if (!groups[key] || groups[key].length === 0) continue;
         const info = groupLabels[key] || { label: key, cls: '' };
-        html += `<div class="task-card-group-label">${info.label}<span class="count">${groups[key].length}</span></div>`;
+        html += `<div class="task-card-group-label" onclick="this.classList.toggle('collapsed');_hideCardsAfter(this)">${info.label}<span class="count">${groups[key].length}</span><svg class="task-card-group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></div>`;
 
         groups[key].forEach(t => {
             html += _renderTaskCard(t);
@@ -438,6 +458,19 @@ function renderTaskTable() {
     if (taskExpandedId) {
         const activeCard = document.querySelector(`.task-card[data-task-id="${taskExpandedId}"]`);
         if (activeCard) activeCard.classList.add('active');
+    }
+}
+
+// Toggle hide all cards after a group label until next label
+function _hideCardsAfter(labelEl) {
+    const collapsed = labelEl.classList.contains('collapsed');
+    let next = labelEl.nextElementSibling;
+    while (next) {
+        if (next.classList.contains('task-card-group-label')) break;
+        if (next.classList.contains('task-card')) {
+            next.style.display = collapsed ? 'none' : '';
+        }
+        next = next.nextElementSibling;
     }
 }
 
@@ -533,7 +566,8 @@ async function toggleTaskDetail(taskId, url) {
     }
 
     try {
-        const resp = await fetch(`/api/task/${taskId}`);
+        // 用 /result 接口才能拿到 result.mixed_audio、original_duration 等完整数据
+        const resp = await fetch(`/api/task/${taskId}/result`);
         const task = await resp.json();
 
         currentTaskId = taskId;
@@ -565,10 +599,13 @@ function _renderTaskDetailPanel(task) {
     const displayName = task.title || task.url || '--';
     const typeLabel = (task.process_mode === 'video') ? '视频配音' : '音频转录';
     const typeCls = (task.process_mode === 'video') ? 'video' : 'audio';
-    const dur = task.original_duration || 0;
-    const mixedDur = (task.result || {}).mixed_duration || task.mixed_duration || 0;
+    // duration 兜底：顶层 0 时从 result 拿
+    const resultData = task.result || {};
+    const dur = task.original_duration || resultData.original_duration || 0;
+    const mixedDur = resultData.mixed_duration || task.mixed_duration || 0;
     const src = task.url || '--';
     const cAt = (task.created_at || '').substring(0, 16);
+    const trCount = (task.translated_indices || []).length;
 
     let html = '';
 
@@ -587,7 +624,6 @@ function _renderTaskDetailPanel(task) {
     html += `</div>`;
 
     // Meta grid: duration, mixed duration, translated count, created time
-    const trCount = (task.translated_indices || []).length;
     html += `<div class="task-detail-meta">`;
     html += `<div class="task-detail-meta-item"><span class="task-detail-meta-label">原时长</span><span class="task-detail-meta-value">${formatTime(dur)}</span></div>`;
     if (mixedDur > 0) {
@@ -983,7 +1019,8 @@ function startTaskPoll(taskId, url) {
     stopTaskPoll();
     taskPollInterval = setInterval(async () => {
         try {
-            const resp = await fetch(`/api/task/${taskId}`);
+            // 用 /result 端点保证 result 字段始终存在（completed 时填充）
+            const resp = await fetch(`/api/task/${taskId}/result`);
             const task = await resp.json();
             // 刷新右侧面板
             const content = document.getElementById('task-detail-content');
@@ -1312,7 +1349,7 @@ function renderSettingsForm(cfg) {
                 🎵 Confucius4-TTS (CPU)
                 <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
-            <div class="settings-group-body" style="display:none">
+            <div class="settings-group-body">
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">推理设备</span>
@@ -1407,6 +1444,7 @@ function renderSettingsForm(cfg) {
                     </div>
                 </div>
             </div>
+            </div>
         </div>
 
         <!-- ⚙️ 重试 -->
@@ -1415,7 +1453,7 @@ function renderSettingsForm(cfg) {
                 ⚙️ 重试设置
                 <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
-            <div class="settings-group-body" style="display:none">
+            <div class="settings-group-body">
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">全局重试次数</span>
@@ -1427,6 +1465,7 @@ function renderSettingsForm(cfg) {
                 </div>
             </div>
         </div>
+        </div>
 
         <!-- WhisperX -->
         <div class="settings-group">
@@ -1434,7 +1473,7 @@ function renderSettingsForm(cfg) {
                 🎙️ WhisperX 转录
                 <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
-            <div class="settings-group-body" style="display:none">
+            <div class="settings-group-body">
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">模型大小</span>
@@ -1486,6 +1525,7 @@ function renderSettingsForm(cfg) {
                 </div>
             </div>
         </div>
+        </div>
 
         <!-- Ollama -->
         <div class="settings-group">
@@ -1493,7 +1533,7 @@ function renderSettingsForm(cfg) {
                 🤖 Ollama LLM
                 <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
-            <div class="settings-group-body" style="display:none">
+            <div class="settings-group-body">
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">API 地址</span>
@@ -1525,6 +1565,7 @@ function renderSettingsForm(cfg) {
                 </div>
             </div>
         </div>
+        </div>
 
         <!-- 音频输出 -->
         <div class="settings-group">
@@ -1532,7 +1573,7 @@ function renderSettingsForm(cfg) {
                 💿 音频输出
                 <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
-            <div class="settings-group-body" style="display:none">
+            <div class="settings-group-body">
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">输出格式</span>
@@ -1559,6 +1600,7 @@ function renderSettingsForm(cfg) {
                 </div>
             </div>
         </div>
+        </div>
 
         <!-- 登录认证 -->
         <div class="settings-group">
@@ -1566,7 +1608,7 @@ function renderSettingsForm(cfg) {
                 🔐 登录认证
                 <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
-            <div class="settings-group-body" style="display:none">
+            <div class="settings-group-body">
             <div class="settings-item">
                 <div class="settings-item-label">
                     <span class="settings-item-name">启用登录</span>

@@ -165,6 +165,16 @@ async function loadEpisodeStats(overrideTotal) {
             navBadgeUpdates.style.display = unreadCount > 0 ? '' : 'none';
         }
 
+        // 更新侧边栏任务 badge（处理中的任务数 + 出错数）
+        const navBadgeTasks = document.getElementById('nav-badge-tasks');
+        if (navBadgeTasks) {
+            const processing = counts.processing || 0;
+            const errored = counts.error || 0;
+            const total = processing + errored;
+            navBadgeTasks.textContent = total > 99 ? '99+' : total;
+            navBadgeTasks.style.display = total > 0 ? '' : 'none';
+        }
+
         // 更新侧边栏订阅未读数
         renderSidebarSubscriptions(data.subscriptions || []);
     } catch (e) {}
