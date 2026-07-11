@@ -706,11 +706,12 @@ function _renderTaskDetailPanel(task) {
         for (let i = 0; i < totalSteps; i++) {
             const s = STEP_CONFIG.names[i];
             const lbl = STEP_CONFIG.labels[s] || s;
+            const so = STEP_CONFIG.order[s] || 0;
             let cls = 'progress-dot';
-            if (i < stepIdx) cls += ' done';
-            else if (i === stepIdx) cls += ' active';
+            if (so < stepIdx) cls += ' done';
+            else if (so === stepIdx) cls += ' active';
             html += `<span class="${cls}" title="${lbl}"><span class="dot-inner"></span><span class="dot-label">${lbl}</span></span>`;
-            if (i < totalSteps - 1) html += `<span class="progress-line ${i < stepIdx ? 'done' : ''}"></span>`;
+            if (i < totalSteps - 1) html += `<span class="progress-line ${so < stepIdx ? 'done' : ''}"></span>`;
         }
         html += `</div>`;
 
