@@ -684,63 +684,59 @@ function _renderTaskDetailPanel(task) {
     html += `</div>`;
     html += `</div>`;
 
-    // Processing: progress + steps + estimated remaining time
+    // Processing: Jobs-style minimal progress view
     if (status === 'processing' || status === 'downloading') {
         const progress = task.progress || 0;
         const message = task.message || '';
         const step = task.step || '';
-        const steps = [
-            {key: 'download', label: '下载', icon: '⬇'},
-            {key: 'transcribe', label: '转录', icon: '🎙'},
-            {key: 'translate', label: '翻译', icon: '🌐'},
-            {key: 'confirm', label: '确认', icon: '✅'},
-            {key: 'synthesize', label: '合成', icon: '🔊'},
-            {key: 'mix', label: '拼接', icon: '🎬'},
-        ];
-        const stepIdx = steps.findIndex(s => s.key === step);
+        const stepNames = ['download','separate','transcribe','translate','confirm','synthesize','merge','mix','subtitle','assemble'];
+        const stepLabels = {download:'下载',separate:'分离',transcribe:'转录',translate:'翻译',confirm:'确认',synthesize:'合成',merge:'拼接',mix:'混音',subtitle:'字幕',assemble:'组装'};
+        const stepIdx = stepNames.indexOf(step);
+        const totalSteps = stepNames.length;
 
-        // 估算剩余时间（基于已用时间和进度）
+        // 当前步骤描述（提取 message 中的人话）
+        const currentLabel = stepLabels[step] || '处理中';
+
+        // ETA
         let etaStr = '';
         if (task.created_at && progress > 0 && progress < 100) {
             const created = new Date(task.created_at);
-            const now = new Date();
-            const elapsedMs = now - created;
-            const totalEstimated = elapsedMs / (progress / 100);
-            const remainingMs = totalEstimated - elapsedMs;
-            if (remainingMs > 0) {
-                const mins = Math.floor(remainingMs / 60000);
-                if (mins > 0) etaStr = `约 ${mins} 分钟`;
-                else etaStr = '不到 1 分钟';
+            const elapsed = new Date() - created;
+            const remaining = elapsed / (progress / 100) - elapsed;
+            if (remaining > 0) {
+                const mins = Math.floor(remaining / 60000);
+                etaStr = mins > 0 ? `约 ${mins} 分钟` : '不到 1 分钟';
             }
         }
 
         html += `<div class="task-detail-progress">`;
-        html += `<div class="task-detail-progress-bar" style="position:relative;">`;
-        html += `<div class="task-detail-progress-fill" style="width:${progress}%"><div class="task-detail-progress-glow"></div></div>`;
-        html += `</div>`;
-        html += `<div class="task-detail-progress-info">`;
-        html += `<span class="task-detail-progress-pct">${(progress || 0).toFixed(0)}%</span>`;
-        html += `<span class="task-detail-progress-msg">${escapeHtml(message)}</span>`;
+        // 主数字
+        html += `<div class="progress-hero">${progress}%</div>`;
+        html += `<div class="progress-label">${escapeHtml(currentLabel)}</div>`;
         if (etaStr) {
-            html += `<span class="task-detail-progress-eta">⏱ ${etaStr}</span>`;
+            html += `<div class="progress-eta">预计还剩 ${etaStr}</div>`;
+        }
+
+        // 圆点线
+        html += `<div class="progress-dots">`;
+        for (let i = 0; i < totalSteps; i++) {
+            const s = stepNames[i];
+            const lbl = stepLabels[s] || s;
+            let cls = 'progress-dot';
+            if (i < stepIdx) cls += ' done';
+            else if (i === stepIdx) cls += ' active';
+            html += `<span class="${cls}" title="${lbl}"><span class="dot-inner"></span><span class="dot-label">${lbl}</span></span>`;
+            if (i < totalSteps - 1) html += `<span class="progress-line ${i < stepIdx ? 'done' : ''}"></span>`;
         }
         html += `</div>`;
-        html += `<div class="task-detail-steps">`;
-        steps.forEach((s, i) => {
-            let cls = '';
-            if (i < stepIdx) cls = 'done';
-            else if (i === stepIdx) cls = 'active';
-            html += `<span class="task-detail-step ${cls}">`;
-            html += `<span class="task-detail-step-dot">${i < stepIdx ? '✓' : s.icon}</span>`;
-            html += `<span class="task-detail-step-label">${s.label}</span>`;
-            html += `</span>`;
-            if (i < steps.length - 1) html += '<span class="task-detail-step-line"></span>';
-        });
+
+        // 进度文本
+        html += `<div class="progress-message">${escapeHtml(message)}</div>`;
         html += `</div>`;
-        html += `</div>`;
-        // Cancel button
+
+        // Cancel
         html += `<div class="task-detail-actions-bar">`;
-        html += `<button class="btn-cancel" onclick="cancelTaskInline('${task.task_id || currentTaskId}')">终止任务</button>`;
+        html += `<button class="btn-cancel" onclick="cancelTaskInline('${task.task_id || currentTaskId}')">取消</button>`;
         html += `</div>`;
     }
     // Completed: player + transcript
