@@ -429,7 +429,7 @@ function renderTaskTable() {
     html += '<div class="task-filter-right">';
     html += '<select class="task-filter-select" onchange="taskFilterType=this.value;renderTaskTable()">';
     html += `<option value="all"${taskFilterType === 'all' ? ' selected' : ''}>全部类型</option>`;
-    html += `<option value="audio"${taskFilterType === 'audio' ? ' selected' : ''}>音频转录</option>`;
+    html += `<option value="audio"${taskFilterType === 'audio' ? ' selected' : ''}>音频配音</option>`;
     html += `<option value="video"${taskFilterType === 'video' ? ' selected' : ''}>视频配音</option>`;
     html += '</select>';
     html += `<input type="text" class="task-filter-search" placeholder="搜索标题或URL..." value="${escapeAttr(taskSearchQuery)}" oninput="taskSearchQuery=this.value;renderTaskTable()">`;
@@ -620,7 +620,7 @@ function _renderTaskDetailPanel(task) {
     };
     const statusLabel = statusMap[status] || status;
     const displayName = task.title || task.url || '--';
-    const typeLabel = (task.process_mode === 'video') ? '视频配音' : '音频转录';
+    const typeLabel = (task.process_mode === 'video') ? '视频配音' : '音频配音';
     const typeCls = (task.process_mode === 'video') ? 'video' : 'audio';
     // duration 兜底：顶层 0 时从 result 拿
     const resultData = task.result || {};
@@ -754,7 +754,7 @@ function renderTaskDetailPage(data) {
     const mixedDur = (data.result||{}).mixed_duration||0;
     const trCount = (data.translated_indices||[]).length;
     const cAt = (data.created_at||'').substring(0,16);
-    const typeLabel = isVideo ? '🎬 视频配音' : '🎵 音频转录';
+    const typeLabel = isVideo ? '🎬 视频配音' : '🎵 音频配音';
     const tc = isVideo ? 'video' : 'audio';
 
     document.getElementById('detail-type-badge').textContent = typeLabel;
