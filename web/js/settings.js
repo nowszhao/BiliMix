@@ -347,8 +347,10 @@ function getFilteredTasks() {
     if (taskFilterType !== 'all') {
         tasks = tasks.filter(t => {
             const pm = t.process_mode || '';
-            if (taskFilterType === 'video') return pm === 'video';
-            return pm !== 'video';
+            const tp = t.type || '';
+            const isVideo = (pm === 'video' || tp === 'video');
+            if (taskFilterType === 'video') return isVideo;
+            return !isVideo;
         });
     }
 
@@ -508,8 +510,9 @@ function _renderTaskCard(t) {
     const statusLabel = statusMap[status] || status;
     const statusClass = status || 'processing';
     const displayName = t.title || t.url || '--';
-    const typeLabel = (t.process_mode === 'video') ? '视频' : '音频';
-    const typeCls = (t.process_mode === 'video') ? 'video' : 'audio';
+    const isVideoTask = (t.process_mode === 'video' || t.type === 'video');
+    const typeLabel = isVideoTask ? '视频' : '音频';
+    const typeCls = isVideoTask ? 'video' : 'audio';
     const isProcessing = status === 'processing' || status === 'downloading' || status === 'queued';
     const progress = t.progress || 0;
 
@@ -620,8 +623,9 @@ function _renderTaskDetailPanel(task) {
     };
     const statusLabel = statusMap[status] || status;
     const displayName = task.title || task.url || '--';
-    const typeLabel = (task.process_mode === 'video') ? '视频配音' : '音频配音';
-    const typeCls = (task.process_mode === 'video') ? 'video' : 'audio';
+    const isVideo = (task.process_mode === 'video' || task.type === 'video');
+    const typeLabel = isVideo ? '视频配音' : '音频配音';
+    const typeCls = isVideo ? 'video' : 'audio';
     // duration 兜底：顶层 0 时从 result 拿
     const resultData = task.result || {};
     const dur = task.original_duration || resultData.original_duration || 0;
