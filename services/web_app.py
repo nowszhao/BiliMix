@@ -1408,13 +1408,21 @@ def submit_task():
                         message="视频配音完成！",
                         video_result=video_result)
 
-            # 落盘确保重启不丢
+            # 落盘确保重启不丢（读取已有数据，合并而非覆盖）
             try:
-                save_task_result_to_disk(result_dir, {
-                    "task_id": task_id, "status": "completed",
+                existing = {}
+                disk_path = os.path.join(result_dir, "task_result.json")
+                if os.path.exists(disk_path):
+                    try:
+                        with open(disk_path, "r") as f:
+                            existing = json.load(f)
+                    except Exception:
+                        pass
+                existing.update({
                     "video_result": video_result,
                     "_video_path": video_path,
                 })
+                save_task_result_to_disk(result_dir, existing)
             except Exception as e:
                 print(f"[Video] 落盘失败: {e}")
 
