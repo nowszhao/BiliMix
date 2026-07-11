@@ -263,16 +263,17 @@ def save_task_to_index(task_id: str, summary: dict):
     with get_db() as conn:
         conn.execute("""
             INSERT OR REPLACE INTO tasks
-            (task_id, url, title, difficulty, process_mode, status, progress,
+            (task_id, url, title, difficulty, process_mode, type, status, progress,
              message, created_at, basename, total_words,
              total_replacements, original_duration, mixed_duration)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             task_id,
             summary.get("url", ""),
             summary.get("title", ""),
             summary.get("difficulty", ""),
             summary.get("process_mode", "sentence_translate"),
+            summary.get("type", "audio"),
             summary.get("status", ""),
             summary.get("progress", 0),
             summary.get("message", ""),
