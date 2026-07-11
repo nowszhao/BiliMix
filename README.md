@@ -54,27 +54,30 @@
 |------|-----------|------|
 | **FFmpeg** | `brew install ffmpeg` | 音视频转码、字幕烧录、人声分离底层依赖 |
 | **Ollama** | [ollama.com](https://ollama.com) | 本地 LLM 运行时，启动后默认监听 11434 |
+| **WhisperX** | `pip install whisperx` | 语音转录命令行工具（通过 `config.WHISPERX_BIN` 指定路径） |
 
 ### 2. Python 依赖
 
 > ⚠️ **启动时会强制检测以下依赖**，缺失任何一项服务都会直接退出，不会静默降级。
+> 检测范围：Python 包（import）+ CLI 工具（PATH 可执行）+ demucs 子进程可用性 + Ollama 服务可达。
 
 ```bash
-# 推荐使用 Python 3.10+ 环境
+# 推荐使用 Python 3.10+
 pip install -r requirements.txt
 ```
 
-完整依赖清单：
+完整依赖清单（详见 `requirements.txt`）：
 
 | 包 | 用途 |
 |-----|------|
 | `flask` | Web 服务 + REST API |
-| `openai-whisper` | WhisperX 语音转录 |
-| `torch` / `torchaudio` | 模型推理（Whisper / demucs / TTS） |
-| `demucs` | 人声/背景音分离 |
+| `requests` | HTTP 客户端（Ollama API 调用） |
+| `pydub` | 音频片段拼接 |
+| `soundfile` | 音频文件读写 |
+| `torch` / `torchaudio` | 模型推理（demucs / TTS） |
+| `demucs` | 人声/背景音分离（必须装在主 Python 环境） |
 | `ffmpeg-python` | FFmpeg Python 绑定 |
-| `yt-dlp` | YouTube 视频下载 |
-| `srt` | SRT 字幕生成 |
+| `yt-dlp` | YouTube 视频下载（命令行） |
 
 ### 3. 启动
 
@@ -84,13 +87,17 @@ python services/web_app.py 5555
 # 认证默认关闭，可在设置中开启
 ```
 
-如果依赖缺失，会看到类似错误：
+如果依赖缺失，启动时会看到类似错误：
 ```
 ============================================================
 ❌ 启动失败：缺少以下依赖：
-  - demucs (pip install demucs)
-  - ffmpeg (binary) (brew install ffmpeg)
-...
+  - Python 模块 demucs (pip install demucs)
+  - ffmpeg（音视频转码/字幕烧录/人声分离）不在 PATH
+      安装：brew install ffmpeg
+  - WhisperX 二进制不存在: /path/to/whisperx
+      ...
+  - Ollama 服务不可达 (http://localhost:11434)
+      ...
 ============================================================
 ```
 

@@ -1,20 +1,48 @@
 # ============================================================
 # BiliMix 主项目依赖
+# 一次性安装：pip install -r requirements.txt
 # ============================================================
+
+# ---- Web 服务 ----
 flask>=2.3
-pydub>=0.25
 requests>=2.28
+
+# ---- 音频处理 ----
+pydub>=0.25
+soundfile>=0.12
+
+# ---- 视频下载（yt-dlp 命令行，用 subprocess 调用）----
 yt-dlp>=2024.0
 
+# ---- 人声/背景分离（通过 `python -m demucs` 调用，必须装在主 Python 环境）----
+demucs>=4.0
+
+# ---- Whisper 转录 ----
+# 注意：WhisperX 是通过 subprocess 调用 whisperx 二进制，不是 import
+# 但仍然需要 torch / torchaudio 用于 demucs 和 TTS
+torch>=2.0
+torchaudio>=2.0
+
+# ---- ffmpeg（用 subprocess 调用 ffmpeg 命令行）----
+# 系统依赖，需用 brew/apt 安装：brew install ffmpeg
+# Python 侧的 ffmpeg-python 仅用于部分 API，装上更稳：
+ffmpeg-python>=0.2
+
+
 # ============================================================
-# Confucius4-TTS-CPU 依赖（需单独安装在目标 Python 环境）
-# 在主环境中安装:
-#   pip install -r requirements.txt
+# Confucius4-TTS-CPU 子进程依赖
+# TTS 是独立子进程运行，主进程只需通过 subprocess 启动它。
+# TTS 子进程的 Python 环境（CONFUCIUS4_TTS_PYTHON）必须装齐以下包：
 #
-# 然后在 CONFUCIUS4_TTS_PYTHON 指向的 Python 环境中安装:
 #   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-#   pip install transformers safetensors huggingface_hub PyYAML librosa soundfile \
-#       scipy tqdm matplotlib inflect jaconv pykakasi sentencepiece wetext ema-pytorch
+#   pip install \
+#       transformers safetensors huggingface_hub \
+#       librosa scipy tqdm PyYAML \
+#       inflect jaconv pykakasi sentencepiece wetext ema-pytorch
 #
-# 首次运行会自动从 HuggingFace 下载模型权重:
+# 以及 Confucius4-TTS 本身：
+#   pip install git+https://github.com/netease-youdao/Confucius4-TTS.git
+#
+# 首次运行会自动从 HuggingFace 下载模型权重：
 #   netease-youdao/Confucius4-TTS (~3GB)
+# ============================================================

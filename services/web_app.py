@@ -71,58 +71,101 @@ app.secret_key = getattr(config, "SECRET_KEY", "bilimix-secret-key-change-me")
 # 启动时依赖检测：缺失关键依赖直接退出，避免运行时静默降级
 # ============================================================
 def _check_required_dependencies():
-    """启动时检查关键依赖是否安装，缺失任何一项直接 sys.exit(1)。"""
+    """启动时检查所有依赖（Python 包 + CLI 工具），缺失任何一项 sys.exit(1)。"""
     import importlib
-    # 核心依赖：{模块名: pip 包名}
-    required = [
+    import shutil as _shutil
+    import subprocess
+
+    missing_hints = []
+    pip_pkgs_to_install = []
+
+    # ---- 1. Python 包依赖（import 检查）----
+    # {模块名: pip 包名}
+    py_required = [
         ("flask", "flask"),
-        ("whisper", "openai-whisper"),
+        ("pydub", "pydub"),
+        ("requests", "requests"),
         ("torch", "torch"),
         ("torchaudio", "torchaudio"),
-        ("demucs", "demucs"),
-        ("ffmpeg", "ffmpeg-python"),
-        ("yt_dlp", "yt-dlp"),
-        ("srt", "srt"),
+        ("soundfile", "soundfile"),
     ]
-    missing_pkgs = []
-    missing_hints = []
-    for mod, pkg in required:
+    for mod, pkg in py_required:
         try:
             importlib.import_module(mod)
         except ImportError:
-            missing_pkgs.append(pkg)
-            missing_hints.append(f"  - {mod} (pip install {pkg})")
+            missing_hints.append(f"  - Python 模块 {mod} (pip install {pkg})")
+            pip_pkgs_to_install.append(pkg)
 
-    # demucs 子进程可用性（与 sys.executable 一致才能用）
-    if "demucs" not in missing_pkgs:
-        import subprocess
+    # ---- 2. demucs 子进程可用性 ----
+    # demucs 是通过 `python -m demucs` 调用，必须确保 sys.executable 环境内可用
+    try:
         r = subprocess.run(
             [sys.executable, "-m", "demucs", "--help"],
             capture_output=True, text=True, timeout=15,
         )
         if r.returncode != 0:
-            missing_pkgs.append("demucs (cli)")
             missing_hints.append(
-                f"  - demucs CLI 不可用 ({sys.executable} -m demucs 失败):\n"
+                f"  - demucs CLI 不可用（{sys.executable} -m demucs 失败）\n"
                 f"    stderr: {r.stderr.strip()[:200]}"
             )
+            pip_pkgs_to_install.append("demucs")
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        missing_hints.append(
+            f"  - demucs CLI 超时或无法启动（{sys.executable} -m demucs）"
+        )
+        pip_pkgs_to_install.append("demucs")
 
-    # ffmpeg 可执行文件
-    import shutil as _shutil
-    if not _shutil.which("ffmpeg"):
-        missing_pkgs.append("ffmpeg (binary)")
-        missing_hints.append("  - ffmpeg 可执行文件不在 PATH（brew install ffmpeg）")
+    # ---- 3. CLI 工具（PATH 中的可执行文件）----
+    cli_tools = [
+        ("ffmpeg", "音视频转码/字幕烧录/人声分离", "brew install ffmpeg"),
+        ("yt-dlp", "YouTube 视频下载", "pip install yt-dlp"),
+    ]
+    for bin_name, desc, install_hint in cli_tools:
+        if not _shutil.which(bin_name):
+            missing_hints.append(
+                f"  - {bin_name}（{desc}）不在 PATH\n    安装：{install_hint}"
+            )
 
-    if missing_pkgs:
+    # ---- 4. WhisperX 二进制路径检查 ----
+    whisperx_bin = getattr(config, "WHISPERX_BIN", "")
+    if whisperx_bin:
+        bin_cmd = whisperx_bin if isinstance(whisperx_bin, list) else [whisperx_bin]
+        if bin_cmd and not _shutil.which(bin_cmd[0]) and not os.path.isfile(bin_cmd[0]):
+            missing_hints.append(
+                f"  - WhisperX 二进制不存在: {bin_cmd[0]}\n"
+                f"    配置项 WHISPERX_BIN={whisperx_bin}\n"
+                f"    安装：pip install whisperx （会安装 whisperx 命令行）"
+            )
+    else:
+        missing_hints.append(
+            "  - WhisperX 二进制未配置（config.WHISPERX_BIN）\n"
+            "    安装：pip install whisperx"
+        )
+
+    # ---- 5. Ollama 服务（LLM 翻译依赖）----
+    ollama_url = getattr(config, "OLLAMA_URL", "http://localhost:11434")
+    try:
+        import urllib.request as _urllib_req
+        _urllib_req.urlopen(f"{ollama_url}/api/tags", timeout=3)
+    except Exception as e:
+        missing_hints.append(
+            f"  - Ollama 服务不可达 ({ollama_url})\n"
+            f"    错误：{str(e)[:100]}\n"
+            f"    启动：ollama serve"
+        )
+
+    if missing_hints:
         print("=" * 60)
         print("❌ 启动失败：缺少以下依赖：")
+        print()
         for h in missing_hints:
             print(h)
         print()
-        print("请安装缺失依赖后重试：")
-        print(f"  pip install {' '.join(p for p in missing_pkgs if '(' not in p)}")
-        print()
-        print("完整依赖列表请参考 README.md")
+        if pip_pkgs_to_install:
+            print("安装缺失的 Python 包：")
+            print(f"  {sys.executable} -m pip install {' '.join(set(pip_pkgs_to_install))}")
+            print()
+        print("完整依赖列表与说明请参考 README.md")
         print("=" * 60)
         sys.exit(1)
 
