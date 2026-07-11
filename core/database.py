@@ -102,6 +102,7 @@ def init_db():
                 difficulty    TEXT DEFAULT '',
                 process_mode  TEXT DEFAULT 'sentence_translate',
                 type          TEXT DEFAULT 'audio',
+                step          TEXT DEFAULT '',
                 status        TEXT DEFAULT '',
                 progress      INTEGER DEFAULT 0,
                 message       TEXT DEFAULT '',
@@ -174,6 +175,11 @@ def init_db():
         # 向已有的 tasks 表添加 type 列（兼容旧数据库）
         try:
             conn.execute("ALTER TABLE tasks ADD COLUMN type TEXT DEFAULT 'audio'")
+        except sqlite3.OperationalError:
+            pass  # 列已存在，忽略
+        # 向已有的 tasks 表添加 step 列（兼容旧数据库）
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN step TEXT DEFAULT ''")
         except sqlite3.OperationalError:
             pass  # 列已存在，忽略
         # 向已有的 episodes 表添加 published_at_ts 列（兼容旧数据库）
@@ -269,10 +275,10 @@ def save_task_to_index(task_id: str, summary: dict):
     with get_db() as conn:
         conn.execute("""
             INSERT OR REPLACE INTO tasks
-            (task_id, url, title, difficulty, process_mode, type, status, progress,
+            (task_id, url, title, difficulty, process_mode, type, step, status, progress,
              message, created_at, basename, total_words,
              total_replacements, original_duration, mixed_duration)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             task_id,
             summary.get("url", ""),
@@ -280,6 +286,7 @@ def save_task_to_index(task_id: str, summary: dict):
             summary.get("difficulty", ""),
             summary.get("process_mode", "sentence_translate"),
             summary.get("type", "audio"),
+            summary.get("step", ""),
             summary.get("status", ""),
             summary.get("progress", 0),
             summary.get("message", ""),

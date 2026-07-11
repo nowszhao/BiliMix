@@ -584,19 +584,8 @@ function updateProgress(data) {
         videoSteps.forEach(el => el.classList.remove('show'));
     }
 
-    const baseSteps = isVideoTask
-        ? ['download', 'transcribe', 'translate', 'confirm', 'synthesize', 'mix', 'subtitle', 'assemble']
-        : ['download', 'transcribe', 'translate', 'confirm', 'synthesize', 'mix'];
-
-    const stepOrder = isVideoTask
-        ? { 'download': 0, 'downloading': 0, 'separate': 0, 'transcribe': 1, 'translate': 2,
-            'confirm_sentence': 3, 'confirm': 3, 'synthesize': 4,
-            'merge': 5, 'mix': 5, 'subtitle': 6, 'assemble': 7, 'done': 8 }
-        : { 'download': 0, 'downloading': 0, 'separate': 0, 'transcribe': 1, 'translate': 2,
-            'confirm_sentence': 3, 'confirm': 3, 'synthesize': 4,
-            'merge': 5, 'vocabulary': 5, 'done': 6 };
-
-    const currentStep = stepOrder[data.step] ?? -1;
+    const baseSteps = isVideoTask ? STEP_CONFIG.video : STEP_CONFIG.audio;
+    const currentStep = STEP_CONFIG.indexOf(data.step);
     baseSteps.forEach((step, i) => {
         const el = document.getElementById('st-step-' + step);
         if (!el) return;

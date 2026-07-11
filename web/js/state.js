@@ -85,3 +85,32 @@ const filterStrategies = {
 let vocabCurrentPage = 1;
 let vocabTotalPages = 1;
 let vocabSearchTimer = null;
+
+// ============================================================
+// 步骤配置 —— 唯一权威来源
+// task.js 和 settings.js 统一引用此对象
+// ============================================================
+const STEP_CONFIG = {
+    // 完整步骤名列表（包含音频+视频所有步骤）
+    names:     ['download','separate','transcribe','translate','confirm','synthesize','merge','subtitle','assemble'],
+    // 步骤显示标签（与后端 step 值一一对应）
+    labels:    {download:'下载',separate:'分离',transcribe:'转录',translate:'翻译',confirm:'确认',synthesize:'合成',merge:'混合',subtitle:'字幕',assemble:'组装'},
+    // 顺序索引（separate 与 download 同 index=0，merge 与 mix 同 index=5）
+    order:     {download:0, separate:0, transcribe:1, translate:2, confirm:3, synthesize:4, merge:5, subtitle:6, assemble:7, done:8},
+    // 音频流水线步骤
+    audio:     ['download','transcribe','translate','confirm','synthesize','merge'],
+    // 视频流水线步骤
+    video:     ['download','separate','transcribe','translate','confirm','synthesize','merge','subtitle','assemble'],
+    // 后端字段标准化（confirm_sentence → confirm, mix → merge）
+    normalize: function(step) {
+        if (step === 'confirm_sentence') return 'confirm';
+        if (step === 'mix' || step === 'vocabulary') return 'merge';
+        return step;
+    },
+    // 获取步骤顺序索引（自动标准化）
+    indexOf: function(step) {
+        const ns = this.normalize(step);
+        const idx = this.order[ns];
+        return (idx !== undefined && idx >= 0) ? idx : 0;
+    },
+};

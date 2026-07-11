@@ -147,6 +147,7 @@ def _persist_task(task_id: str):
             "difficulty": task.get("difficulty", ""),
             "process_mode": task.get("process_mode", "sentence_translate"),
             "type": task.get("type", "audio"),
+            "step": task.get("step", ""),
             "status": task.get("status"),
             "progress": task.get("progress", 0),
             "message": task.get("message", ""),

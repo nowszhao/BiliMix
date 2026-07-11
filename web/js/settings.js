@@ -541,7 +541,7 @@ function _renderTaskCard(t) {
 
     // 处理中：显示当前步骤名
     if (isProcessing && t.step) {
-        const stepName = ({download:'下载',separate:'分离',transcribe:'转录',translate:'翻译',confirm:'确认',synthesize:'合成',merge:'拼接',mix:'混音',subtitle:'字幕',assemble:'组装'})[t.step] || t.step;
+        const stepName = STEP_CONFIG.labels[t.step] || t.step;
         html += `<div class="task-card-step-name">▶ ${escapeHtml(stepName)} ${progress}%</div>`;
     }
 
@@ -642,11 +642,6 @@ function _renderTaskDetailPanel(task) {
 
     // 步骤耗时
     const stepTiming = task._step_timing || [];
-    const stepLabels = {
-        'download': '下载', 'separate': '分离', 'transcribe': '转录',
-        'translate': '翻译', 'confirm': '确认', 'synthesize': '合成',
-        'merge': '拼接', 'mix': '混音', 'subtitle': '字幕', 'assemble': '组装',
-    };
 
     let html = '';
 
@@ -670,7 +665,7 @@ function _renderTaskDetailPanel(task) {
     if (stepTiming.length > 0) {
         const parts = [];
         stepTiming.forEach(st => {
-            const lbl = stepLabels[st.step] || st.step;
+            const lbl = STEP_CONFIG.labels[st.step] || st.step;
             const dur = (st.end || 0) > (st.start || 0) ? (st.end - st.start) : 0;
             if (dur > 0) parts.push(`${lbl} ${dur > 59
                 ? Math.floor(dur/60) + '分' + Math.floor(dur%60) + '秒' : Math.round(dur) + '秒'}`);
@@ -694,14 +689,12 @@ function _renderTaskDetailPanel(task) {
     if (status === 'processing' || status === 'downloading') {
         const progress = task.progress || 0;
         const message = task.message || '';
-        const step = task.step || '';
-        const stepNames = ['download','separate','transcribe','translate','confirm','synthesize','merge','mix','subtitle','assemble'];
-        const stepLabels = {download:'下载',separate:'分离',transcribe:'转录',translate:'翻译',confirm:'确认',synthesize:'合成',merge:'混合',mix:'混合',subtitle:'字幕',assemble:'组装'};
-        const totalSteps = stepNames.length;
-        const stepIdx = stepNames.includes(step) ? stepNames.indexOf(step) : 0;
+        const step = STEP_CONFIG.normalize(task.step || '');
+        const totalSteps = STEP_CONFIG.names.length;
+        const stepIdx = STEP_CONFIG.indexOf(task.step);
 
         // 当前步骤描述
-        const currentLabel = stepLabels[step] || '处理中';
+        const currentLabel = STEP_CONFIG.labels[step] || '处理中';
 
         html += `<div class="task-detail-progress">`;
         // 主数字
@@ -711,8 +704,8 @@ function _renderTaskDetailPanel(task) {
         // 圆点线
         html += `<div class="progress-dots">`;
         for (let i = 0; i < totalSteps; i++) {
-            const s = stepNames[i];
-            const lbl = stepLabels[s] || s;
+            const s = STEP_CONFIG.names[i];
+            const lbl = STEP_CONFIG.labels[s] || s;
             let cls = 'progress-dot';
             if (i < stepIdx) cls += ' done';
             else if (i === stepIdx) cls += ' active';

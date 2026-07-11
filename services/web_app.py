@@ -1870,11 +1870,15 @@ def _synthesis_resume(task_id):
     update_task(task_id, status="completed", progress=100,
                 step="done", message="断点续传完成!",
                 result=result_data, sentence_pairs=task.get("sentence_pairs", []))
-    save_task_result_to_disk(result_dir, {**result_data, "task_id": task_id,
-                              "status": "completed", "segments": segments,
-                              "translations": translations,
-                              "translated_indices": translated_indices,
-                              "process_mode": "sentence_translate"})
+    save_task_result_to_disk(result_dir, {
+        **result_data, "task_id": task_id,
+        "status": "completed", "segments": segments,
+        "translations": translations,
+        "translated_indices": translated_indices,
+        "process_mode": "sentence_translate",
+        "tts_audio_map": task.get("tts_audio_map", {}),
+        "_step_timing": task.get("_step_timing", []),
+    })
     save_task_to_index(task_id, {"status": "completed", "progress": 100,
                        "step": "done", "message": "断点续传完成!"})
 
@@ -2017,6 +2021,8 @@ def retry_sentence_synthesis(task_id):
         "sentence_pairs": sentence_pairs,
         "result": result_data,
         "time_mapping": mix_result["time_mapping"],
+        "tts_audio_map": tts_audio_map,
+        "_step_timing": task.get("_step_timing", []),
     })
 
     _cleanup_intermediate_files(result_dir)
@@ -2171,7 +2177,7 @@ def get_task_status(task_id):
         "step": task.get("step"),
         "progress": task.get("progress", 0),
         "message": task.get("message", ""),
-        "process_mode": task.get("process_mode", "word_replace"),
+        "process_mode": task.get("process_mode", "sentence_translate"),
     })
 
 
@@ -2189,7 +2195,7 @@ def get_task_result(task_id):
         "status": task.get("status"),
         "progress": task.get("progress", 0),
         "message": task.get("message", ""),
-        "process_mode": task.get("process_mode", "word_replace"),
+        "process_mode": task.get("process_mode", "sentence_translate"),
         "step": task.get("step", ""),
         "type": task.get("type", "audio"),
         "title": task.get("title", ""),
