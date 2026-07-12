@@ -51,8 +51,10 @@
 ### 一键安装（推荐）
 
 ```bash
-./setup.sh
+curl -fsSL https://raw.githubusercontent.com/nowszhao/BiliMix/main/setup.sh | bash
 ```
+
+> 如果已 clone 本项目，也可以直接运行 `./setup.sh`。
 
 `setup.sh` 会自动完成：
 1. 安装 Miniconda（如未安装）并创建 `bilimix` conda env（Python 3.10）
