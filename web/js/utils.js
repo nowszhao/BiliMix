@@ -19,6 +19,15 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
+/**
+ * URL 路径段编码：encodeURIComponent + 强制编码 `'` 等 unreserved 字符
+ */
+function encodePath(str) {
+    return encodeURIComponent(String(str)).replace(/['()*]/g, function(c) {
+        return '%' + c.charCodeAt(0).toString(16).toUpperCase();
+    });
+}
+
 /** 去除 HTML 标签与多余空白，保留纯文本（用于卡片摘要） */
 function stripHtml(str) {
     if (!str) return '';

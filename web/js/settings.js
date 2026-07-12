@@ -257,7 +257,7 @@ function toggleHistoryPlay(taskId, basename, audioUrl) {
         const m = audioUrl.match(/\.(mp3|wav|m4a|ogg|flac|aac)(\?|$)/i);
         if (m) ext = '.' + m[1].toLowerCase();
     }
-    const src = `/api/audio/${basename}${ext}`;
+    const src = `/api/audio/${encodePath(basename)}${ext}`;
 
     audio.src = src;
     audio.play().catch(err => { console.error('历史音频播放失败:', err); btn.textContent = '▶'; });
@@ -984,7 +984,7 @@ function _renderCompletedTaskDetail(task) {
     if (dlMedia) {
         html += `<a class="task-detail-dl-btn" href="${escapeAttr(dlMedia)}" download>📥 下载音频</a>`;
     }
-    html += `<a class="task-detail-dl-btn" href="/api/audio/${basename}/${basename}.srt" download>📄 字幕</a>`;
+    html += `<a class="task-detail-dl-btn" href="/api/audio/${encodePath(basename)}/${encodePath(basename)}.srt" download>📄 字幕</a>`;
     html += `</div></div>`;
 
     // 字幕列
@@ -1068,16 +1068,16 @@ function switchDetailSource(src) {
         var r = data.result||{}; var bn = r.basename||data.basename||'';
         var path = '';
         if (src==='dubbed') {
-            path = '/api/audio/'+bn+'/'+bn+'_sentence.mp3';
+            path = '/api/audio/'+encodePath(bn)+'/'+encodePath(bn)+'_sentence.mp3';
             dl.style.display=''; dl.href=path;
         } else {
             var oa = r.original_audio||'';
-            path = oa ? (typeof _resolveAudioUrl==='function'?_resolveAudioUrl(oa):oa) : ('/api/audio/'+bn+'.mp3');
+            path = oa ? (typeof _resolveAudioUrl==='function'?_resolveAudioUrl(oa):oa) : ('/api/audio/'+encodePath(bn)+'.mp3');
             dl.style.display='none';
         }
         vw.style.display='none'; aw.style.display=''; aw.classList.add('is-audio');
         if (path) { ae.src = path; ae.load(); }
-        ds.href = src==='dubbed' ? ('/api/audio/'+bn+'/'+bn+'.srt') : '#';
+        ds.href = src==='dubbed' ? ('/api/audio/'+encodePath(bn)+'/'+encodePath(bn)+'.srt') : '#';
     }
 }
 
@@ -1144,7 +1144,7 @@ function _resolveAudioUrl(serverPath) {
         const idx = serverPath.indexOf(m);
         if (idx !== -1) {
             const rel = serverPath.substring(idx + m.length).replace(/\\/g, '/');
-            return `/api/audio/${rel}`;
+            return `/api/audio/${rel.split('/').map(encodePath).join('/')}`;
         }
     }
     // fallback: 直接拼 basename

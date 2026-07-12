@@ -210,8 +210,8 @@ function renderResult(data) {
     if (result) {
         const basename = result.basename;
         const ext = getAudioExt();
-        setAudioSrcIfChanged('original-audio', `/api/audio/${basename}${ext}`);
-        setAudioSrcIfChanged('mixed-audio', `/api/audio/${basename}/${basename}_sentence.mp3`);
+        setAudioSrcIfChanged('original-audio', `/api/audio/${encodePath(basename)}${ext}`);
+        setAudioSrcIfChanged('mixed-audio', `/api/audio/${encodePath(basename)}/${encodePath(basename)}_sentence.mp3`);
     }
 
     const mixedLabel = document.querySelector('.audio-item:last-child .audio-label');
