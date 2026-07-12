@@ -251,7 +251,8 @@ def mix_sentence_audio(
                 speeds = [raw_metadata[j][2] for j in range(left, right)]
                 smooth = sum(speeds) / len(speeds)
             smooth_speeds[seg_idx] = max(_ATEMPO_MIN, min(_ATEMPO_MAX, smooth))
-            print(f"  [{seg_idx}] raw_speed={raw_speed:.3f} → smooth={smooth:.3f}")
+            clamped = smooth_speeds[seg_idx]
+            print(f"  [{seg_idx}] raw_speed={raw_speed:.3f} → smooth={smooth:.3f} → clamped={clamped:.3f}")
 
         # 追踪音频实际播放到的位置（而非原始时间戳），用于处理
         # TTS 时长超出原句子窗口时的顺延，避免中途硬切断语音
