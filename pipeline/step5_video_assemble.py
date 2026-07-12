@@ -22,6 +22,34 @@ from typing import Optional
 # 限制 ffmpeg 使用的线程数（避免抢占所有 CPU 核心导致系统卡顿）
 _FFMPEG_THREADS = str(max(1, min(4, os.cpu_count() or 4)))
 
+# 编码器探测缓存（启动时探测一次，后续复用）
+_ENCODER_CACHE: Optional[dict] = None
+
+
+def _detect_encoders() -> dict:
+    """探测系统可用的视频/音频编码器，按优先级回退，结果缓存。"""
+    global _ENCODER_CACHE
+    if _ENCODER_CACHE is not None:
+        return _ENCODER_CACHE
+
+    try:
+        out = subprocess.check_output(
+            ["ffmpeg", "-encoders"], text=True, timeout=10, stderr=subprocess.DEVNULL
+        )
+    except Exception:
+        _ENCODER_CACHE = {"video": None, "audio": None}
+        return _ENCODER_CACHE
+
+    # 视频编码器优先级：libx264 > libopenh264 > mpeg4（mpeg4 始终可用）
+    for enc in ["libx264", "libopenh264", "mpeg4"]:
+        if enc in out:
+            _ENCODER_CACHE = {"video": enc, "audio": "aac"}
+            return _ENCODER_CACHE
+
+    # 兜底：aac 是 FFmpeg 内置编码器，始终可用
+    _ENCODER_CACHE = {"video": "mpeg4", "audio": "aac"}
+    return _ENCODER_CACHE
+
 
 # ============================================================
 # 字幕渲染
@@ -244,14 +272,29 @@ def assemble_video(
 
     vf_parts.append("format=yuv420p")
 
+    encoders = _detect_encoders()
+    video_enc = encoders.get("video")
+    audio_enc = encoders.get("audio", "aac")
+
+    if not video_enc:
+        print("[Step5] 失败: 未找到可用的视频编码器（需要 libx264 / libopenh264 / mpeg4 之一）")
+        return ""
+
+    if video_enc != "libx264":
+        print(f"[Step5] libx264 不可用，使用回退编码器: {video_enc}")
+
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-threads", _FFMPEG_THREADS,
         "-i", video_path, "-i", mixed_audio_path,
         "-vf", ",".join(vf_parts),
-        "-c:v", "libx264", "-b:v", "1500k",
-        "-profile:v", "high", "-level", "5.0", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+        "-c:v", video_enc, "-b:v", "1500k",
+    ]
+    if video_enc == "libx264":
+        cmd += ["-profile:v", "high", "-level", "5.0"]
+    cmd += [
+        "-pix_fmt", "yuv420p",
+        "-c:a", audio_enc, "-b:a", "128k", "-ar", "44100", "-ac", "2",
         "-map", "0:v:0", "-map", "1:a:0",
     ]
     if diff > 0.3:
