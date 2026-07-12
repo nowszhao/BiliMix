@@ -31,7 +31,7 @@ for _d in (DATA_DIR, OUTPUT_DIR, TTS_CACHE_DIR, RESULT_DIR, DOWNLOAD_DIR):
 # ========================
 # whisperx 可执行文件路径（conda 环境中的绝对路径，避免 PATH 找不到）
 WHISPERX_BIN = "whisperx"
-WHISPERX_MODEL = "medium"
+WHISPERX_MODEL = "small"
 WHISPERX_DEVICE = "cpu"
 WHISPERX_COMPUTE_TYPE = "int8"
 WHISPERX_BATCH_SIZE = 10
@@ -65,7 +65,7 @@ DEMUCS_TIMEOUT = 1800
 # Ollama 配置
 # ========================
 OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL = "translategemma:12b"
+OLLAMA_MODEL = "translategemma:4b"
 # 生词识别时每批合并的句子数量（越大越快，但过大可能降低识别精度）
 # 建议范围: 5~15，默认 8
 LLM_BATCH_SIZE = 5
@@ -109,9 +109,9 @@ CONFUCIUS4_TTS_TOP_K = 0
 # 束搜索宽度（1 = 贪心解码，确定性强）
 CONFUCIUS4_TTS_NUM_BEAMS = 1
 # 重复惩罚系数（越高重复越少）
-CONFUCIUS4_TTS_REPETITION_PENALTY = 10.0
+CONFUCIUS4_TTS_REPETITION_PENALTY = 1.2
 # 扩散步骤数（越高音质越好，25 为原始默认值）
-CONFUCIUS4_TTS_N_TIMESTEPS = 25
+CONFUCIUS4_TTS_N_TIMESTEPS = 15
 # 无分类器引导强度（越高越紧跟参考音频的语速/音量风格）
 CONFUCIUS4_TTS_INFERENCE_CFG_RATE = 0.9
 # 并行 Worker 数量（利用多核并行合成，1 = 串行，建议 2-3）

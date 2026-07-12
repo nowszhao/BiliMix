@@ -152,6 +152,7 @@ def _persist_task(task_id: str):
             "progress": task.get("progress", 0),
             "message": task.get("message", ""),
             "created_at": task.get("created_at", ""),
+            "keep_bgm": task.get("keep_bgm", False),
             "basename": ((task.get("result") or {}).get("basename", "")
                          if task.get("result") else task.get("_basename", "")),
             "total_words": ((task.get("result") or {}).get("total_words", 0)
@@ -267,6 +268,7 @@ def restore_task_from_disk(task_id: str) -> dict:
                 "_video_path": saved.get("_video_path", ""),
                 "_audio_path": (saved.get("result", {}).get("original_audio", "")
                                 if saved.get("result") else ""),
+                "keep_bgm": saved.get("keep_bgm", summary.get("keep_bgm", False)),
             }
             # 恢复翻译/识词批次的断点数据
             if saved.get("_checkpoint_translate_batch"):
@@ -320,6 +322,7 @@ def restore_task_from_disk(task_id: str) -> dict:
         "time_mapping": [],
         "_basename": basename,
         "_audio_path": "",
+        "keep_bgm": summary.get("keep_bgm", False),
     }
 
     # 尝试恢复转录文本和 segments

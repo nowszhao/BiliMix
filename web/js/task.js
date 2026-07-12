@@ -473,8 +473,9 @@ function showCancelledUI(errorMsg) {
     `;
 }
 
-async function retryTask() {
-    if (!currentTaskId) return;
+async function retryTask(taskId) {
+    taskId = taskId || currentTaskId;
+    if (!taskId) return;
 
     const btn = document.querySelector('#cancel-area .btn-primary');
     if (btn) { btn.disabled = true; btn.textContent = '⏳ 重试中...'; }

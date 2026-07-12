@@ -846,7 +846,7 @@ function _renderTaskDetailPanel(task) {
 function _renderDetailActionBar(task) {
     let html = '<div class="task-detail-actions-bar">';
     if (task.status === 'error' || task.status === 'cancelled') {
-        html += `<button class="btn-primary" onclick="retryTask()" style="margin-right:8px;">↻ 重试</button>`;
+        html += `<button class="btn-primary" onclick="retryTask('${task.task_id || currentTaskId}')" style="margin-right:8px;">↻ 重试</button>`;
     }
     if (task.status === 'completed' || task.status === 'error' || task.status === 'cancelled') {
         html += `<button class="btn-secondary" onclick="redoTask('${task.task_id || currentTaskId}')">⟳ 重做</button>`;
@@ -2248,20 +2248,13 @@ async function redoTask(taskId) {
         const data = await resp.json();
         if (!resp.ok) { alert(data.error || '重做失败'); if (btn) { btn.disabled = false; btn.textContent = '↻'; } return; }
 
-        showToast('✅ 重做已启动，跳转到进度页面...');
+        showToast('✅ 重做已启动');
 
         // 设置全局状态，让轮询系统接管
         currentTaskId = data.task_id || taskId;
-        // 切换到进度区
-        const tasksView = document.getElementById('tasks-view');
-        if (tasksView) tasksView.style.display = 'none';
-        const progress = document.getElementById('progress-section');
-        if (progress) {
-            progress.classList.remove('hidden');
-            resetProgressUI();
-        }
-        // 立即拉一次状态
-        startPolling();
+        // 刷新任务列表显示最新状态，启动轮询
+        if (typeof loadHistory === 'function') loadHistory();
+        if (typeof startPolling === 'function') startPolling();
     } catch (err) {
         alert('网络错误: ' + err.message);
         if (btn) { btn.disabled = false; btn.textContent = '↻'; }

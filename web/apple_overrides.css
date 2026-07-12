@@ -824,6 +824,18 @@ body { background: var(--bg-page); color: var(--text-1); }
     padding: 6px 10px;
 }
 .ep-btn-ghost:hover { background: var(--bg-hover); color: var(--text-1); }
+.ep-btn-play {
+    background: var(--bg-hover);
+    color: var(--text-2);
+    min-width: 80px;
+    justify-content: center;
+}
+.ep-btn-play:hover { background: var(--accent); color: #FFFFFF; }
+.ep-btn-play.playing {
+    background: var(--accent);
+    color: #FFFFFF;
+    box-shadow: 0 1px 4px rgba(43, 127, 255, 0.3);
+}
 
 /* Card footer (meta + actions) */
 .episode-card-footer {

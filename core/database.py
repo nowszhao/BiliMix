@@ -111,7 +111,8 @@ def init_db():
                 total_words   INTEGER DEFAULT 0,
                 total_replacements INTEGER DEFAULT 0,
                 original_duration  REAL DEFAULT 0,
-                mixed_duration     REAL DEFAULT 0
+                mixed_duration     REAL DEFAULT 0,
+                keep_bgm           INTEGER DEFAULT 0
             );
 
             -- RSS 订阅管理表
@@ -180,6 +181,11 @@ def init_db():
         # 向已有的 tasks 表添加 step 列（兼容旧数据库）
         try:
             conn.execute("ALTER TABLE tasks ADD COLUMN step TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass  # 列已存在，忽略
+        # 向已有的 tasks 表添加 keep_bgm 列（兼容旧数据库）
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN keep_bgm INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
             pass  # 列已存在，忽略
         # 向已有的 episodes 表添加 published_at_ts 列（兼容旧数据库）
@@ -277,8 +283,8 @@ def save_task_to_index(task_id: str, summary: dict):
             INSERT OR REPLACE INTO tasks
             (task_id, url, title, difficulty, process_mode, type, step, status, progress,
              message, created_at, basename, total_words,
-             total_replacements, original_duration, mixed_duration)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             total_replacements, original_duration, mixed_duration, keep_bgm)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             task_id,
             summary.get("url", ""),
@@ -296,6 +302,7 @@ def save_task_to_index(task_id: str, summary: dict):
             summary.get("total_replacements", 0),
             summary.get("original_duration", 0),
             summary.get("mixed_duration", 0),
+            1 if summary.get("keep_bgm") else 0,
         ))
 
 

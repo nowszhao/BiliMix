@@ -1645,6 +1645,13 @@ def cancel_task(task_id):
                         pass
 
     update_task(task_id, status="cancelled", message="任务已被终止")
+
+    # 通知排队中的任务：当前任务被取消后，下一个可以开始执行
+    with _queue_condition:
+        if task_id in _queue_waiters:
+            _queue_waiters.remove(task_id)
+        _queue_condition.notify_all()
+
     return jsonify({"message": "任务终止请求已发送"})
 
 
@@ -1771,20 +1778,36 @@ def redo_task(task_id):
             "basename": basename,
             "total_words": 0,
             "total_replacements": 0,
+            "keep_bgm": task.get("keep_bgm", False),
         })
     except Exception:
         pass
 
-    # ---- 4. 启动重做线程 ----
+    # ---- 4. 启动重做线程（走队列，同一时间只允许一个任务运行）----
     def _redo_worker():
-        update_task(task_id, status="processing", step="download",
-                    progress=0, message="正在重做...")
-        if task_type == "video":
-            _do_redo_video_task(task_id, source_url)
-        else:
-            _do_redo_audio_task(task_id, source_url)
-        if isinstance(task_subprocesses.get(task_id), list):
-            task_subprocesses.pop(task_id, None)
+        update_task(task_id, status="queued", progress=0,
+                    message="排队中，请稍候…")
+        with _queue_condition:
+            _queue_waiters.append(task_id)
+            while _queue_waiters[0] != task_id:
+                _queue_condition.wait(timeout=1.0)
+
+        try:
+            if is_cancelled(task_id) or not get_task(task_id):
+                return
+            update_task(task_id, status="processing", step="download",
+                        progress=0, message="正在重做...")
+            if task_type == "video":
+                _do_redo_video_task(task_id, source_url)
+            else:
+                _do_redo_audio_task(task_id, source_url)
+        finally:
+            with _queue_condition:
+                if task_id in _queue_waiters:
+                    _queue_waiters.remove(task_id)
+                _queue_condition.notify_all()
+            if isinstance(task_subprocesses.get(task_id), list):
+                task_subprocesses.pop(task_id, None)
 
     cancel_flags[task_id] = threading.Event()
     thread = threading.Thread(target=_redo_worker, daemon=True)
@@ -1840,17 +1863,15 @@ def _do_redo_video_task(task_id, source_url):
                 return
             _video_path = prep["video_path"]
         update_task(task_id, _video_path=_video_path)
-    audio_file = task.get("_audio_path", "")
-    if not audio_file or not os.path.isfile(audio_file):
-        # 从视频提取音频
-        from pipeline.step0_video_prepare import _extract_audio
-        cache_dir = os.path.join(config.DOWNLOAD_DIR, "video_cache")
-        os.makedirs(cache_dir, exist_ok=True)
-        audio_file = os.path.join(cache_dir, f"audio_redo_{task_id[:8]}.wav")
-        if not _extract_audio(_video_path, audio_file):
-            update_task(task_id, status="error", message="音频提取失败")
-            return
-        update_task(task_id, _audio_path=audio_file)
+    # 重做时始终重新从视频提取音频，避免复用旧的 _audio_path
+    from pipeline.step0_video_prepare import _extract_audio
+    cache_dir = os.path.join(config.DOWNLOAD_DIR, "video_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    audio_file = os.path.join(cache_dir, f"audio_redo_{task_id[:8]}.wav")
+    if not _extract_audio(_video_path, audio_file):
+        update_task(task_id, status="error", message="音频提取失败")
+        return
+    update_task(task_id, _audio_path=audio_file)
     process_audio_sentence_mode(task_id, audio_file)
     # 视频后处理
     if get_task(task_id, {}).get("status") != "error":
@@ -1868,6 +1889,8 @@ def retry_task(task_id):
     """通用断点续传：检查已有数据，跳过已完成的步骤"""
     task = get_task(task_id)
     if not task:
+        task = restore_task_from_disk(task_id)
+    if not task:
         return jsonify({"error": "任务不存在"}), 404
 
     if task.get("status") != "error":
@@ -1875,9 +1898,51 @@ def retry_task(task_id):
 
     mode = "sentence_translate"
     audio_path = task.get("_audio_path", "")
-
     if not audio_path:
-        return jsonify({"error": "任务缺少音频路径，无法重试"}), 400
+        source_url = task.get("url", "")
+        # 优先从原始 URL 找回文件路径
+        if source_url.startswith("file://"):
+            candidate = source_url[len("file://"):]
+            if os.path.isfile(candidate):
+                audio_path = candidate
+                update_task(task_id, _audio_path=audio_path)
+        if not audio_path:
+            basename_check = task.get("_basename", "")
+            if basename_check:
+                for ext in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".mp4", ".mkv", ".mov"):
+                    p = os.path.join(config.DOWNLOAD_DIR, f"{basename_check}{ext}")
+                    if os.path.exists(p):
+                        audio_path = p
+                        update_task(task_id, _audio_path=audio_path)
+                        break
+                if not audio_path:
+                    # 模糊匹配：去掉 basename 中的 task_id 后缀后再找
+                    base_no_taskid = basename_check.rsplit("_", 1)[0]
+                    for name in sorted(os.listdir(config.DOWNLOAD_DIR)):
+                        if name.startswith(base_no_taskid):
+                            p = os.path.join(config.DOWNLOAD_DIR, name)
+                            if os.path.isfile(p):
+                                audio_path = p
+                                update_task(task_id, _audio_path=audio_path)
+                                break
+        if not audio_path and source_url and not source_url.startswith("file://"):
+            # 重新下载
+            update_task(task_id, status="processing", step="download", progress=0,
+                        message="重新下载音频...")
+            from urllib.request import Request, urlopen
+            ext = os.path.splitext(source_url.split("?")[0])[-1] or ".mp3"
+            if ext not in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"):
+                ext = ".mp3"
+            audio_path = os.path.join(config.DOWNLOAD_DIR, f"{task_id[:16]}.retry{ext}")
+            try:
+                req = Request(source_url, headers={"User-Agent": "BiliMix/1.0"})
+                with urlopen(req, timeout=300) as resp, open(audio_path, "wb") as f:
+                    f.write(resp.read())
+                update_task(task_id, _audio_path=audio_path)
+            except Exception as e:
+                return jsonify({"error": f"重新下载失败: {e}"}), 400
+        if not audio_path:
+            return jsonify({"error": "任务缺少音频路径，无法重试"}), 400
 
     # 尝试从 task_result.json 加载断点数据（内存恢复可能缺失）
     basename = task.get("_basename", "")
@@ -1918,34 +1983,47 @@ def retry_task(task_id):
             # 翻译已完成，直接从 TTS 合成恢复（只补缺失的 TTS 文件）
             msg = f"断点续传 — 跳过转录+翻译，从 TTS 恢复 ({len(translated_indices)} 句)"
             print(f"[Retry] {msg}")
-            update_task(task_id, status="processing", step="synthesize",
-                        _failed_step="", progress=58,
-                        message=msg)
-            thread = threading.Thread(target=_synthesis_resume,
-                                      args=(task_id,), daemon=True)
+            _retry_target = lambda: _synthesis_resume(task_id)
         elif segments:
             # 转录已完成，从翻译步骤恢复
             msg = f"断点续传 — 跳过转录，从翻译恢复 ({len(segments)} 句)"
             print(f"[Retry] {msg}")
-            update_task(task_id, status="processing", step="translate",
-                        _failed_step="", progress=20,
-                        message=msg)
-            thread = threading.Thread(target=process_audio_sentence_mode,
-                                      args=(task_id, audio_path), daemon=True)
+            update_task(task_id, _failed_step="", progress=20, message=msg)
+            _retry_target = lambda: process_audio_sentence_mode(task_id, audio_path)
         else:
             # 从头开始
-            update_task(task_id, status="processing", step="transcribe",
-                        _failed_step="", progress=0,
+            update_task(task_id, _failed_step="", progress=0,
                         message="断点续传 — 从头开始…")
-            thread = threading.Thread(target=process_audio_sentence_mode,
-                                      args=(task_id, audio_path), daemon=True)
+            _retry_target = lambda: process_audio_sentence_mode(task_id, audio_path)
     else:
-        update_task(task_id, status="processing", step="transcribe",
-                    _failed_step="", progress=0,
+        update_task(task_id, _failed_step="", progress=0,
                     message="断点续传 — 从头开始…")
-        thread = threading.Thread(target=process_audio_sentence_mode,
-                                  args=(task_id, audio_path), daemon=True)
+        _retry_target = lambda: process_audio_sentence_mode(task_id, audio_path)
 
+    def _retry_worker():
+        update_task(task_id, status="queued", progress=0,
+                    message="排队中，请稍候…")
+        with _queue_condition:
+            _queue_waiters.append(task_id)
+            while _queue_waiters[0] != task_id:
+                _queue_condition.wait(timeout=1.0)
+
+        try:
+            if is_cancelled(task_id) or not get_task(task_id):
+                return
+            update_task(task_id, status="processing",
+                        message="开始处理…")
+            _retry_target()
+        finally:
+            with _queue_condition:
+                if task_id in _queue_waiters:
+                    _queue_waiters.remove(task_id)
+                _queue_condition.notify_all()
+            if isinstance(task_subprocesses.get(task_id), list):
+                task_subprocesses.pop(task_id, None)
+
+    cancel_flags[task_id] = threading.Event()
+    thread = threading.Thread(target=_retry_worker, daemon=True)
     thread.start()
     return jsonify({"message": "已开始断点续传"})
 
@@ -2001,7 +2079,7 @@ def _synthesis_resume(task_id):
                 message="重新组装音频...")
     output_path = os.path.join(result_dir, f"{basename}_sentence.{config.OUTPUT_FORMAT}")
     bgm_path = task.get("_bgm_path", "") or None
-    if task.get("keep_bgm") and not bgm_path and audio_path and os.path.exists(audio_path):
+    if task.get("keep_bgm", False) and not bgm_path and audio_path and os.path.exists(audio_path):
         sep_cache_dir = os.path.join(result_dir, "vocal_separation")
         sep_result = separate_vocals(audio_path, sep_cache_dir)
         if sep_result.get("ok"):
@@ -2114,7 +2192,7 @@ def retry_sentence_synthesis(task_id):
         f"{basename}_sentence.{config.OUTPUT_FORMAT}")
 
     bgm_path = task.get("_bgm_path", "") or None
-    if task.get("keep_bgm") and not bgm_path and audio_path and os.path.exists(audio_path):
+    if task.get("keep_bgm", False) and not bgm_path and audio_path and os.path.exists(audio_path):
         result_dir_bgm = os.path.join(config.RESULT_DIR, basename)
         sep_cache_dir = os.path.join(result_dir_bgm, "vocal_separation")
         sep_result = separate_vocals(audio_path, sep_cache_dir)
@@ -2218,6 +2296,15 @@ def list_tasks():
 
     with tasks_lock:
         for tid, task in tasks.items():
+            # 对于终态任务（completed/error/cancelled），优先使用 SQLite 中的状态，
+            # 避免内存中残留的 processing 状态覆盖重启时标记的 error
+            sqlite_summary = index.get(tid, {})
+            sqlite_status = sqlite_summary.get("status", "")
+            mem_status = task.get("status", "")
+            if sqlite_status in ("completed", "error", "cancelled"):
+                # 终态任务以 SQLite 为准，不再被内存中的 processing 覆盖
+                # 已通过 SQLite summary 写入 result，跳过内存覆盖
+                continue
             result[tid] = {
                 "task_id": task.get("task_id"),
                 "url": task.get("url", ""),
@@ -2239,6 +2326,7 @@ def list_tasks():
                                           if task.get("result") else 0)),
                 "mixed_duration": ((task.get("result") or {}).get("mixed_duration", 0)
                                    if task.get("result") else 0),
+                "keep_bgm": task.get("keep_bgm", False),
             }
 
     sorted_tasks = sorted(result.values(),

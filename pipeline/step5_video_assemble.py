@@ -250,6 +250,7 @@ def assemble_video(
         "-i", video_path, "-i", mixed_audio_path,
         "-vf", ",".join(vf_parts),
         "-c:v", "libx264", "-b:v", "1500k",
+        "-profile:v", "high", "-level", "5.0", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
         "-map", "0:v:0", "-map", "1:a:0",
     ]

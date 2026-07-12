@@ -40,9 +40,7 @@ def _extract_audio(video_path: str, audio_output: str, timeout: int = 300) -> bo
     Returns:
         bool: 提取成功
     """
-    if os.path.exists(audio_output):
-        return True
-
+    # 始终重新提取音频，避免旧任务遗留的音频文件被复用导致内容错误
     os.makedirs(os.path.dirname(audio_output) or ".", exist_ok=True)
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",

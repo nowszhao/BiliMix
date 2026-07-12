@@ -325,6 +325,9 @@ function renderEpisodeCard(ep) {
     html += `<span class="episode-status-badge ${statusClass}"><span class="dot"></span>${statusLabel}</span>`;
     // 动作按钮移到源行右侧
     html += `<span class="episode-card-actions" onclick="event.stopPropagation()">`;
+    if (ep.audio_url) {
+        html += `<button class="ep-btn ep-btn-play" data-ep-id="${ep.id}" data-audio-url="${escapeAttr(ep.audio_url)}" onclick="toggleEpisodePlay(event, ${ep.id}, this)">▶ 播放</button>`;
+    }
     if (ep.status === 'transcribed' && ep.task_id) {
         html += `<button class="ep-btn ep-btn-primary" onclick="viewEpisodeResult('${escapeAttr(ep.task_id)}')">查看结果</button>`;
     } else if (ep.status !== 'dismissed') {
@@ -915,3 +918,74 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }, 100);
 });
+
+// ============================================================
+// 单集播放控制（同一时间只允许一个音频播放）
+// ============================================================
+let _episodeAudio = null;       // 当前 Audio 对象
+let _playingEpId = null;       // 当前播放的单集 ID
+
+function toggleEpisodePlay(e, epId, btn) {
+    e.stopPropagation();
+
+    // 如果点击的是正在播放的单集 → 暂停
+    if (_playingEpId === epId && _episodeAudio) {
+        _episodeAudio.pause();
+        _setPlayButtonState(epId, false);
+        _playingEpId = null;
+        _episodeAudio = null;
+        return;
+    }
+
+    // 停止之前的播放
+    if (_episodeAudio) {
+        _episodeAudio.pause();
+        _setPlayButtonState(_playingEpId, false);
+        _episodeAudio = null;
+    }
+
+    const audioUrl = btn.getAttribute('data-audio-url');
+    if (!audioUrl) return;
+
+    const audio = new Audio(audioUrl);
+    audio.addEventListener('play', function() {
+        _setPlayButtonState(epId, true);
+    });
+    audio.addEventListener('pause', function() {
+        _setPlayButtonState(epId, false);
+        if (_playingEpId === epId) {
+            _playingEpId = null;
+            _episodeAudio = null;
+        }
+    });
+    audio.addEventListener('ended', function() {
+        _setPlayButtonState(epId, false);
+        _playingEpId = null;
+        _episodeAudio = null;
+    });
+    audio.addEventListener('error', function() {
+        _setPlayButtonState(epId, false);
+        _playingEpId = null;
+        _episodeAudio = null;
+        showToast('❌ 音频加载失败');
+    });
+
+    audio.play().catch(function() {
+        _setPlayButtonState(epId, false);
+        showToast('❌ 播放失败，请检查音频链接');
+    });
+    _episodeAudio = audio;
+    _playingEpId = epId;
+}
+
+function _setPlayButtonState(epId, isPlaying) {
+    const btn = document.querySelector(`.ep-btn-play[data-ep-id="${epId}"]`);
+    if (!btn) return;
+    if (isPlaying) {
+        btn.innerHTML = '⏸ 暂停';
+        btn.classList.add('playing');
+    } else {
+        btn.innerHTML = '▶ 播放';
+        btn.classList.remove('playing');
+    }
+}

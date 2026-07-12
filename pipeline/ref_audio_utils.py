@@ -267,7 +267,7 @@ def extract_ref_audio_speaker_local(audio_path: str, segments: list,
         min_ref = getattr(config, "FISH_SPEECH_MIN_REF_DURATION", 4)
         target_ref = getattr(config, "FISH_SPEECH_REF_DURATION", 12)
     else:
-        min_ref = getattr(config, "SEGMENT_REF_MIN_DURATION", 0.3)
+        min_ref = getattr(config, "SEGMENT_REF_MIN_DURATION", 2)
         target_ref = getattr(config, "REF_TARGET_DURATION", 5)
     max_ref = getattr(config, "REF_MAX_DURATION", 30)
 
