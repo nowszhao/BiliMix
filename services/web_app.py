@@ -489,6 +489,8 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
     """句子翻译模式前半段：转录 → 翻译 → 暂停等待确认"""
     try:
         basename = os.path.splitext(os.path.basename(audio_path))[0]
+        # 追加 task_id 短前缀，确保同一文件/URL 被多次处理时 result_dir 唯一
+        basename = f"{basename}_{task_id[:8]}"
         result_dir = os.path.join(config.RESULT_DIR, basename)
         os.makedirs(result_dir, exist_ok=True)
         update_task(task_id, _basename=basename, _audio_path=audio_path)
@@ -1441,6 +1443,13 @@ def submit_task():
                         title=real_title,
                         progress=5,
                         message=f"视频就绪: {os.path.basename(video_path)}")
+            # 探测从视频中提取的音频时长
+            try:
+                duration = _probe_audio_duration(audio_file)
+                if duration > 0:
+                    update_task(task_id, original_duration=duration)
+            except Exception:
+                pass
 
             # 更新任务标题到数据库
             try:
@@ -1491,6 +1500,13 @@ def submit_task():
             size_mb = os.path.getsize(local_file) / (1024 * 1024)
             update_task(task_id, progress=5,
                         message=f"使用本地音频文件 ({size_mb:.1f} MB)")
+            # 探测本地音频时长并立即更新到任务，便于任务列表展示
+            try:
+                duration = _probe_audio_duration(local_file)
+                if duration > 0:
+                    update_task(task_id, original_duration=duration)
+            except Exception:
+                pass
         else:
             basename = hashlib.md5(source_url.encode()).hexdigest()
             ext = os.path.splitext(source_url.split("?")[0])[-1] or ".mp3"
@@ -2712,14 +2728,19 @@ if __name__ == "__main__":
     # 初始化 SQLite 数据库（建表 + 迁移旧 JSON 数据）
     setup_database()
     _index = load_tasks_index()
-    # 清理服务重启导致的孤儿任务（queued/processing/downloading状态在进程重启后无效）
+    # 服务重启时将进行中的任务标记为中断，保留在历史记录中
     orphaned = 0
     for _tid, _t in _index.items():
         if _t.get("status") in ("queued", "processing", "downloading"):
-            delete_task_from_index(_tid)
+            save_task_to_index(_tid, {
+                **{k: v for k, v in _t.items()},
+                "status": "error",
+                "message": "任务因服务重启而中断，请重试",
+                "progress": _t.get("progress", 0),
+            })
             orphaned += 1
     if orphaned:
-        print(f"🧹 已清理 {orphaned} 个孤儿任务（服务重启导致）")
+        print(f"🧹 已标记 {orphaned} 个中断任务（服务重启导致）")
     # 支持命令行传入端口号，默认 5000
     _port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
 

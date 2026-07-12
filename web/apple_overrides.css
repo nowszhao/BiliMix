@@ -1180,6 +1180,32 @@ body { background: var(--bg-page); color: var(--text-1); }
     font-size: 11px;
     color: var(--text-3);
 }
+.task-card-id {
+    font-family: 'SF Mono', 'Menlo', 'Courier New', monospace;
+    font-size: 10px;
+    color: var(--text-4);
+    background: var(--bg-2);
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: auto;
+    cursor: pointer;
+    user-select: all;
+    transition: background 0.15s;
+}
+.task-card-id:hover {
+    background: var(--bg-3);
+    color: var(--text-2);
+}
+.task-detail-id-link {
+    font-family: 'SF Mono', 'Menlo', 'Courier New', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    cursor: pointer;
+    user-select: all;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 3px;
+}
 .task-card-status {
     display: inline-flex;
     align-items: center;
@@ -1306,6 +1332,38 @@ body { background: var(--bg-page); color: var(--text-1); }
 
 .task-detail-subtitle {
     font-size: 12.5px; color: var(--text-3); line-height: 1.5;
+}
+
+.task-detail-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+    margin-bottom: 2px;
+}
+.task-detail-step {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--bg-2);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+}
+.task-detail-step.running {
+    background: rgba(0, 122, 255, 0.12);
+}
+.task-detail-step.running .step-name {
+    color: var(--accent);
+    font-weight: 500;
+}
+.task-detail-step .step-name {
+    color: var(--text-3);
+}
+.task-detail-step .step-time {
+    font-family: 'SF Mono', 'Menlo', 'Courier New', monospace;
+    font-weight: 500;
+    color: var(--accent);
 }
 
 /* Player — simpler, more air */
@@ -1598,6 +1656,13 @@ body { background: var(--bg-page); color: var(--text-1); }
 }
 .progress-dot.done .dot-label { color: var(--accent); }
 .progress-dot.active .dot-label { color: var(--accent); font-weight: 700; }
+.dot-elapsed-active {
+    color: var(--text-3);
+    font-weight: 400;
+    font-family: 'SF Mono', 'Menlo', 'Courier New', monospace;
+    font-size: 9.5px;
+    margin-left: 1px;
+}
 .progress-line {
     width: 18px; height: 2px;
     background: var(--border);

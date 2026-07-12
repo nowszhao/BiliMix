@@ -13,6 +13,13 @@
 
 function openNewTaskModal() {
     document.getElementById('new-task-modal').classList.add('open');
+    // 每次打开时重置按钮状态，避免上次提交残留的 disabled
+    const btn = document.getElementById('generate-btn');
+    if (btn) {
+        btn.disabled = false;
+        const txt = btn.querySelector('.btn-text');
+        if (txt) txt.textContent = '开始生成';
+    }
     // 默认切换到音频模式
     switchTopMode('audio');
     switchInputMode('url');

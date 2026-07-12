@@ -528,9 +528,14 @@ function _renderTaskCard(t) {
     html += `<span class="task-card-title">${escapeHtml(displayName)}</span>`;
     html += `</div>`;
 
-    // meta：状态 + 时间
+    // meta：状态 + 时长 + 时间
+    const origDur = t.original_duration || 0;
+    const mixedDur = t.mixed_duration || 0;
+    const durLabel = origDur > 0 ? formatTime(origDur) : (mixedDur > 0 ? formatTime(mixedDur) : '');
+
     html += `<div class="task-card-meta">`;
     html += `<span class="task-card-status ${statusClass}"><span class="task-card-status-dot"></span>${statusLabel}</span>`;
+    if (durLabel) html += `<span>${durLabel}</span>`;
     html += `<span>${timeHtml}</span>`;
     html += `</div>`;
 
@@ -647,15 +652,43 @@ function _renderTaskDetailPanel(task) {
 
     // 副标题数据（极简一行）
     const metaParts = [];
-    if (dur > 0) metaParts.push(formatTime(dur));
+    // 输入方式
+    const srcUrl = task.url || '';
+    if (srcUrl.startsWith('file://')) {
+        metaParts.push('本地文件');
+    } else if (srcUrl.includes('/Rss/') || srcUrl.includes('podcast') || srcUrl.includes('.xml')) {
+        metaParts.push('播客');
+    } else if (srcUrl.startsWith('http')) {
+        metaParts.push('在线URL');
+    }
+    if (task.task_id) metaParts.push(`ID: <span class="task-detail-id-link" title="点击复制" onclick="copyTaskId(event, '${task.task_id}')">${escapeHtml(task.task_id)}</span>`);
+    if (dur > 0 && mixedDur > 0 && Math.abs(mixedDur - dur) > 1) {
+        metaParts.push(`原 ${formatTime(dur)} → 配音 ${formatTime(mixedDur)}`);
+    } else if (dur > 0) {
+        metaParts.push(formatTime(dur));
+    }
     if (trCount > 0) metaParts.push(`${trCount} 句翻译`);
     if (task.created_at) {
         const created = new Date(task.created_at);
         const now = new Date();
         const elapsedSec = Math.floor((now - created) / 1000);
         if (elapsedSec > 0) {
-            const mins = Math.floor(elapsedSec / 60);
-            metaParts.push(`${mins} 分钟完成`);
+            const isDone = (status === 'completed' || status === 'error' || status === 'cancelled');
+            if (isDone) {
+                if (elapsedSec >= 60) {
+                    const mins = Math.floor(elapsedSec / 60);
+                    metaParts.push(`${mins} 分钟完成`);
+                } else {
+                    metaParts.push(`${elapsedSec} 秒完成`);
+                }
+            } else {
+                if (elapsedSec >= 60) {
+                    const mins = Math.floor(elapsedSec / 60);
+                    metaParts.push(`已耗时 ${mins} 分钟`);
+                } else {
+                    metaParts.push(`已耗时 ${elapsedSec} 秒`);
+                }
+            }
         }
     }
     const metaLine = metaParts.length > 0 ? ` · ${metaParts.join(' · ')}` : '';
@@ -672,8 +705,34 @@ function _renderTaskDetailPanel(task) {
     html += `</div>`;
     html += `</div>`;
 
+    // 已完成 + 正在运行步骤的耗时
+    const allSteps = (stepTiming || []).filter(function(st) { return st.start > 0; });
+    if (allSteps.length > 0) {
+        const nowTs = Date.now() / 1000;
+        html += `<div class="task-detail-steps">`;
+        for (let i = 0; i < allSteps.length; i++) {
+            const st = allSteps[i];
+            const label = STEP_CONFIG.labels[st.step] || st.step;
+            const elapsed = Math.max(0, (st.end > 0 ? st.end : nowTs) - st.start);
+            const min = Math.floor(elapsed / 60);
+            const sec = Math.floor(elapsed % 60);
+            const timeStr = elapsed < 1 ? '<1s' : (min > 0 ? `${min}m ${sec}s` : `${sec}s`);
+            const isRunning = st.end === 0;
+            html += `<span class="task-detail-step${isRunning ? ' running' : ''}"><span class="step-name">${label}${isRunning ? '…' : ''}</span><span class="step-time">${timeStr}</span></span>`;
+        }
+        html += `</div>`;
+    }
+
     // Processing: Jobs-style minimal progress view
-    if (status === 'processing' || status === 'downloading') {
+    if (status === 'queued') {
+        html += `<div class="task-detail-progress">`;
+        html += `<div class="progress-hero" style="font-size:20px;line-height:1.4;color:var(--text-2);">⏳ 排队中</div>`;
+        html += `<div class="progress-message">${escapeHtml(task.message || '请稍候，前面还有任务正在执行...')}</div>`;
+        html += `</div>`;
+        html += `<div class="task-detail-actions-bar">`;
+        html += `<button class="btn-cancel" onclick="cancelTaskInline('${task.task_id || currentTaskId}')">取消</button>`;
+        html += `</div>`;
+    } else if (status === 'processing' || status === 'downloading') {
         const progress = task.progress || 0;
         const message = task.message || '';
         const step = STEP_CONFIG.normalize(task.step || '');
@@ -689,16 +748,42 @@ function _renderTaskDetailPanel(task) {
         html += `<div class="progress-label">${escapeHtml(currentLabel)}</div>`;
 
         // 圆点线
+        const nowTs = Date.now() / 1000;
+        const stepTiming = task._step_timing || [];
+        const stepElapsedMap = {};
+        for (let si = 0; si < stepTiming.length; si++) {
+            const st = stepTiming[si];
+            const elapsed = Math.max(0, (st.end > 0 ? st.end : nowTs) - st.start);
+            stepElapsedMap[st.step] = elapsed;
+        }
+        function _fmtElapsed(sec) {
+            if (sec < 1) return '<1s';
+            const m = Math.floor(sec / 60);
+            const s = Math.floor(sec % 60);
+            return m > 0 ? `${m}m ${s}s` : `${s}s`;
+        }
+
         html += `<div class="progress-dots">`;
         for (let i = 0; i < totalSteps; i++) {
             const s = STEP_CONFIG.names[i];
             const lbl = STEP_CONFIG.labels[s] || s;
             const so = STEP_CONFIG.order[s] || 0;
+            const isDone = so < stepIdx;
+            const isActive = so === stepIdx;
+            const elapsed = stepElapsedMap[s];
+            let labelText = lbl;
+            if (isDone && elapsed !== undefined) {
+                labelText = `${lbl} (${_fmtElapsed(elapsed)})`;
+            } else if (isActive) {
+                const st = stepTiming.find(function(item){ return item.step === s; });
+                const startTs = st ? st.start : 0;
+                labelText = `${lbl} <span class="dot-elapsed-active" data-start="${startTs}">(${_fmtElapsed(elapsed || 0)})</span>`;
+            }
             let cls = 'progress-dot';
-            if (so < stepIdx) cls += ' done';
-            else if (so === stepIdx) cls += ' active';
-            html += `<span class="${cls}" title="${lbl}"><span class="dot-inner"></span><span class="dot-label">${lbl}</span></span>`;
-            if (i < totalSteps - 1) html += `<span class="progress-line ${so < stepIdx ? 'done' : ''}"></span>`;
+            if (isDone) cls += ' done';
+            else if (isActive) cls += ' active';
+            html += `<span class="${cls}" title="${lbl}"><span class="dot-inner"></span><span class="dot-label">${labelText}</span></span>`;
+            if (i < totalSteps - 1) html += `<span class="progress-line ${isDone ? 'done' : ''}"></span>`;
         }
         html += `</div>`;
 
@@ -726,6 +811,30 @@ function _renderTaskDetailPanel(task) {
     }
 
     content.innerHTML = html;
+
+    // 启动/清理 步骤耗时 实时刷新
+    if (window._stepElapsedTimer) {
+        clearInterval(window._stepElapsedTimer);
+        window._stepElapsedTimer = null;
+    }
+    const activeDots = content.querySelectorAll('.dot-elapsed-active');
+    if (activeDots.length > 0 && (status === 'processing' || status === 'downloading')) {
+        function _fmtElapsedLocal(sec) {
+            if (sec < 1) return '(<1s)';
+            const m = Math.floor(sec / 60);
+            const s = Math.floor(sec % 60);
+            return m > 0 ? `(${m}m ${s}s)` : `(${s}s)`;
+        }
+        window._stepElapsedTimer = setInterval(function() {
+            const now = Date.now() / 1000;
+            activeDots.forEach(function(el) {
+                const start = parseFloat(el.getAttribute('data-start'));
+                if (start > 0) {
+                    el.textContent = _fmtElapsedLocal(now - start);
+                }
+            });
+        }, 1000);
+    }
 
     // Store data for video/audio switch
     if (status === 'completed') {
@@ -2156,5 +2265,24 @@ async function redoTask(taskId) {
     } catch (err) {
         alert('网络错误: ' + err.message);
         if (btn) { btn.disabled = false; btn.textContent = '↻'; }
+    }
+}
+
+/**
+ * 复制 Task ID 到剪贴板
+ */
+function copyTaskId(e, taskId) {
+    if (e) e.stopPropagation();
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(taskId).then(function() {
+            showToast('✅ 已复制: ' + taskId.substring(0, 12) + '...');
+        }).catch(function() {
+            // 回退到 textarea 方式
+            copyViaTextarea(taskId);
+            showToast('✅ 已复制 Task ID');
+        });
+    } else {
+        copyViaTextarea(taskId);
+        showToast('✅ 已复制 Task ID');
     }
 }
