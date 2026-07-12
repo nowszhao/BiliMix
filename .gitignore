@@ -28,6 +28,9 @@ Thumbs.db
 # 视频文件
 *.mp4
 *.mp3
+
+# 测试音频数据（保留静态测试数据，不被忽略）
+!scripts/test_data/
 # SQLite 数据库文件
 data/bilimix.db
 data/bilimix.db-shm
