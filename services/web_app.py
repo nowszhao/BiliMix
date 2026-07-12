@@ -529,7 +529,7 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
         update_task(task_id, status="processing", step="transcribe",
                     progress=5, message="Step 1/4: 正在转录音频...")
 
-        transcription = transcribe(transcribe_audio_path)
+        transcription = transcribe(transcribe_audio_path, output_dir=result_dir)
         full_text = extract_full_text(transcription)
         segments = transcription.get("segments", [])
 

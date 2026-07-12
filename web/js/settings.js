@@ -709,16 +709,27 @@ function _renderTaskDetailPanel(task) {
     const allSteps = (stepTiming || []).filter(function(st) { return st.start > 0; });
     if (allSteps.length > 0) {
         const nowTs = Date.now() / 1000;
-        html += `<div class="task-detail-steps">`;
+        // 按 step 名称分组聚合：累加同一 step 的所有已完成耗时
+        const stepTotals = {};
         for (let i = 0; i < allSteps.length; i++) {
             const st = allSteps[i];
-            const label = STEP_CONFIG.labels[st.step] || st.step;
             const elapsed = Math.max(0, (st.end > 0 ? st.end : nowTs) - st.start);
+            if (!stepTotals[st.step]) stepTotals[st.step] = { total: 0, isRunning: false };
+            if (st.end > 0) {
+                stepTotals[st.step].total += elapsed;
+            } else {
+                stepTotals[st.step].isRunning = true;
+            }
+        }
+        html += `<div class="task-detail-steps">`;
+        for (const stepName in stepTotals) {
+            const info = stepTotals[stepName];
+            const label = STEP_CONFIG.labels[stepName] || stepName;
+            const elapsed = info.total;
             const min = Math.floor(elapsed / 60);
             const sec = Math.floor(elapsed % 60);
             const timeStr = elapsed < 1 ? '<1s' : (min > 0 ? `${min}m ${sec}s` : `${sec}s`);
-            const isRunning = st.end === 0;
-            html += `<span class="task-detail-step${isRunning ? ' running' : ''}"><span class="step-name">${label}${isRunning ? '…' : ''}</span><span class="step-time">${timeStr}</span></span>`;
+            html += `<span class="task-detail-step${info.isRunning ? ' running' : ''}"><span class="step-name">${label}${info.isRunning ? '…' : ''}</span><span class="step-time">${timeStr}</span></span>`;
         }
         html += `</div>`;
     }
