@@ -424,6 +424,7 @@ def _cleanup_intermediate_files(result_dir: str):
         "tts_fish_cache",
         "tts_sent_cache",
         "tts_cache",
+        "tts_confucius_cache",
         "ref_audio",
     ]
     for subdir in cleanup_dirs:

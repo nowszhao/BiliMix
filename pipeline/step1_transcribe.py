@@ -265,7 +265,7 @@ def transcribe(audio_path: str, output_dir: str = None) -> dict:
 
     if result.returncode != 0:
         print(f"[Step1] WhisperX 转录失败:\n{result.stderr}")
-        sys.exit(1)
+        raise RuntimeError(f"WhisperX 转录失败 (code={result.returncode}): {result.stderr[-500:]}")
 
     print(f"[Step1] 转录完成，读取结果: {json_path}")
     with open(json_path, "r", encoding="utf-8") as f:
