@@ -1,13 +1,8 @@
 {
-  "description": "BabyBus\u82f1\u6587\u6545\u4e8b+\u4eba\u5de5\u63d2\u505c\u987f\u6d4b\u8bd5\u97f3\u9891(2s/3.5s/5s/2.5s)",
+  "description": "BabyBus\u82f1\u6587\u6545\u4e8b+\u4eba\u5de5\u505c\u987f(2s/3.5s/5s/2.5s/10s)",
   "source": "BabyBus Podcast",
-  "total_duration_s": 164.0,
-  "avg_dbfs": -17.1,
-  "max_dbfs": -0.4,
-  "inserted_pauses_ms": [
-    2000,
-    3500,
-    5000,
-    2500
-  ]
+  "total_duration_s": 174.0,
+  "avg_dbfs": -17.4,
+  "pause_count_gt_500ms": 9,
+  "longest_pause_s": 9.8
 }
