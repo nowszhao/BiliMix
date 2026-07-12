@@ -48,38 +48,26 @@ def _normalize_tts_audio(audio: AudioSegment,
     return audio.apply_gain(gain)
 
 
-# atempo 允许的拉伸范围：收紧到 0.85x~1.2x（±15~20%），避免逐句独立调速导致
-# 相邻句子语速跳变明显（原范围 0.5~2.0 太宽，忽快忽慢听感刺耳）。
-# 超出此范围的时长差异不再靠暴力拉伸吸收，改为允许音频播放时长略微
-# 溢出到下一句之前的静音间隙里（由调用方结合下一句起始时间做安全裁剪）。
-_ATEMPO_MIN, _ATEMPO_MAX = 0.85, 1.2
+# atempo 允许的拉伸范围：收紧到 0.92x~1.08x（±8%），配合 3 句滑动窗口
+# 速度平滑，消除相邻句速度跳变导致的"忽快忽慢"听感。超出范围的差值
+# 不再靠暴力拉伸吸收，改为允许音频溢出到下一句前的静音间隙。
+_ATEMPO_MIN, _ATEMPO_MAX = 0.92, 1.08
 
 
-def _time_stretch_natural(audio: AudioSegment, target_ms: int) -> AudioSegment:
+def _time_stretch_to_speed(audio: AudioSegment, speed: float) -> AudioSegment:
     """
-    用 ffmpeg atempo 将音频调速到接近目标时长，但调速幅度限制在
-    _ATEMPO_MIN~_ATEMPO_MAX 范围内（±15~20%），保持语速自然平稳。
-
-    与旧版 _time_stretch_to_duration 的区别：不再强制裁剪/填充到
-    精确的 target_ms —— 允许结果时长与目标有一定偏差，由调用方决定
-    如何在时间轴上安放（通常是让多出的部分播放到下一句之前的空隙里）。
+    用 ffmpeg atempo 按指定速度因子调速。
 
     Args:
         audio: 原始音频片段
-        target_ms: 目标时长（毫秒），仅用于计算合理的调速倍率
+        speed: 速度因子（_ATEMPO_MIN ~ _ATEMPO_MAX）
 
     Returns:
-        AudioSegment: 调速后的音频（音高不变），实际时长可能与 target_ms 有偏差
+        AudioSegment: 调速后的音频（音高不变）
     """
-    src_ms = len(audio)
-    if src_ms <= 0 or target_ms <= 0:
-        return audio
-
-    speed = src_ms / target_ms  # >1: 需要加快(压缩)  <1: 需要放慢(拉伸)
     speed = max(_ATEMPO_MIN, min(_ATEMPO_MAX, speed))
-
     if abs(speed - 1.0) < 0.03:
-        return audio  # 差异很小，不值得调速引入的额外处理开销
+        return audio
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f_in, \
          tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f_out:
@@ -93,13 +81,31 @@ def _time_stretch_natural(audio: AudioSegment, target_ms: int) -> AudioSegment:
         ], capture_output=True, text=True, timeout=60)
         if r.returncode == 0 and os.path.exists(out_path):
             return AudioSegment.from_file(out_path)
-        return audio  # atempo 失败，回退原始音频
+        return audio
     finally:
         for p in (in_path, out_path):
             try:
                 os.remove(p)
             except OSError:
                 pass
+
+
+def _time_stretch_natural(audio: AudioSegment, target_ms: int) -> AudioSegment:
+    """
+    用 ffmpeg atempo 将音频调速到接近目标时长。
+
+    Args:
+        audio: 原始音频片段
+        target_ms: 目标时长（毫秒），仅用于计算合理的调速倍率
+
+    Returns:
+        AudioSegment: 调速后的音频（音高不变），实际时长可能与 target_ms 有偏差
+    """
+    src_ms = len(audio)
+    if src_ms <= 0 or target_ms <= 0:
+        return audio
+    speed = src_ms / target_ms
+    return _time_stretch_to_speed(audio, speed)
 
 
 def mix_sentence_audio(
@@ -214,6 +220,39 @@ def mix_sentence_audio(
         translated_set_fast = set(translated_indices)
         sorted_indices = sorted(translated_indices)
 
+        # ---- 速度平滑预计算 ----
+        # 逐句独立调速会导致相邻句最大 41% 的速度跳变（忽快忽慢）。
+        # 解决方法：先收集所有句子的原始 TTS 时长，计算每句的原始速度因子，
+        # 然后应用 3 句滑动窗口平均，用平滑后的速度代替独立计算。
+        print(f"[Step4b] 预计算速度平滑: {len(sorted_indices)} 句")
+        raw_metadata = []  # [(seg_idx, src_ms, window_ms, raw_speed), ...]
+        for pos, seg_idx in enumerate(sorted_indices):
+            seg = segments[seg_idx]
+            seg_start_ms = int(seg.get("start", 0) * 1000)
+            seg_end_ms = int(seg.get("end", 0) * 1000)
+            window_ms = max(seg_end_ms - seg_start_ms, 200)
+            tts_path = tts_audio_map.get(seg_idx, "")
+            if tts_path and os.path.exists(tts_path):
+                src_dur = len(AudioSegment.from_file(tts_path))
+                raw_speed = src_dur / window_ms
+            else:
+                raw_speed = 1.0  # 无 TTS 则不做调速
+            raw_metadata.append((seg_idx, window_ms, raw_speed))
+
+        # 3 句滑动窗口平均
+        n = len(raw_metadata)
+        smooth_speeds = {}
+        for i, (seg_idx, window_ms, raw_speed) in enumerate(raw_metadata):
+            if n <= 2:
+                smooth = raw_speed
+            else:
+                left = max(0, i - 1)
+                right = min(n, i + 2)
+                speeds = [raw_metadata[j][2] for j in range(left, right)]
+                smooth = sum(speeds) / len(speeds)
+            smooth_speeds[seg_idx] = max(_ATEMPO_MIN, min(_ATEMPO_MAX, smooth))
+            print(f"  [{seg_idx}] raw_speed={raw_speed:.3f} → smooth={smooth:.3f}")
+
         # 追踪音频实际播放到的位置（而非原始时间戳），用于处理
         # TTS 时长超出原句子窗口时的顺延，避免中途硬切断语音
         actual_cursor_ms = 0
@@ -250,7 +289,8 @@ def mix_sentence_audio(
             # （加速压缩能量 → 变响，减速拉长 → 变轻），
             # 相邻句之间产生 ~3.5dB 听感跳变。
             # 先调速确保速度一致，再归一化保证音量一致。
-            tts_clip = _time_stretch_natural(tts_clip, window_ms)
+            # 使用预计算的平滑 speed（3 句滑动平均），消除相邻句速度跳变。
+            tts_clip = _time_stretch_to_speed(tts_clip, smooth_speeds.get(seg_idx, 1.0))
             tts_clip = _normalize_tts_audio(tts_clip)
             tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
 
