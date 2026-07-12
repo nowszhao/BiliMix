@@ -1,31 +1,25 @@
 #!/usr/bin/env python3
 """
-生成配音质量测试音频 — 2分钟，多说话人/语速/停顿混合。
+生成配音质量测试音频 — 多人对话风格，语速/停顿层次不齐。
 使用 macOS 内置 `say` 命令（vanilla OS, 无需联网）。
 """
-import subprocess, os, tempfile, json, sys, re
+import subprocess, os, json, sys
 from pydub import AudioSegment
 
-# ── 输出路径 ──
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "test_data")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 WAV_PATH = os.path.join(OUTPUT_DIR, "pace_test_audio.wav")
 META_PATH = os.path.join(OUTPUT_DIR, "pace_test_metadata.json")
 
-# macOS `say` 可用声线
 VOICES = {
-    "samantha": "Samantha",    # en-US 女声（自然）
-    "alex":     "Alex",         # en-US 男声
-    "daniel":   "Daniel",       # en-GB 男声
-    "karen":    "Karen",        # en-AU 女声
-    "fiona":    "Fiona",        # en-GB 女声（英式）
-    "fred":     "Fred",         # en-US 男声（较自然）
+    "samantha": "Samantha",   # en-US 女声（主持人）
+    "alex":     "Alex",        # en-US 男声（副主持）
+    "daniel":   "Daniel",      # en-GB 男声（嘉宾）
 }
 
 
 def say_tts(voice: str, text: str, out_path: str, rate: int = 0) -> bool:
-    """用 macOS say 生成语音"""
     aiff_path = out_path.replace(".wav", ".aiff")
     cmd = ["say", "-v", voice, "-o", aiff_path]
     if rate:
@@ -40,82 +34,60 @@ def say_tts(voice: str, text: str, out_path: str, rate: int = 0) -> bool:
         audio.export(out_path, format="wav")
         os.remove(aiff_path)
         return True
-    except subprocess.TimeoutExpired:
-        print(" say timeout")
-        return False
     except Exception as e:
         print(f" say error: {type(e).__name__}: {e}")
         return False
 
 
-# ── 素材定义 ──
-# (voice_key, rate_wpm, text, pause_after_ms)
-# rate: 标准语速约 180 wpm。此处为偏移值：-40=慢, 0=正常, +40=快
+# ── 多人对话素材 ──
+# (voice_key, rate, text, pause_after_ms)
+# rate -20~+15 为自然范围
 segments = [
-    # ── 开场：Samantha (美式女声) 正常 ──
-    ("samantha", 0,    "Welcome to the BiliMix audio synthesis test suite.",                 300),
-    ("samantha", 0,    "This recording contains multiple speakers, varied speaking rates, and irregular pauses.", 600),
-    ("samantha", 20,   "Our goal is to stress test the vocal separation, transcription, translation, and mixing pipeline.", 400),
+    # 主持人开场
+    ("samantha", 0,  "Welcome back to the show everyone, today we have a special guest with us.", 500),
+    ("samantha", 0,  "We are going to talk about a really interesting topic that has been getting a lot of attention lately.", 700),
 
-    # ── Alex (美式男声) 快速 ──
-    ("alex",    50,    "Hey there! This is fast speech. Can you keep up? Let's see how the system handles quick bursts of energy!", 500),
-    ("alex",    50,    "Boom. Short. Fast.",                                                   200),
-    ("alex",    60,    "Rapid fire. One after another. No time to breathe!",                    800),
+    # Alex 接话
+    ("alex", 10, "That is right, and I am really excited to dive into this. It is something I have been following for a while now.", 600),
+    ("alex", 15, "So tell us, what is your take on the whole situation?", 1000),
 
-    # ── Daniel (英式男声) 慢速 ──
-    ("daniel", -30,    "Now we have a rather lengthy sentence that meanders through several subordinate clauses, with the express purpose of challenging the system's ability to handle extended speech patterns gracefully.", 1200),
+    # Daniel 思考后回应（慢速）
+    ("daniel", -10, "Well, that is a great question. I think there are a few key aspects we need to consider here.", 800),
+    ("daniel", -15, "First of all, the technology itself has evolved significantly over the past few years, and that has changed the landscape quite a bit.", 500),
+    ("daniel", -10, "But I also think we need to be careful about how we approach some of the challenges that come with it.", 1200),
 
-    # ── Karen (澳式女声) 正常 ──
-    ("karen",   0,     "A brief pause.",                                                       250),
-    ("karen",  10,     "This sentence follows a very short gap, testing tight timing alignment.", 600),
+    # Samantha 追问
+    ("samantha", 0, "That is a really good point.", 300),
+    ("samantha", 5, "Could you elaborate a bit more on what you mean by challenges?", 800),
 
-    # ── Fred (美式男声) 中速 ──
-    ("fred",    0,     "Testing medium pace speech with natural cadence in this passage.",       500),
-    ("fred",   25,     "Slightly faster now! Just enough to feel the difference.",              1000),
+    # Alex 接话（稍快）
+    ("alex", 20, "Yeah, I was wondering the same thing. Like, what are the main hurdles you see?", 600),
 
-    # ── Samantha 再次，稍慢 ──
-    ("samantha", -20,  "Now returning to the original voice, but speaking a bit slower this time around.", 400),
+    # Daniel 详细说明
+    ("daniel", -10, "Sure. So one of the biggest challenges is making sure the system handles edge cases properly.", 700),
+    ("daniel", -5, "For example, when you have multiple speakers with very different speaking styles, the timing can be tricky to manage.", 500),
+    ("daniel", -5, "And then there is the issue of pauses. Natural conversation has all sorts of pauses.", 400),
+    ("daniel", 0, "Some are short, some are long, and they all serve a purpose in communication.", 2500),
 
-    # ── Fiona (英式女声) ──
-    ("fiona",   0,     "And now for something completely different — a British female voice.",   700),
-    ("fiona",   0,     "Short.",                                                                200),
-    ("fiona",   0,     "Medium length sentence here.",                                          500),
-    ("fiona",   0,     "This is a longer passage aimed at testing how well the system can maintain consistent quality across an extended utterance.", 300),
+    # 长停顿后恢复
+    ("samantha", 0, "That is fascinating. I never really thought about pauses that way before.", 500),
+    ("samantha", 5, "So how do you think this impacts the overall listening experience for the audience?", 700),
 
-    # ── Alex 再次快速 + 极短停顿 ──
-    ("alex",    70,    "Quick!",                                                                150),
-    ("alex",    70,    "Fast!",                                                                150),
-    ("alex",    70,    "Tight!",                                                                200),
+    # Alex 快速回应
+    ("alex", 15, "Honestly, I think most people do not notice it consciously, but they feel it.", 400),
+    ("alex", 20, "If the pacing is off, the whole thing just feels off.", 800),
 
-    # ── 超长停顿测试（5秒） ──
-    ("daniel", -20,    "Long pause incoming. Get ready.",                                       5000),
+    # Daniel 总结
+    ("daniel", -5, "Exactly. And that is why getting the timing right is so crucial for a natural sounding result.", 600),
+    ("daniel", 0, "It is the difference between something that sounds like a robot reading a script, and real people having a real conversation.", 800),
 
-    # ── Karen 恢复 ──
-    ("karen",   0,     "Did you notice that five second gap? That's for testing silence handling.", 800),
-    ("karen",   0,     "Short one.",                                                            150),
-    ("karen",   0,     "Another.",                                                              150),
-    ("karen",   0,     "And another.",                                                          400),
-
-    # ── Samantha 超慢 ──
-    ("samantha", -50,  "Testing the lower bound of the speaking rate — very slow and deliberate articulation.", 2000),
-
-    # ── 交替短句 + 2秒停顿 ──
-    ("fiona",   0,     "Two second silence upcoming.",                                          2000),
-    ("fred",    0,     "And we are back. That was another extended pause.",                      600),
-    ("fred",    0,     "Here.",                                                                 200),
-    ("fred",    0,     "There.",                                                                500),
-    ("fred",    0,     "Everywhere.",                                                           400),
-
-    # ── Daniel 中速 ──
-    ("daniel",  0,     "This concludes the main section of our test recording.",                 400),
-
-    # ── 结尾加速 ──
-    ("alex",    80,    "Finishing strong! Fast and furious! Last few sentences coming right up!", 300),
-    ("alex",    80,    "Three.",                                                                150),
-    ("alex",    80,    "Two.",                                                                  150),
-    ("alex",    80,    "One.",                                                                  200),
-    ("samantha", 0,    "Test complete. Audio synthesis check finished.",                         200),
+    # 快速收尾
+    ("alex", 15, "Alright, well that is all we have time for today.", 300),
+    ("samantha", 0, "Thank you so much for joining us, this was a great discussion.", 400),
+    ("samantha", 0, "And thank you for listening. We will see you next time.", 300),
+    ("alex", 10, "Take care everyone.", 200),
 ]
+
 
 # ── 生成 ──
 if __name__ == "__main__":
@@ -131,10 +103,10 @@ if __name__ == "__main__":
         voice = VOICES[voice_key]
         out_path = f"/tmp/tts_seg_{i:03d}.wav"
 
-        print(f"  [{i:02d}] {voice_key:7s} rate={rate_pct:3d} pause={pause_ms:4d}ms "
+        print(f"  [{i:02d}] {voice_key:8s} rate={rate_pct:3d} pause={pause_ms:4d}ms "
               f"\"{text[:40]:40s}\"", end="")
 
-        ok = say_tts(voice, text, out_path, rate=rate_pct)
+        ok = say_tts(voice, text.replace("'", ""), out_path, rate=rate_pct)
         if not ok:
             print(f" → FAILED")
             continue
@@ -178,7 +150,7 @@ if __name__ == "__main__":
 
     with open(META_PATH, "w") as f:
         json.dump({
-            "description": "BiliMix 配音质量测试音频 — 多说话人/语速/停顿混合",
+            "description": "BiliMix 配音质量测试音频 — 3 人对话",
             "total_duration_s": round(total_dur_s, 1),
             "segment_count": len(meta_segments),
             "max_pause_ms": max(s["pause_after_ms"] for s in meta_segments),
@@ -195,7 +167,7 @@ if __name__ == "__main__":
           f"{max(s['rate_pct'] for s in meta_segments)}%")
     print(f"  停顿范围: {min(s['pause_after_ms'] for s in meta_segments)}ms ~ "
           f"{max(s['pause_after_ms'] for s in meta_segments)}ms")
-    print(f"  长停顿(>2s): "
-          f"{sum(1 for s in meta_segments if s['pause_after_ms'] > 2000)} 处")
-    print(f"  短停顿(<300ms): "
-          f"{sum(1 for s in meta_segments if s['pause_after_ms'] < 300)} 处")
+    print(f"  1~2秒停顿: "
+          f"{sum(1 for s in meta_segments if 1000 <= s['pause_after_ms'] <= 2000)} 处")
+    print(f"  >2.5秒停顿: "
+          f"{sum(1 for s in meta_segments if s['pause_after_ms'] > 2500)} 处")
