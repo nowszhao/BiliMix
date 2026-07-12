@@ -40,14 +40,14 @@ def _detect_encoders() -> dict:
         _ENCODER_CACHE = {"video": None, "audio": None}
         return _ENCODER_CACHE
 
-    # 视频编码器优先级：libx264 > libopenh264 > mpeg4（mpeg4 始终可用）
-    for enc in ["libx264", "libopenh264", "mpeg4"]:
+    # 视频编码器优先级：libx264 > libopenh264（两者均输出浏览器兼容的 H.264）
+    for enc in ["libx264", "libopenh264"]:
         if enc in out:
             _ENCODER_CACHE = {"video": enc, "audio": "aac"}
             return _ENCODER_CACHE
 
-    # 兜底：aac 是 FFmpeg 内置编码器，始终可用
-    _ENCODER_CACHE = {"video": "mpeg4", "audio": "aac"}
+    # 无可用 H.264 编码器 → 记录为 None，后续报错提示用户安装
+    _ENCODER_CACHE = {"video": None, "audio": "aac"}
     return _ENCODER_CACHE
 
 
@@ -277,7 +277,10 @@ def assemble_video(
     audio_enc = encoders.get("audio", "aac")
 
     if not video_enc:
-        print("[Step5] 失败: 未找到可用的视频编码器（需要 libx264 / libopenh264 / mpeg4 之一）")
+        print("[Step5] 失败: 未找到可用的 H.264 视频编码器（libx264 / libopenh264）")
+        print("[Step5] 请安装带 H.264 编码支持的 FFmpeg：")
+        print("[Step5]   CentOS 8+:  dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm && dnf install ffmpeg")
+        print("[Step5]   其他发行版: apt install ffmpeg / 或从 https://ffmpeg.org 编译安装")
         return ""
 
     if video_enc != "libx264":
