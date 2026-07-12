@@ -1,18 +1,13 @@
 {
-  "description": "BabyBus \u82f1\u6587\u6545\u4e8b\u6d4b\u8bd5\u97f3\u9891 \u2014 \u4e24\u6bb5\u62fc\u63a5(Step112+Slide)",
-  "source": "BabyBus Podcast (One Thousand and One Steps)",
-  "total_duration_s": 151.0,
-  "sample_rate": 24000,
-  "channels": 1,
-  "avg_dbfs": -16.8,
+  "description": "BabyBus\u82f1\u6587\u6545\u4e8b+\u4eba\u5de5\u63d2\u505c\u987f\u6d4b\u8bd5\u97f3\u9891(2s/3.5s/5s/2.5s)",
+  "source": "BabyBus Podcast",
+  "total_duration_s": 164.0,
+  "avg_dbfs": -17.1,
   "max_dbfs": -0.4,
-  "volume_range_db": 16.4,
-  "pauses_gt_500ms": 4,
-  "pause_range_s": [
-    0.6,
-    1.6
-  ],
-  "segments_30s": [
-    -16.8
+  "inserted_pauses_ms": [
+    2000,
+    3500,
+    5000,
+    2500
   ]
 }
