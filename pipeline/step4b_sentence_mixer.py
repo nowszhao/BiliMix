@@ -245,11 +245,13 @@ def mix_sentence_audio(
             tts_clip = tts_clip.set_channels(target_channels)
             if tts_clip.frame_rate != target_sr:
                 tts_clip = tts_clip.set_frame_rate(target_sr)
-            tts_clip = _normalize_tts_audio(tts_clip)
 
-            # 语速调整幅度限制在 ±15~20%，保持自然平稳；不再强制裁剪，
-            # 允许调速后仍超出窗口的语音完整播放，靠顺延而非截断来处理
+            # 先调速再归一化：若先归一化后调速，atempo 会改变感知响度
+            # （加速压缩能量 → 变响，减速拉长 → 变轻），
+            # 相邻句之间产生 ~3.5dB 听感跳变。
+            # 先调速确保速度一致，再归一化保证音量一致。
             tts_clip = _time_stretch_natural(tts_clip, window_ms)
+            tts_clip = _normalize_tts_audio(tts_clip)
             tts_clip = tts_clip.fade_in(FADE_MS).fade_out(FADE_MS)
 
             # 实际播放起点：若上一句播放已经拖到了这句的原定开始时间之后，
