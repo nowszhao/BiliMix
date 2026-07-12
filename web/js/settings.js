@@ -1455,18 +1455,6 @@ function renderSettingsForm(cfg) {
                 </div>
                 <div class="settings-item">
                     <div class="settings-item-label">
-                        <span class="settings-item-name">克隆原声</span>
-                        <span class="settings-item-desc">翻译 TTS 是否克隆原音频说话人声音</span>
-                    </div>
-                    <div class="settings-item-control">
-                        <label class="settings-toggle">
-                            <input type="checkbox" id="cfg-sentence_tts_voice_clone" ${cfg.sentence_tts_voice_clone ? 'checked' : ''}>
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                </div>
-                <div class="settings-item">
-                    <div class="settings-item-label">
                         <span class="settings-item-name">说话人间隔阈值</span>
                         <span class="settings-item-desc">同说话人最大间隔（秒），单人演讲建议 0.8</span>
                     </div>
@@ -1857,7 +1845,6 @@ async function saveSettings() {
     const payload = {skip_confirmation: getValue('cfg-skip_confirmation'),
         sentence_gap_ms: getValue('cfg-sentence_gap_ms'),
         sentence_full_gap_ms: getValue('cfg-sentence_full_gap_ms'),
-        sentence_tts_voice_clone: getValue('cfg-sentence_tts_voice_clone'),
         tts_engine: getValue('cfg-tts_engine'),
         tts_text_format: getValue('cfg-tts_text_format'),
         whisperx_model: getValue('cfg-whisperx_model'),
