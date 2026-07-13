@@ -11,7 +11,7 @@ cross the language barrier and enjoy overseas content immersively.
 
 ## Demo
 
-Side-by-side comparison of an original English video vs. BiliMix's dubbed output:
+Side-by-side comparison of the original video vs. BiliMix's dubbed output (click images for full video):
 
 <table>
 <tr>
@@ -19,12 +19,10 @@ Side-by-side comparison of an original English video vs. BiliMix's dubbed output
 <th align="center">Dubbed (bilingual subtitles)</th>
 </tr>
 <tr>
-<td align="center" width="50%"><video src="examples/preview_original.mp4" poster="examples/poster_original.jpg" controls muted width="100%"></video></td>
-<td align="center" width="50%"><video src="examples/preview_mixed.mp4" poster="examples/poster_mixed.jpg" controls muted width="100%"></video></td>
+<td align="center" width="50%"><a href="examples/test1.mp4"><img src="examples/screenshot_original.jpg" alt="Original screenshot" width="100%"></a></td>
+<td align="center" width="50%"><a href="examples/test1_mixed.mp4"><img src="examples/screenshot_mixed.jpg" alt="Dubbed screenshot" width="100%"></a></td>
 </tr>
 </table>
-
-> **[Download full dubbed video](examples/test1_mixed.mp4)** or browse [examples/](examples/) for the original video comparison.
 
 ---
 

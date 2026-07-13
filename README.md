@@ -9,7 +9,7 @@
 
 ## 效果展示
 
-以下为原始英文视频与 BiliMix 处理后的中英配音视频效果对比：
+以下为原始英文视频与 BiliMix 处理后的中英配音视频效果对比（点击图片查看完整视频）：
 
 <table>
 <tr>
@@ -17,12 +17,10 @@
 <th align="center">配音后（中英双语字幕）</th>
 </tr>
 <tr>
-<td align="center" width="50%"><video src="examples/preview_original.mp4" poster="examples/poster_original.jpg" controls muted width="100%"></video></td>
-<td align="center" width="50%"><video src="examples/preview_mixed.mp4" poster="examples/poster_mixed.jpg" controls muted width="100%"></video></td>
+<td align="center" width="50%"><a href="examples/test1.mp4"><img src="examples/screenshot_original.jpg" alt="原始视频截图" width="100%"></a></td>
+<td align="center" width="50%"><a href="examples/test1_mixed.mp4"><img src="examples/screenshot_mixed.jpg" alt="配音后截图" width="100%"></a></td>
 </tr>
 </table>
-
-> **[ 下载完整效果视频 ](examples/test1_mixed.mp4)** 或查看 [examples/](examples/) 目录获取原始视频对比。
 
 ---
 
