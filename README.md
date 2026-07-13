@@ -11,9 +11,16 @@
 
 以下为原始英文视频与 BiliMix 处理后的中英配音视频效果对比：
 
-| 原始视频 | 配音后（中英双语字幕） |
-|----------|------------------------|
-| <video src="examples/preview_original.mp4" poster="examples/poster_original.jpg" controls muted width="100%"></video> | <video src="examples/preview_mixed.mp4" poster="examples/poster_mixed.jpg" controls muted width="100%"></video> |
+<table>
+<tr>
+<th align="center">原始视频</th>
+<th align="center">配音后（中英双语字幕）</th>
+</tr>
+<tr>
+<td align="center" width="50%"><video src="examples/preview_original.mp4" poster="examples/poster_original.jpg" controls muted width="100%"></video></td>
+<td align="center" width="50%"><video src="examples/preview_mixed.mp4" poster="examples/poster_mixed.jpg" controls muted width="100%"></video></td>
+</tr>
+</table>
 
 > **[ 下载完整效果视频 ](examples/test1_mixed.mp4)** 或查看 [examples/](examples/) 目录获取原始视频对比。
 
