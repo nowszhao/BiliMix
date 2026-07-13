@@ -1,296 +1,300 @@
-# BiliMix — 中英混合播客/视频学习工具
+# BiliMix — Bilingual Podcast & Video Dubbing Tool
 
-将英文播客/音频/视频通过本地 LLM 逐句翻译为中文，用 Confucius4-TTS 零样本声音克隆朗读中文译文，
-组装为中英交替音频（或带字幕的配音视频），让你跨越语言障碍，沉浸式收听海外内容。
+[中文](README.zh-CN.md)
+
+Transform English podcasts, audio, and videos by translating every sentence into Chinese
+using local LLMs, then reading the translations aloud via Confucius4-TTS zero-shot voice cloning.
+The result is a Chinese-English interleaved audio track (or a subtitled dubbed video) —
+cross the language barrier and enjoy overseas content immersively.
 
 ---
 
-## 效果展示
+## Demo
 
-以下为原始英文视频与 BiliMix 处理后的中英配音视频效果对比：
+Side-by-side comparison of an original English video vs. BiliMix's dubbed output:
 
-| 原始视频 | 配音后（中英双语字幕） |
-|----------|------------------------|
+| Original | Dubbed (bilingual subtitles) |
+|----------|------------------------------|
 | <video src="examples/preview_original.mp4" poster="examples/poster_original.jpg" controls muted width="100%"></video> | <video src="examples/preview_mixed.mp4" poster="examples/poster_mixed.jpg" controls muted width="100%"></video> |
 
-> **[ 下载完整效果视频 ](examples/test1_mixed.mp4)** 或查看 [examples/](examples/) 目录获取原始视频对比。
+> **[Download full dubbed video](examples/test1_mixed.mp4)** or browse [examples/](examples/) for the original video comparison.
 
 ---
 
-## 硬件要求
+## Hardware Requirements
 
-> ⚠️ **请务必在安装前确认你的机器满足以下最低要求，否则运行将严重受限或完全失败。**
+> :warning: **Verify your machine meets the minimum requirements below before installing. Otherwise, performance will be severely degraded or the pipeline may fail entirely.**
 
-| 资源 | 最低要求 | 推荐配置 | 说明 |
-|------|:-------:|:-------:|------|
-| **CPU** | **4 核** | 8 核+ | WhisperX 转录（8 线程）+ TTS 多 Worker + FFmpeg 编码 |
-| **内存** | **8 GB** | 16 GB+ | Ollama 模型 3-4 GB + TTS Worker 2-4 GB/个 + WhisperX 模型 |
-| **磁盘** | **15 GB 可用** | 50 GB+ | Python 环境 + 模型下载（~10 GB）+ 音视频缓存 |
-| **GPU** | 不需要 | 可选（6 GB+ VRAM） | GPU 显著加速 TTS 与 WhisperX |
+| Resource | Minimum | Recommended | Notes |
+|----------|:-------:|:-----------:|-------|
+| **CPU** | **4 cores** | 8+ cores | WhisperX transcription (8 threads) + TTS parallel workers + FFmpeg encoding |
+| **Memory** | **8 GB** | 16 GB+ | Ollama model 3-4 GB + TTS worker 2-4 GB each + WhisperX model |
+| **Disk** | **15 GB free** | 50 GB+ | Python env + model downloads (~10 GB) + media caches |
+| **GPU** | Not required | Optional (6 GB+ VRAM) | GPU dramatically accelerates TTS and WhisperX |
 
-> **内存是关键瓶颈**：Ollama 翻译模型（`translategemma:4b`）约需 3-4 GB，Confucius4-TTS 每个 Worker 约需 2-4 GB，且默认启动 2 个 Worker。低配机器建议：
-> - 使用 `translategemma:4b` 而非 `12b`
-> - 将 TTS Worker 数降为 1
-> - 使用 `small` WhisperX 模型
+> **Memory is the primary bottleneck**: The Ollama translation model (`translategemma:4b`) needs ~3-4 GB, and each Confucius4-TTS worker consumes ~2-4 GB (2 workers by default). For lower-spec machines:
+> - Use `translategemma:4b` instead of `12b`
+> - Reduce TTS workers to 1
+> - Use `small` WhisperX model
 
 ---
 
-## 支持场景
+## Use Cases
 
-| 场景 | 输入 | 输出 | 说明 |
-|------|------|------|------|
-| 🎧 音频转录 | URL / 本地文件 | 中英交替 MP3 | 播客、音频课程 |
-| 🎬 视频配音 | YouTube / 本地 MP4 / 服务器路径 | 中英配音 MP4 + SRT 字幕 | 含中英双语/纯中文可选 |
+| Scenario | Input | Output | Description |
+|----------|-------|--------|-------------|
+| :musical_note: Audio transcription | URL / local file | Bilingual MP3 | Podcasts, audiobooks, audio courses |
+| :clapper: Video dubbing | YouTube / local MP4 / server path | Dubbed MP4 + SRT subtitles | Bilingual or Chinese-only subtitles |
 
-## 核心流程
+## Pipeline
 
 ```
-音频/视频 → 转录 → 翻译 → 声音克隆 TTS → 组装（音频/视频 + 字幕）
+Audio/Video → Transcribe → Translate → Voice Clone TTS → Assemble (audio/video + subtitles)
 ```
 
-1. **Step 0: 素材准备** — URL 下载 或 本地上传，视频可直传或指定服务器路径
-2. **Step 1: WhisperX 转录** — 语音转文字，带词级时间戳与说话人分离
-3. **Step 2: Ollama LLM 翻译** — 逐句翻译全部句子为中文（100% 覆盖）
-4. **Step 3: Confucius4-TTS 合成** — 零样本声音克隆，保留原说话人音色
-5. **Step 4: 音频/视频组装** — 中英交替拼接；视频模式额外渲染字幕并合成 MP4
+1. **Step 0: Media prep** — Download via URL or upload locally; video accepts direct upload or server path
+2. **Step 1: WhisperX transcription** — Speech-to-text with word-level timestamps and speaker diarization
+3. **Step 2: Ollama LLM translation** — Sentence-by-sentence translation to Chinese (100% coverage)
+4. **Step 3: Confucius4-TTS synthesis** — Zero-shot voice cloning, preserves original speaker timbre
+5. **Step 4: Assembly** — Chinese-English interleaved audio; video mode additionally burns subtitles into MP4
 
-## Web 前端
+## Web UI
 
-- **暗色侧边栏** — 更新 / 任务 / 设置 三页导航，活跃项 accent 色高亮
-- **更新页** — 播客订阅聚合，按时间（今日/本周/本月/全部）+ 状态筛选单集
-- **任务页** — 表格式任务列表，支持状态/类型筛选 + 排序 + 搜索；一键重做、删除
-- **新建任务弹窗** — 音频/视频双模式切换；URL/上传/服务器路径多种输入方式；
-  背景音乐保留、字幕模式、字幕字号等选项卡片
-- **设置页** — 全页布局，双列网格，配置组可折叠；涵盖 TTS、WhisperX、Ollama 等全部参数
-- **进度条** — 实时步骤指示 + 断点续传重试
-- **结果页** — 原始音频/混合音频对比播放，原文转录 + 翻译句对展示
-- **视频详情页** — 原始/配音双标签切换播放，字幕带播放高亮、支持下载
+- **Dark sidebar** — Updates / Tasks / Settings three-page navigation with accent-color active state
+- **Updates page** — Podcast subscription aggregation, filterable by time (today/week/month/all) and status
+- **Tasks page** — Tabular task list with status/type filtering + sorting + search; one-click redo/delete
+- **New task modal** — Audio/video mode toggle; URL/upload/server-path input; BGM retention, subtitle mode, font size options
+- **Settings page** — Full-page layout, two-column grid, collapsible config groups covering all TTS/WhisperX/Ollama params
+- **Progress bar** — Real-time step indicator with resume-from-failure retry
+- **Results page** — Original vs. mixed audio side-by-side playback, transcription + translation sentence pairs
+- **Video details page** — Original/dubbed tab-switched playback, subtitle highlight sync, download support
 
-## 技术栈
+## Tech Stack
 
-| 组件 | 用途 |
-|------|------|
-| WhisperX | 英文语音转文字（词级时间戳 + 说话人分离） |
-| Ollama | 本地 LLM 批量句子翻译 |
-| Confucius4-TTS-CPU | 零样本多语言声音克隆 TTS |
-| FFmpeg | 音频/视频转码、字幕烧录、人声分离 |
-| yt-dlp | YouTube 视频下载 |
-| Flask | Web 服务 + REST API |
-| SQLite | 任务、订阅、搜索历史持久化 |
+| Component | Purpose |
+|-----------|---------|
+| WhisperX | English speech-to-text (word-level timestamps + speaker diarization) |
+| Ollama | Local LLM batch sentence translation |
+| Confucius4-TTS-CPU | Zero-shot multilingual voice cloning TTS |
+| FFmpeg | Audio/video transcoding, subtitle burning, vocal separation |
+| yt-dlp | YouTube video download |
+| Flask | Web server + REST API |
+| SQLite | Task, subscription, and search history persistence |
 
-## 快速开始
+## Quick Start
 
-### 一键安装（推荐）
+### One-Click Install (Recommended)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nowszhao/BiliMix/main/setup.sh | bash
 ```
 
-> 如果已 clone 本项目，也可以直接运行 `./setup.sh`。
+> Already cloned the repo? Run `./setup.sh` directly.
 
-`setup.sh` 会自动完成：
-1. 安装 Miniconda（如未安装）并创建 `bilimix` conda env（Python 3.10）
-2. 安装系统依赖（FFmpeg / Ollama，macOS 用 brew，Linux 用 apt）
-3. 安装 Python 依赖（`requirements.txt` + whisperx + `requirements-tts.txt`）
-4. clone Confucius4-TTS-CPU 到 `../Confucius4-TTS-CPU`
-5. 从模板 `core/config_local.example.py` 生成 `core/config_local.py`（自动填入检测到的路径）
+`setup.sh` automates:
+1. Install Miniconda (if missing) and create `bilimix` conda env (Python 3.10)
+2. Install system dependencies (FFmpeg / Ollama; brew on macOS, apt on Linux)
+3. Install Python dependencies (`requirements.txt` + whisperx + `requirements-tts.txt`)
+4. Clone Confucius4-TTS-CPU into `../Confucius4-TTS-CPU`
+5. Generate `core/config_local.py` from template `core/config_local.example.py` (auto-fill detected paths)
 
-> 幂等：可重复运行 `./setup.sh`，已完成的步骤会自动跳过。
+> Idempotent: re-run `./setup.sh` anytime — completed steps are skipped automatically.
 
-### 启动
+### Launch
 
 ```bash
-# 1. 启动 Ollama 服务（首次需要）
-ollama serve                   # 或 brew services start ollama
+# 1. Start Ollama (first time only)
+ollama serve                   # or brew services start ollama
 
-# 2. 拉取翻译模型
+# 2. Pull the translation model
 ollama pull translategemma:4b
 
-# 3. 激活 conda env 并启动 BiliMix
+# 3. Activate conda env and start BiliMix
 conda activate bilimix
 python services/web_app.py 5555
 
-# 4. 浏览器访问 http://localhost:5555
+# 4. Open http://localhost:5555 in your browser
 ```
 
-### 启动时依赖检测
+### Startup Dependency Check
 
-> ⚠️ **启动时会强制检测所有依赖**，缺失任何一项服务都会直接退出，**不会静默降级**。
+> :warning: **All dependencies are checked at startup. If anything is missing, the server refuses to start — no silent degradation.**
 
-检测范围：
-- **硬件资源**：CPU 核心数、内存大小、磁盘可用空间（低于最低要求给出警告）
-- Python 包（flask / pydub / torch / torchaudio / soundfile / transformers）
-- CLI 工具（ffmpeg / yt-dlp / whisperx）
-- demucs 子进程（`sys.executable -m demucs`）
-- Confucius4-TTS 目录 + worker 脚本
-- Ollama 服务可达
+Checks performed:
+- **Hardware resources**: CPU cores, total memory, free disk space (warns below minimum)
+- Python packages (flask / pydub / torch / torchaudio / soundfile / transformers)
+- CLI tools (ffmpeg / yt-dlp / whisperx)
+- demucs subprocess (`sys.executable -m demucs`)
+- Confucius4-TTS directory + worker script
+- Ollama service reachable
 
-如果依赖缺失，启动会看到类似错误：
+On missing dependencies, you'll see:
 ```
 ============================================================
-❌ 启动失败：缺少以下依赖：
-  - Python 模块 demucs (pip install demucs)
-  - ffmpeg 不在 PATH（brew install ffmpeg）
-  - Confucius4-TTS 目录未配置
-      安装：git clone https://github.com/nowszhao/Confucius4-TTS-CPU.git ../Confucius4-TTS-CPU
-  - Ollama 服务不可达 (http://localhost:11434)
-      启动：ollama serve
+❌ Startup failed: missing dependencies:
+  - Python module demucs (pip install demucs)
+  - ffmpeg not in PATH (brew install ffmpeg)
+  - Confucius4-TTS directory not configured
+      Install: git clone https://github.com/nowszhao/Confucius4-TTS-CPU.git ../Confucius4-TTS-CPU
+  - Ollama unreachable (http://localhost:11434)
+      Start: ollama serve
 ============================================================
 ```
 
-### 手动配置
+### Manual Configuration
 
-如需自定义配置（如不同模型、不同 Python 环境），编辑 `core/config_local.py`。模板参考 `core/config_local.example.py`。
+Edit `core/config_local.py` to customize settings (different models, Python environments, etc.).
+See `core/config_local.example.py` for the template.
 
 ### Troubleshooting
 
-| 问题 | 解决方案 |
-|------|---------|
-| `conda: command not found` | `source ~/.zshrc` 或 `source ~/.bashrc` 后重试 |
-| Ollama 不可达 | 确认 `ollama serve` 已启动，监听 11434 |
-| WhisperX not found | 确保已 `conda activate bilimix`（whisperx 在 env PATH） |
-| TTS 首次运行慢 | 自动从 HuggingFace 下载模型权重 ~3GB，属正常 |
-| 环境损坏 | 重新运行 `./setup.sh`（幂等，会修复缺失部分） |
-| demucs 子进程失败 | 检查 `sys.executable` 是否在 bilimix env 中 |
-| 下载慢/超时 | setup.sh 自动检测网络，慢时切换清华镜像（pip + conda + HuggingFace）|
-| 硬件资源不足 | 启动时自动检测 CPU/内存/磁盘，低于最低要求会打印详细警告与优化建议 |
-| 视频组装报错 Unknown encoder 'libx264' | 系统 FFmpeg 不含 H.264 编码支持，参考 README 硬件要求安装完整版 FFmpeg |
-| HuggingFace 模型下载失败 | 确认 `export HF_ENDPOINT=https://hf-mirror.com`（setup.sh 已持久化到 shell rc）|
+| Issue | Solution |
+|-------|----------|
+| `conda: command not found` | `source ~/.zshrc` or `source ~/.bashrc` then retry |
+| Ollama unreachable | Ensure `ollama serve` is running on port 11434 |
+| WhisperX not found | Verify `conda activate bilimix` (whisperx is in the env PATH) |
+| TTS slow on first run | Auto-downloads ~3 GB model weights from HuggingFace — normal |
+| Broken environment | Re-run `./setup.sh` (idempotent, repairs missing parts) |
+| demucs subprocess fails | Check that `sys.executable` points to the bilimix env |
+| Slow downloads/timeouts | setup.sh auto-detects slow network, switches to Tsinghua mirrors (pip + conda + HuggingFace) |
+| Low hardware resources | Startup auto-detects CPU/memory/disk, prints detailed warnings and optimization tips |
+| Video assembly error: Unknown encoder 'libx264' | System FFmpeg lacks H.264 encoding support; install a full FFmpeg build with encoder support |
+| HuggingFace model download fails | Ensure `export HF_ENDPOINT=https://hf-mirror.com` (setup.sh persists this to shell rc) |
 
-## 目录结构
+## Directory Structure
 
 ```
 BiliMix/
 ├── services/
-│   ├── web_app.py                # Flask Web 服务 + REST API
-│   └── podcast_service.py        # 播客搜索与 RSS 解析
+│   ├── web_app.py                # Flask web server + REST API
+│   └── podcast_service.py        # Podcast search & RSS parsing
 ├── pipeline/
-│   ├── step0_video_prepare.py    # 视频下载/预处理 (yt-dlp)
-│   ├── step1_transcribe.py       # WhisperX 转录
-│   ├── step2b_translate_sentences.py  # LLM 批量逐句翻译
-│   ├── step3_tts_confucius.py    # Confucius4-TTS 合成（并行 Worker）
-│   ├── step4b_sentence_mixer.py  # 中英交替音频组装
-│   ├── step5_video_assemble.py   # 视频字幕烧录与最终组装
-│   └── step_vocal_separation.py  # 人声/背景音分离 (demucs)
+│   ├── step0_video_prepare.py    # Video download/prep (yt-dlp)
+│   ├── step1_transcribe.py       # WhisperX transcription
+│   ├── step2b_translate_sentences.py  # LLM batch sentence translation
+│   ├── step3_tts_confucius.py    # Confucius4-TTS synthesis (parallel workers)
+│   ├── step4b_sentence_mixer.py  # Chinese-English interleaved audio assembly
+│   ├── step5_video_assemble.py   # Video subtitle burning & final assembly
+│   └── step_vocal_separation.py  # Vocal/background separation (demucs)
 ├── workers/
-│   └── confucius_tts_worker.py   # TTS Worker 独立子进程
+│   └── confucius_tts_worker.py   # TTS worker subprocess
 ├── core/
-│   ├── config.py                 # 全局配置
-│   ├── config_manager.py         # Web 配置管理（读取/更新/写回）
-│   ├── database.py               # SQLite 数据库
-│   ├── task_manager.py           # 任务状态管理与断点恢复
-│   └── llm_utils.py              # Ollama API 调用工具
+│   ├── config.py                 # Global configuration
+│   ├── config_manager.py         # Web config management (read/update/write-back)
+│   ├── database.py               # SQLite database
+│   ├── task_manager.py           # Task state management & resume
+│   └── llm_utils.py              # Ollama API client utilities
 ├── web/
-│   ├── index.html                # 单页应用入口
-│   ├── style.css                 # 基础样式
-│   ├── apple_overrides.css       # Apple HIG 设计覆盖
+│   ├── index.html                # SPA entry point
+│   ├── style.css                 # Base styles
+│   ├── apple_overrides.css       # Apple HIG design overrides
 │   └── js/
-│       ├── state.js              # 全局状态
-│       ├── utils.js              # 工具函数
-│       ├── task.js               # 任务提交/取消/轮询/进度
-│       ├── settings.js           # 设置、任务列表、历史、确认弹窗
-│       ├── episodes.js           # 更新页、订阅、页面导航
-│       ├── podcast.js            # 播客搜索
-│       ├── confirm.js            # 翻译确认
-│       ├── result.js             # 结果展示
-│       └── audio-sync.js         # 音频同步/时间轴
+│       ├── state.js              # Global state
+│       ├── utils.js              # Utility functions
+│       ├── task.js               # Task submit/cancel/poll/progress
+│       ├── settings.js           # Settings, task list, history, confirm modal
+│       ├── episodes.js           # Updates page, subscriptions, navigation
+│       ├── podcast.js            # Podcast search
+│       ├── confirm.js            # Translation confirmation
+│       ├── result.js             # Results display
+│       └── audio-sync.js         # Audio sync / timeline
 ├── sdk/                          # Python CLI SDK
-├── config.py                     # 根目录配置入口
+├── config.py                     # Root config entry point
 ├── requirements.txt
 └── README.md
 ```
 
-## 配置说明
+## Configuration
 
-所有配置均可在 Web 设置页面动态修改，无需重启服务。
+All settings can be modified dynamically via the Web UI — no service restart needed.
 
-### 核心参数
+### Core Parameters
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| SKIP_CONFIRMATION | True | 跳过翻译确认环节 |
-| SENTENCE_CN_RATIO | 1.0 | 中文翻译比例（固定 100%） |
-| SENTENCE_GAP_MS | 400 | 中英交替句间间隔 (ms) |
-| SENTENCE_FULL_GAP_MS | 250 | 全翻译模式句间间隔 (ms) |
-| SENTENCE_TTS_VOICE_CLONE | True | 翻译 TTS 是否克隆原声 |
-| KEEP_BGM | False | 新建任务时默认保留背景音乐 |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| SKIP_CONFIRMATION | True | Skip translation confirmation step |
+| SENTENCE_CN_RATIO | 1.0 | Chinese translation ratio (fixed 100%) |
+| SENTENCE_GAP_MS | 400 | Inter-sentence gap in bilingual mode (ms) |
+| SENTENCE_FULL_GAP_MS | 250 | Inter-sentence gap in full-translation mode (ms) |
+| SENTENCE_TTS_VOICE_CLONE | True | Whether TTS clones the original voice |
+| KEEP_BGM | False | Default BGM retention for new tasks |
 
 ### TTS (Confucius4)
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| CONFUCIUS4_TTS_DEVICE | cpu | 推理设备 |
-| CONFUCIUS4_TTS_TEMPERATURE | 0.3 | 采样温度 |
-| CONFUCIUS4_TTS_TOP_P | 0.9 | 核采样阈值 |
-| CONFUCIUS4_TTS_N_TIMESTEPS | 25 | 扩散步数 |
-| CONFUCIUS4_TTS_INFERENCE_CFG_RATE | 0.9 | CFG 引导强度 |
-| CONFUCIUS4_TTS_NUM_WORKERS | 2 | 并行 Worker 数 |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| CONFUCIUS4_TTS_DEVICE | cpu | Inference device |
+| CONFUCIUS4_TTS_TEMPERATURE | 0.3 | Sampling temperature |
+| CONFUCIUS4_TTS_TOP_P | 0.9 | Nucleus sampling threshold |
+| CONFUCIUS4_TTS_N_TIMESTEPS | 25 | Diffusion steps |
+| CONFUCIUS4_TTS_INFERENCE_CFG_RATE | 0.9 | CFG guidance strength |
+| CONFUCIUS4_TTS_NUM_WORKERS | 2 | Parallel worker count |
 
 ### WhisperX
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| WHISPERX_MODEL | medium | 模型大小 |
-| WHISPERX_DEVICE | cpu | 推理设备 |
-| WHISPERX_LANGUAGE | en | 音频语言 |
-| WHISPERX_THREADS | 8 | CPU 线程数 |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| WHISPERX_MODEL | medium | Model size |
+| WHISPERX_DEVICE | cpu | Inference device |
+| WHISPERX_LANGUAGE | en | Audio language |
+| WHISPERX_THREADS | 8 | CPU thread count |
 
 ### Ollama
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| OLLAMA_MODEL | translategemma:12b | 翻译模型 |
-| OLLAMA_BASE_URL | http://localhost:11434 | 服务地址 |
-| LLM_BATCH_SIZE | 5 | 每批合并翻译句数 |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| OLLAMA_MODEL | translategemma:12b | Translation model |
+| OLLAMA_BASE_URL | http://localhost:11434 | Service URL |
+| LLM_BATCH_SIZE | 5 | Sentences per batch |
 
-## API 概览
+## API Overview
 
-### 任务管理
+### Task Management
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| /api/submit | POST | 提交处理任务（音频/视频） |
-| /api/upload | POST | 上传本地文件 |
-| /api/tasks | GET | 获取任务列表 |
-| /api/task/<id> | GET | 查询任务状态与进度 |
-| /api/task/<id>/result | GET | 获取任务完整结果 |
-| /api/task/<id>/cancel | POST | 终止任务 |
-| /api/task/<id>/confirm_sentences | POST | 确认翻译后继续 |
-| /api/task/<id>/retry | POST | 断点续传重试 |
-| /api/task/<id>/redo | POST | 完整重做（清空所有产物，仅保留源文件） |
-| /api/task/<id> | DELETE | 删除任务及其所有文件 |
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| /api/submit | POST | Submit processing task (audio/video) |
+| /api/upload | POST | Upload local file |
+| /api/tasks | GET | List tasks |
+| /api/task/<id> | GET | Get task status & progress |
+| /api/task/<id>/result | GET | Get full task result |
+| /api/task/<id>/cancel | POST | Cancel task |
+| /api/task/<id>/confirm_sentences | POST | Confirm translations to proceed |
+| /api/task/<id>/retry | POST | Resume from failure point |
+| /api/task/<id>/redo | POST | Full redo (clear artifacts, keep source) |
+| /api/task/<id> | DELETE | Delete task and all files |
 
-### 播客 & 订阅
+### Podcasts & Subscriptions
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| /api/podcast/search | GET | 搜索播客 |
-| /api/podcast/rss | GET | 解析 RSS Feed |
-| /api/subscriptions | GET/POST/DELETE | 订阅管理 |
-| /api/favorites | GET/POST/DELETE | 播客收藏 |
-| /api/search-history | GET/POST/DELETE | 搜索历史 |
-| /api/recent-podcasts | GET | 最近使用的播客源 |
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| /api/podcast/search | GET | Search podcasts |
+| /api/podcast/rss | GET | Parse RSS feed |
+| /api/subscriptions | GET/POST/DELETE | Subscription management |
+| /api/favorites | GET/POST/DELETE | Podcast favorites |
+| /api/search-history | GET/POST/DELETE | Search history |
+| /api/recent-podcasts | GET | Recently used podcast sources |
 
-### 工具 & 配置
+### Utilities & Config
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| /api/config | GET | 获取全部配置 |
-| /api/config | POST | 更新配置（写回文件） |
-| /api/translate | POST | 翻译英文词/短语 |
-| /api/word-levels | POST | 查询 BNC/COCA 词频等级 |
-| /api/audio/<path> | GET | 提供音频文件流 |
-| /api | GET | API 元信息 |
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| /api/config | GET | Get all config |
+| /api/config | POST | Update config (write-back to file) |
+| /api/translate | POST | Translate English word/phrase |
+| /api/word-levels | POST | Query BNC/COCA word frequency levels |
+| /api/audio/<path> | GET | Serve audio file stream |
+| /api | GET | API metadata |
 
-## 前置要求
+## Prerequisites
 
-1. **Python 3.10+** + conda 环境
-2. **Ollama** 服务运行中，已拉取翻译模型
-3. **Confucius4-TTS-CPU** 已克隆到 BiliMix 同级目录
-4. **WhisperX** 已安装（转录引擎，建议独立 conda 环境）
-5. **ffmpeg** 系统已安装
-6. **yt-dlp** (pip install yt-dlp) — 视频配音必需
-7. **demucs** (pip install demucs) — 背景音乐保留必需
+1. **Python 3.10+** + conda environment
+2. **Ollama** service running with translation model pulled
+3. **Confucius4-TTS-CPU** cloned alongside BiliMix
+4. **WhisperX** installed (transcription engine; separate conda env recommended)
+5. **ffmpeg** installed system-wide
+6. **yt-dlp** (`pip install yt-dlp`) — required for video dubbing
+7. **demucs** (`pip install demucs`) — required for BGM retention
 
 ## SDK
 
