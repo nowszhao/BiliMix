@@ -3,6 +3,38 @@
 将英文播客/音频/视频通过本地 LLM 逐句翻译为中文，用 Confucius4-TTS 零样本声音克隆朗读中文译文，
 组装为中英交替音频（或带字幕的配音视频），让你跨越语言障碍，沉浸式收听海外内容。
 
+---
+
+## 效果展示
+
+以下为原始英文视频与 BiliMix 处理后的中英配音视频效果对比：
+
+| 原始视频 | 配音后（中英双语字幕） |
+|----------|------------------------|
+| <video src="examples/preview_original.mp4" poster="examples/poster_original.jpg" controls muted width="100%"></video> | <video src="examples/preview_mixed.mp4" poster="examples/poster_mixed.jpg" controls muted width="100%"></video> |
+
+> **[ 下载完整效果视频 ](examples/test1_mixed.mp4)** 或查看 [examples/](examples/) 目录获取原始视频对比。
+
+---
+
+## 硬件要求
+
+> ⚠️ **请务必在安装前确认你的机器满足以下最低要求，否则运行将严重受限或完全失败。**
+
+| 资源 | 最低要求 | 推荐配置 | 说明 |
+|------|:-------:|:-------:|------|
+| **CPU** | **4 核** | 8 核+ | WhisperX 转录（8 线程）+ TTS 多 Worker + FFmpeg 编码 |
+| **内存** | **8 GB** | 16 GB+ | Ollama 模型 3-4 GB + TTS Worker 2-4 GB/个 + WhisperX 模型 |
+| **磁盘** | **15 GB 可用** | 50 GB+ | Python 环境 + 模型下载（~10 GB）+ 音视频缓存 |
+| **GPU** | 不需要 | 可选（6 GB+ VRAM） | GPU 显著加速 TTS 与 WhisperX |
+
+> **内存是关键瓶颈**：Ollama 翻译模型（`translategemma:4b`）约需 3-4 GB，Confucius4-TTS 每个 Worker 约需 2-4 GB，且默认启动 2 个 Worker。低配机器建议：
+> - 使用 `translategemma:4b` 而非 `12b`
+> - 将 TTS Worker 数降为 1
+> - 使用 `small` WhisperX 模型
+
+---
+
 ## 支持场景
 
 | 场景 | 输入 | 输出 | 说明 |
@@ -86,6 +118,7 @@ python services/web_app.py 5555
 > ⚠️ **启动时会强制检测所有依赖**，缺失任何一项服务都会直接退出，**不会静默降级**。
 
 检测范围：
+- **硬件资源**：CPU 核心数、内存大小、磁盘可用空间（低于最低要求给出警告）
 - Python 包（flask / pydub / torch / torchaudio / soundfile / transformers）
 - CLI 工具（ffmpeg / yt-dlp / whisperx）
 - demucs 子进程（`sys.executable -m demucs`）
@@ -120,6 +153,8 @@ python services/web_app.py 5555
 | 环境损坏 | 重新运行 `./setup.sh`（幂等，会修复缺失部分） |
 | demucs 子进程失败 | 检查 `sys.executable` 是否在 bilimix env 中 |
 | 下载慢/超时 | setup.sh 自动检测网络，慢时切换清华镜像（pip + conda + HuggingFace）|
+| 硬件资源不足 | 启动时自动检测 CPU/内存/磁盘，低于最低要求会打印详细警告与优化建议 |
+| 视频组装报错 Unknown encoder 'libx264' | 系统 FFmpeg 不含 H.264 编码支持，参考 README 硬件要求安装完整版 FFmpeg |
 | HuggingFace 模型下载失败 | 确认 `export HF_ENDPOINT=https://hf-mirror.com`（setup.sh 已持久化到 shell rc）|
 
 ## 目录结构

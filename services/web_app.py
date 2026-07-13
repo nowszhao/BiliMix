@@ -200,7 +200,86 @@ def _check_required_dependencies():
         sys.exit(1)
 
 
+# ============================================================
+# 启动时硬件资源检测：CPU / 内存 / 磁盘低于最低要求则给出明确警告
+# ============================================================
+_HW_MIN_CPU = 4           # 最低 CPU 核心数
+_HW_MIN_MEM_GB = 8        # 最低内存 (GB)
+_HW_MIN_DISK_GB = 15      # 最低磁盘可用空间 (GB)
+_HW_REC_CPU = 8           # 推荐 CPU 核心数
+_HW_REC_MEM_GB = 16       # 推荐内存 (GB)
+_HW_REC_DISK_GB = 50      # 推荐磁盘可用空间 (GB)
+
+
+def _get_total_memory_gb() -> float:
+    """跨平台获取系统总内存（GB）。"""
+    import platform
+    try:
+        if platform.system() == "Linux":
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        # 格式: "MemTotal:       16384000 kB"
+                        kb = int(line.split()[1])
+                        return kb / (1024 * 1024)
+        elif platform.system() == "Darwin":
+            import subprocess
+            out = subprocess.check_output(
+                ["sysctl", "-n", "hw.memsize"], text=True, timeout=5
+            ).strip()
+            return int(out) / (1024 ** 3)
+    except Exception:
+        pass
+    return -1.0
+
+
+def _check_hardware_requirements():
+    """启动时检测 CPU / 内存 / 磁盘，低于最低要求打印警告（不阻止启动）。"""
+    cpu_count = os.cpu_count() or 1
+    total_mem_gb = _get_total_memory_gb()
+    disk_free_gb = -1.0
+    disk_path = os.path.join(config.BASE_DIR, "data") if os.path.isdir(
+        os.path.join(config.BASE_DIR, "data")
+    ) else config.BASE_DIR
+    try:
+        usage = shutil.disk_usage(disk_path)
+        disk_free_gb = usage.free / (1024 ** 3)
+    except Exception:
+        pass
+
+    below_min = []
+    if cpu_count < _HW_MIN_CPU:
+        below_min.append(f"CPU 核心数: {cpu_count}（最低 {_HW_MIN_CPU}）")
+    if total_mem_gb > 0 and total_mem_gb < _HW_MIN_MEM_GB:
+        below_min.append(f"内存: {total_mem_gb:.1f} GB（最低 {_HW_MIN_MEM_GB} GB）")
+    if disk_free_gb > 0 and disk_free_gb < _HW_MIN_DISK_GB:
+        below_min.append(f"磁盘可用: {disk_free_gb:.1f} GB（最低 {_HW_MIN_DISK_GB} GB）")
+
+    # 打印当前硬件信息
+    mem_str = f"{total_mem_gb:.1f} GB" if total_mem_gb > 0 else "未知"
+    disk_str = f"{disk_free_gb:.1f} GB" if disk_free_gb > 0 else "未知"
+    print(f"💻 硬件检测: CPU {cpu_count} 核 | 内存 {mem_str} | 磁盘可用 {disk_str}")
+    print(f"   最低要求: CPU ≥ {_HW_MIN_CPU} 核 | 内存 ≥ {_HW_MIN_MEM_GB} GB | 磁盘 ≥ {_HW_MIN_DISK_GB} GB")
+    print(f"   推荐配置: CPU ≥ {_HW_REC_CPU} 核 | 内存 ≥ {_HW_REC_MEM_GB} GB | 磁盘 ≥ {_HW_REC_DISK_GB} GB")
+
+    if below_min:
+        print()
+        print("=" * 60)
+        print("⚠️  硬件资源低于最低要求，运行可能出现问题：")
+        for item in below_min:
+            print(f"  - {item}")
+        print()
+        print("   仍可尝试启动，但以下环节可能因资源不足而失败：")
+        print("    • Ollama 翻译模型 (translategemma:4b 约需 3-4 GB 内存)")
+        print("    • Confucius4-TTS 合成 (每个 Worker 约需 2-4 GB 内存)")
+        print("    • WhisperX 转录 (large 模型约需 3-4 GB 内存)")
+        print("    → 建议：使用 translategemma:4b、减少 TTS Worker 数、使用 smaller WhisperX 模型")
+        print("=" * 60)
+        print()
+
+
 _check_required_dependencies()
+_check_hardware_requirements()
 
 
 # 全局任务队列：保证同一时间只有一个任务在运行，后续任务按提交顺序排队（FIFO）
