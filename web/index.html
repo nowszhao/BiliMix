@@ -669,12 +669,12 @@
                 <p class="episode-bgm-title" id="episode-bgm-title">--</p>
                 <p class="episode-bgm-question">是否保留原音频背景音乐？</p>
                 <div class="episode-bgm-options">
-                    <button class="episode-bgm-btn" onclick="confirmEpisodeBgm(false)">
+                    <button id="episode-bgm-no" class="episode-bgm-btn" onclick="confirmEpisodeBgm(false)">
                         <span class="episode-bgm-icon">🎙️</span>
                         <span class="episode-bgm-label">仅人声</span>
                         <span class="episode-bgm-desc">去除背景音，只保留语音</span>
                     </button>
-                    <button class="episode-bgm-btn primary" onclick="confirmEpisodeBgm(true)">
+                    <button id="episode-bgm-yes" class="episode-bgm-btn" onclick="confirmEpisodeBgm(true)">
                         <span class="episode-bgm-icon">🎵</span>
                         <span class="episode-bgm-label">保留背景音乐</span>
                         <span class="episode-bgm-desc">人声分离后保留 BGM（需更长时间）</span>

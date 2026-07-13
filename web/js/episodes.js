@@ -474,21 +474,61 @@ async function processEpisode(id, audioUrl, title) {
         return;
     }
 
-    // 获取单集预知时长
     const ep = episodesCache.find(e => e.id === id);
     const duration = ep ? ep.duration : '';
+    pendingEpisode = { id, audioUrl, title, duration };
+    showEpisodeBgmModal();
+}
 
-    // 设置选中单集信息
+// ============================================================
+// BGM 弹窗 — 转录处理前选择是否保留背景音乐
+// ============================================================
+
+async function showEpisodeBgmModal() {
+    if (!pendingEpisode) return;
+    document.getElementById('episode-bgm-title').textContent = pendingEpisode.title || '未知单集';
+
+    // 按系统默认值高亮对应按钮
+    try {
+        const resp = await fetch('/api/config');
+        const cfg = await resp.json();
+        const noBgmBtn = document.getElementById('episode-bgm-no');
+        const yesBgmBtn = document.getElementById('episode-bgm-yes');
+        if (cfg.keep_bgm) {
+            yesBgmBtn.classList.add('primary');
+            noBgmBtn.classList.remove('primary');
+        } else {
+            noBgmBtn.classList.add('primary');
+            yesBgmBtn.classList.remove('primary');
+        }
+    } catch (e) { /* 网络失败则保留上次状态 */ }
+
+    const modal = document.getElementById('episode-bgm-modal');
+    modal.style.display = '';
+    modal.classList.add('open');
+}
+
+function closeEpisodeBgmModal() {
+    const modal = document.getElementById('episode-bgm-modal');
+    if (modal) modal.classList.remove('open');
+    pendingEpisode = null;
+}
+
+async function confirmEpisodeBgm(keepBgm) {
+    if (!pendingEpisode) return;
+    const { id, audioUrl, title, duration } = pendingEpisode;
+    closeEpisodeBgmModal();
+
     selectedEpisodeUrl = audioUrl;
     selectedEpisodeTitle = title;
 
-    // 调用提交
     try {
         const body = {
             url: audioUrl,
             title: title,
             skip_confirmation: true,
             type: 'audio',
+            keep_bgm: keepBgm,
         };
         if (duration) body.duration = duration;
 
@@ -499,7 +539,6 @@ async function processEpisode(id, audioUrl, title) {
         });
         const data = await resp.json();
         if (resp.ok && data.task_id) {
-            // 更新单集状态为已读 + 关联 task_id
             await fetch(`/api/episodes/${id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -510,10 +549,8 @@ async function processEpisode(id, audioUrl, title) {
             currentTaskTitle = title;
             tasks_url = audioUrl;
 
-            // 跳转到任务页，新任务会自动出现在列表中
             showToast('✅ 任务已提交');
             switchView('tasks');
-            // 稍等 loadHistory 完成后再展开该任务详情
             setTimeout(() => {
                 if (typeof toggleTaskDetail === 'function') {
                     toggleTaskDetail(data.task_id, audioUrl);
