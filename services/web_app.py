@@ -953,6 +953,8 @@ def continue_after_sentence_confirmation(task_id: str):
             "tts_audio_map": tts_audio_map,
             # 步骤耗时
             "_step_timing": task.get("_step_timing", []),
+            # 视频任务：保存原始视频路径，用于「原始」标签页播放
+            "_video_path": task.get("_video_path", ""),
         })
 
         _cleanup_intermediate_files(result_dir)
@@ -2335,6 +2337,7 @@ def retry_sentence_synthesis(task_id):
         "time_mapping": mix_result["time_mapping"],
         "tts_audio_map": tts_audio_map,
         "_step_timing": task.get("_step_timing", []),
+        "_video_path": task.get("_video_path", ""),
     })
 
     _cleanup_intermediate_files(result_dir)
