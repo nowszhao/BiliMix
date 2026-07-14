@@ -44,6 +44,23 @@ UPDATABLE_CONFIGS = {
     "auth_password": ("AUTH_PASSWORD", str),
     # 默认保留背景音乐
     "keep_bgm": ("KEEP_BGM", bool),
+    # --- 参考音频配置 ---
+    "ref_select_mode": ("REF_SELECT_MODE", str),
+    "ref_min_duration": ("REF_MIN_DURATION", int),
+    "ref_target_duration": ("REF_TARGET_DURATION", int),
+    "ref_max_duration": ("REF_MAX_DURATION", int),
+    # --- 句子翻译 ---
+    "sentence_tts_voice_clone": ("SENTENCE_TTS_VOICE_CLONE", bool),
+    # --- LLM 翻译 ---
+    "llm_translate_temperature": ("LLM_TRANSLATE_TEMPERATURE", float),
+    # --- 音频混音 ---
+    "tts_target_dbfs": ("TTS_TARGET_DBFS", float),
+    "mixer_default_gap_ms": ("MIXER_DEFAULT_GAP_MS", int),
+    "mixer_fade_ms": ("MIXER_FADE_MS", int),
+    "mixer_bgm_gain_db": ("MIXER_BGM_GAIN_DB", float),
+    # --- 转录缺口补录 ---
+    "transcribe_gap_min_seconds": ("TRANSCRIBE_GAP_MIN_SECONDS", float),
+    "transcribe_gap_voice_dbfs": ("TRANSCRIBE_GAP_VOICE_DBFS", float),
 }
 
 
@@ -95,6 +112,23 @@ def get_all_config() -> dict:
         "auth_password": getattr(config, "AUTH_PASSWORD", "bilimix2024"),
         # 默认保留背景音乐
         "keep_bgm": getattr(config, "KEEP_BGM", False),
+        # 参考音频配置
+        "ref_select_mode": getattr(config, "REF_SELECT_MODE", "speaker_local"),
+        "ref_min_duration": getattr(config, "REF_MIN_DURATION", 2),
+        "ref_target_duration": getattr(config, "REF_TARGET_DURATION", 5),
+        "ref_max_duration": getattr(config, "REF_MAX_DURATION", 15),
+        # 句子翻译
+        "sentence_tts_voice_clone": getattr(config, "SENTENCE_TTS_VOICE_CLONE", True),
+        # LLM 翻译
+        "llm_translate_temperature": getattr(config, "LLM_TRANSLATE_TEMPERATURE", 0.3),
+        # 音频混音
+        "tts_target_dbfs": getattr(config, "TTS_TARGET_DBFS", -20.0),
+        "mixer_default_gap_ms": getattr(config, "MIXER_DEFAULT_GAP_MS", 150),
+        "mixer_fade_ms": getattr(config, "MIXER_FADE_MS", 60),
+        "mixer_bgm_gain_db": getattr(config, "MIXER_BGM_GAIN_DB", -10.0),
+        # 转录缺口补录
+        "transcribe_gap_min_seconds": getattr(config, "TRANSCRIBE_GAP_MIN_SECONDS", 3.0),
+        "transcribe_gap_voice_dbfs": getattr(config, "TRANSCRIBE_GAP_VOICE_DBFS", -35.0),
     }
 
 

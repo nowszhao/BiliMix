@@ -7,7 +7,7 @@
 let episodesCurrentPage = 1;
 let episodesStatusFilter = 'all';
 let episodesRssFilter = '';
-let episodesTimeRange = 'today';
+let episodesTimeRange = 'week';
 let episodesSearchQuery = '';
 let episodesExpandedId = null;
 let episodesCache = [];
@@ -60,7 +60,7 @@ function switchView(view) {
 // ============================================================
 
 function getTimeRangeLabel(range) {
-    const labels = { today: '今日', week: '本周', month: '本月', all: '全部时间' };
+    const labels = { week: '本周', month: '本月', all: '全部时间' };
     return labels[range] || '全部时间';
 }
 

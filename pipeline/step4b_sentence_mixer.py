@@ -11,19 +11,20 @@ Step 4b: 全翻译音频组装
     前端字幕和 ASS 字幕均使用新时间戳，与音频精确同步
 """
 import os
+from typing import Optional
 
 from pydub import AudioSegment
 
 from core import config
 
 # TTS 音频目标响度（dBFS），统一所有句子的音量
-_TTS_TARGET_DBFS = -20.0
+_TTS_TARGET_DBFS = getattr(config, "TTS_TARGET_DBFS", -20.0)
 
 # 句间固定间隙（毫秒），保证相邻句子不粘连又有呼吸感
-_DEFAULT_GAP_MS = 150
+_DEFAULT_GAP_MS = getattr(config, "MIXER_DEFAULT_GAP_MS", 150)
 
 # 句首/句尾淡入淡出（毫秒），平滑音色衔接
-_FADE_MS = 60
+_FADE_MS = getattr(config, "MIXER_FADE_MS", 60)
 
 
 def _normalize_tts_audio(audio: AudioSegment,
@@ -44,7 +45,7 @@ def mix_sentence_audio(
     output_path: str,
     gap_ms: int = None,
     bgm_path: str = None,
-    bgm_gain_db: float = -10.0,
+    bgm_gain_db: Optional[float] = None,
 ) -> dict:
     """
     全翻译音频组装：逐句顺序拼接中文 TTS 音频。
@@ -70,6 +71,8 @@ def mix_sentence_audio(
     """
     if gap_ms is None:
         gap_ms = getattr(config, "SENTENCE_GAP_MS", _DEFAULT_GAP_MS)
+    if bgm_gain_db is None:
+        bgm_gain_db = getattr(config, "MIXER_BGM_GAIN_DB", -10.0)
 
     sorted_indices = sorted(translated_indices)
 

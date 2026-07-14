@@ -4,12 +4,9 @@ Step 5: 视频组装模块
 
 策略：
   1. 生成 ASS 字幕文件（含字体/描边/位置样式），时间戳对齐混合后的音频时间轴
-  2. 用 ffmpeg 的 ass= 滤镜（libass 引擎）一次性烧录全部字幕到视频画面
-     —— 不再使用逐条 PNG 渲染 + 链式 overlay，避免字幕数量增多时
-        filter graph 呈线性/超线性增长导致的 CPU 占满、处理时间暴涨问题
-  3. 与混合音频合并，按用户规则对齐时长：
-     - 混音 ≤ 原视频 → 截断视频到混音时长
-     - 混音 > 原视频 → tpad=clone 延长末帧
+  2. 逐句从原视频裁剪画面，按 TTS 时长变速（setpts），拼接后一次性烧录字幕
+     —— 使用 -/filter_complex 从文件读取 filter graph，支持数百个 segment
+  3. 与混合音频合并，替换音轨
   4. 限制 ffmpeg 编码线程数，避免抢占全部 CPU 核心拖慢整机
 """
 import os
@@ -17,10 +14,13 @@ import re
 import subprocess
 import shutil
 import tempfile
-from typing import Optional
+from typing import Optional, List
+
+from core import config
 
 # 限制 ffmpeg 使用的线程数（避免抢占所有 CPU 核心导致系统卡顿）
-_FFMPEG_THREADS = str(max(1, min(4, os.cpu_count() or 4)))
+_FFMPEG_THREADS_CAP = getattr(config, "FFMPEG_THREADS_CAP", 4)
+_FFMPEG_THREADS = str(max(1, min(_FFMPEG_THREADS_CAP, os.cpu_count() or 4)))
 
 # 编码器探测缓存（启动时探测一次，后续复用）
 _ENCODER_CACHE: Optional[dict] = None
@@ -90,7 +90,7 @@ def generate_bilingual_srt(
     time_mapping: list[dict],
     output_path: str,
     subtitle_mode: str = "bilingual",
-    video_height: int = 720,
+    video_height: Optional[int] = None,
 ) -> str:
     """
     生成 ASS 字幕文件（尽管函数名/参数保留 srt 命名以兼容旧调用方，
@@ -100,6 +100,8 @@ def generate_bilingual_srt(
     字幕固定底部居中对齐（Alignment=2），边距按视频高度百分比计算，
     避免不同分辨率下字幕位置视觉不一致。
     """
+    if video_height is None:
+        video_height = getattr(config, "ASS_DEFAULT_VIDEO_HEIGHT", 720)
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     tts_time_map = {}
     for entry in time_mapping:
@@ -137,10 +139,14 @@ def generate_bilingual_srt(
     if not entries:
         return ""
 
-    font_size = min(max(28, video_height // 28), 80)   # 限制最大字号并降低比例
-    margin_v = max(30, int(video_height * 0.07))
-    # 双语模式下英文上/中文下，margin 固定不随分辨率跳动
-    margin_en = margin_v + int(font_size * 1.4)
+    font_size_min = getattr(config, "ASS_FONT_SIZE_MIN", 28)
+    font_size_max = getattr(config, "ASS_FONT_SIZE_MAX", 80)
+    font_size = min(max(font_size_min, video_height // 28), font_size_max)
+    margin_v_min = getattr(config, "ASS_MARGIN_V_MIN", 30)
+    margin_v_ratio = getattr(config, "ASS_MARGIN_V_RATIO", 0.07)
+    margin_v = max(margin_v_min, int(video_height * margin_v_ratio))
+    margin_en_ratio = getattr(config, "ASS_MARGIN_EN_RATIO", 1.4)
+    margin_en = margin_v + int(font_size * margin_en_ratio)
     margin_cn = margin_v
 
     header = f"""[Script Info]
@@ -152,8 +158,8 @@ WrapStyle: 2
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: English,Noto Sans CJK SC,{font_size},{_ASS_COLOR_ENGLISH},&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,2.5,0,2,20,20,{margin_en},1
-Style: Chinese,Noto Sans CJK SC,{font_size},{_ASS_COLOR_CHINESE},&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,2.5,0,2,20,20,{margin_cn},1
+Style: English,Noto Sans CJK SC,{font_size},{_ASS_COLOR_ENGLISH},&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,{getattr(config, "ASS_OUTLINE", 2.5)},{getattr(config, "ASS_SHADOW", 0)},2,20,20,{margin_en},1
+Style: Chinese,Noto Sans CJK SC,{font_size},{_ASS_COLOR_CHINESE},&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,{getattr(config, "ASS_OUTLINE", 2.5)},{getattr(config, "ASS_SHADOW", 0)},2,20,20,{margin_cn},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -225,23 +231,109 @@ def _escape_path_for_filter(path: str) -> str:
     return path
 
 
+# ============================================================
+# 逐句变速 filter graph 生成
+# ============================================================
+
+def _build_filter_graph(
+    time_mapping: list,
+    srt_path: str = None,
+) -> str:
+    """
+    从 time_mapping 生成逐句 trim + setpts + concat 的 filter graph。
+
+    对每个 tts_chinese 条目：
+      - 从原视频裁剪对应时间段（trim）
+      - 按混音时长/原始时长比例变速（setpts）
+      - 拼接所有片段（concat）
+      - 可选烧录字幕（ass）
+
+    filter graph 写入临时文件，通过 -/filter_complex 传给 ffmpeg，
+    避免命令行长度限制。
+
+    Args:
+        time_mapping: mix_sentence_audio 返回的 time_mapping 列表
+        srt_path: ASS 字幕文件路径，None 则不烧录字幕
+
+    Returns:
+        str: filter graph 临时文件路径
+    """
+    # 只处理 type=="tts_chinese" 的条目
+    tts_entries = [
+        e for e in time_mapping
+        if e.get("type") == "tts_chinese" and e.get("orig_end", 0) > e.get("orig_start", 0)
+    ]
+    if not tts_entries:
+        return None
+
+    parts = []
+    for i, entry in enumerate(tts_entries):
+        orig_start = entry["orig_start"]
+        orig_end = entry["orig_end"]
+        mixed_start = entry["mixed_start"]
+        mixed_end = entry["mixed_end"]
+
+        orig_dur = orig_end - orig_start
+        mixed_dur = mixed_end - mixed_start
+        if orig_dur <= 0 or mixed_dur <= 0:
+            continue
+
+        speed_ratio = mixed_dur / orig_dur
+        # PTS-STARTPTS 重置时间戳（trim 输出仍带原始 PTS），
+        # 然后用 speed_ratio 变速，format 统一像素格式
+        parts.append(
+            f"[0:v]trim=start={orig_start:.3f}:duration={orig_dur:.3f},"
+            f"setpts=PTS-STARTPTS,"
+            f"setpts={speed_ratio:.6f}*PTS,"
+            f"format=yuv420p[v{i}]"
+        )
+
+    if not parts:
+        return None
+
+    n = len(parts)
+    # 拼接所有视频片段
+    concat_inputs = "".join(f"[v{i}]" for i in range(n))
+    concat_part = f"{concat_inputs}concat=n={n}:v=1:a=0"
+
+    # 可选字幕烧录
+    if srt_path and os.path.isfile(srt_path):
+        escaped_ass = _escape_path_for_filter(srt_path)
+        graph = ";\n".join(parts) + f";\n{concat_part},ass=filename='{escaped_ass}'[outv]"
+    else:
+        graph = ";\n".join(parts) + f";\n{concat_part}[outv]"
+
+    # 写入临时文件
+    fd, graph_path = tempfile.mkstemp(suffix=".txt", prefix="bilimix_filter_")
+    with os.fdopen(fd, "w") as f:
+        f.write(graph)
+
+    print(f"[Step5] 生成 filter graph: {n} 个 segment, "
+          f"{len(graph)} 字节 → {graph_path}")
+    return graph_path
+
+
 def assemble_video(
     video_path: str,
     mixed_audio_path: str,
     srt_path: str,
     output_path: str,
     subtitle_style: Optional[str] = None,
-    timeout: int = 1800,
+    timeout: Optional[int] = None,
+    time_mapping: Optional[list] = None,
 ) -> str:
     """
     视频组装（单次 ffmpeg 调用）：
-      1. 用 ass= 滤镜（libass 引擎）一次性烧录全部字幕 —— 样式（字体/颜色/位置）
-         已内嵌在 ASS 文件的 [V4+ Styles] 中，无需 force_style 覆盖；
-         无论字幕条数多少，都是一次线性扫描，不会随字幕数量增长而变慢
-      2. 同一条 filter 链内按需 tpad 延长末帧（混音 > 原视频时）
-      3. 替换音轨为混合音频，按需 -shortest 截断（混音 ≤ 原视频时）
+
+    当提供 time_mapping 时，使用逐句 trim+setpts+concat 变速拼接画面，
+    使画面与混音音频/字幕精确对齐。
+
+    当 time_mapping 为空时，回退到简单模式：ass= 字幕烧录 + 音轨替换。
     """
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    if timeout is None:
+        timeout = getattr(config, "VIDEO_ASSEMBLE_TIMEOUT", 1800)
+
     if os.path.isfile(output_path):
         try:
             os.remove(output_path)
@@ -251,26 +343,12 @@ def assemble_video(
     dialogue_count = _parse_ass_dialogue_count(srt_path)
     video_duration = _probe_video_duration(video_path)
     mixed_duration = _probe_video_duration(mixed_audio_path)
-    print(f"[Step5] 视频时长: {video_duration:.2f}s  混音时长: {mixed_duration:.2f}s  字幕数: {dialogue_count}")
-
     has_srt = dialogue_count > 0
-    diff = video_duration - mixed_duration  # >0: 视频更长(需截断) <0: 视频更短(需延长末帧)
 
-    vf_parts = []
-    if diff < -0.3:
-        print(f"[Step5] 视频 < 混音 ({video_duration:.2f}s < {mixed_duration:.2f}s) -> 延长末帧")
-        vf_parts.append(f"tpad=stop_mode=clone:stop_duration={abs(diff):.3f}")
-    elif diff > 0.3:
-        print(f"[Step5] 视频 > 混音 ({video_duration:.2f}s > {mixed_duration:.2f}s) -> 截断")
-
-    if has_srt:
-        escaped_ass = _escape_path_for_filter(srt_path)
-        vf_parts.append(f"ass=filename='{escaped_ass}'")
-        print(f"[Step5] 字幕烧录: {dialogue_count} 条 (libass ass= 滤镜，样式已内嵌)")
-    else:
-        print("[Step5] 无字幕，纯拼接音视频")
-
-    vf_parts.append("format=yuv420p")
+    # ---- 尝试生成逐句变速 filter graph ----
+    filter_graph_path = None
+    if time_mapping and has_srt:
+        filter_graph_path = _build_filter_graph(time_mapping, srt_path)
 
     encoders = _detect_encoders()
     video_enc = encoders.get("video")
@@ -283,28 +361,68 @@ def assemble_video(
         print("[Step5]   其他发行版: apt install ffmpeg / 或从 https://ffmpeg.org 编译安装")
         return ""
 
-    if video_enc != "libx264":
-        print(f"[Step5] libx264 不可用，使用回退编码器: {video_enc}")
+    video_bitrate = getattr(config, "VIDEO_BITRATE", "1500k")
+    audio_bitrate = getattr(config, "VIDEO_AUDIO_BITRATE", "128k")
+    audio_sample_rate = getattr(config, "VIDEO_AUDIO_SAMPLE_RATE", 44100)
+    audio_channels = getattr(config, "VIDEO_AUDIO_CHANNELS", 2)
 
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-threads", _FFMPEG_THREADS,
         "-i", video_path, "-i", mixed_audio_path,
-        "-vf", ",".join(vf_parts),
-        "-c:v", video_enc, "-b:v", "1500k",
+    ]
+
+    if filter_graph_path:
+        # 变速模式：使用 -/filter_complex 从文件读取 filter graph
+        print(f"[Step5] 视频时长: {video_duration:.2f}s  混音时长: {mixed_duration:.2f}s  字幕数: {dialogue_count}")
+        print(f"[Step5] 逐句变速模式: {len([e for e in time_mapping if e.get('type') == 'tts_chinese'])} 个 TTS 句段")
+        cmd += ["-/filter_complex", filter_graph_path]
+        cmd += ["-map", "[outv]", "-map", "1:a:0"]
+    else:
+        # 回退模式：简单 ass= 字幕烧录
+        diff = video_duration - mixed_duration
+        diff_tolerance = getattr(config, "VIDEO_DURATION_TOLERANCE", 0.3)
+        print(f"[Step5] 视频时长: {video_duration:.2f}s  混音时长: {mixed_duration:.2f}s  字幕数: {dialogue_count}")
+        print(f"[Step5] 回退模式: 简单字幕烧录 + 音轨替换")
+
+        vf_parts = []
+        if diff < -diff_tolerance:
+            print(f"[Step5] 视频 < 混音 -> 延长末帧")
+            vf_parts.append(f"tpad=stop_mode=clone:stop_duration={abs(diff):.3f}")
+        elif diff > diff_tolerance:
+            print(f"[Step5] 视频 > 混音 -> 截断")
+
+        if has_srt:
+            escaped_ass = _escape_path_for_filter(srt_path)
+            vf_parts.append(f"ass=filename='{escaped_ass}'")
+        vf_parts.append("format=yuv420p")
+
+        cmd += ["-vf", ",".join(vf_parts)]
+        cmd += ["-map", "0:v:0", "-map", "1:a:0"]
+        if diff > diff_tolerance:
+            cmd.append("-shortest")
+
+    cmd += [
+        "-c:v", video_enc, "-b:v", video_bitrate,
     ]
     if video_enc == "libx264":
         cmd += ["-profile:v", "high", "-level", "5.0"]
     cmd += [
         "-pix_fmt", "yuv420p",
-        "-c:a", audio_enc, "-b:a", "128k", "-ar", "44100", "-ac", "2",
-        "-map", "0:v:0", "-map", "1:a:0",
+        "-c:a", audio_enc, "-b:a", audio_bitrate,
+        "-ar", str(audio_sample_rate), "-ac", str(audio_channels),
+        "-movflags", "+faststart", output_path,
     ]
-    if diff > 0.3:
-        cmd.append("-shortest")
-    cmd += ["-movflags", "+faststart", output_path]
 
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+    # 清理临时 filter graph 文件
+    if filter_graph_path and os.path.exists(filter_graph_path):
+        try:
+            os.remove(filter_graph_path)
+        except OSError:
+            pass
+
     if r.returncode != 0:
         print(f"[Step5] 失败: {r.stderr.strip()[-500:]}")
         return ""

@@ -822,7 +822,7 @@ def continue_after_sentence_confirmation(task_id: str):
                     (confucius_ref_map, confucius_ref_source_map,
                      _confucius_ref_text_map) = extract_ref_audio_speaker_local(
                         ref_audio_source, segments, pseudo_replacements,
-                        confucius_ref_dir, engine="confucius")
+                        confucius_ref_dir)
                 else:
                     confucius_ref_map, confucius_ref_source_map = extract_ref_audio_for_segments(
                         ref_audio_source, segments, pseudo_replacements, confucius_ref_dir)
@@ -1645,7 +1645,8 @@ def submit_task():
                         message="正在合成视频（可能需要几分钟）...")
             output_video = os.path.join(result_dir, f"{basename}_dubbed.mp4")
             assembled = assemble_video(
-                video_path, mixed_audio, srt_path, output_video)
+                video_path, mixed_audio, srt_path, output_video,
+                time_mapping=time_mapping)
 
             if not assembled:
                 update_task(task_id, status="error",

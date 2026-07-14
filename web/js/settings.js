@@ -1466,6 +1466,42 @@ function renderSettingsForm(cfg) {
             </div>
         </div>
 
+        <!-- 句子翻译 -->
+        <div class="settings-group">
+            <div class="settings-group-title collapsible" onclick="toggleSettingsGroup(this)">
+                📝 句子翻译
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="settings-group-body">
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">中文替换比例</span>
+                        <span class="settings-item-desc">句子翻译模式中，被替换为中文的比例（1.0 = 全翻译）</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <div class="settings-range-wrap">
+                            <input type="range" class="settings-range" id="cfg-sentence_cn_ratio"
+                                min="0" max="1" step="0.1" value="${cfg.sentence_cn_ratio}"
+                                oninput="document.getElementById('val-sentence_cn_ratio').textContent = this.value">
+                            <span class="settings-range-val" id="val-sentence_cn_ratio">${cfg.sentence_cn_ratio}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">声音克隆</span>
+                        <span class="settings-item-desc">中文 TTS 是否克隆原说话人的声音</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <label class="settings-toggle">
+                            <input type="checkbox" id="cfg-sentence_tts_voice_clone" ${cfg.sentence_tts_voice_clone ? 'checked' : ''}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- TTS -->
         <div class="settings-group">
             <div class="settings-group-title collapsible" onclick="toggleSettingsGroup(this)">
@@ -1494,6 +1530,58 @@ function renderSettingsForm(cfg) {
                             <option value="chinese_only" ${cfg.tts_text_format === 'chinese_only' ? 'selected' : ''}>纯中文</option>
                             <option value="mixed" ${cfg.tts_text_format === 'mixed' ? 'selected' : ''}>英+中混合</option>
                         </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 参考音频（声音克隆） -->
+        <div class="settings-group">
+            <div class="settings-group-title collapsible" onclick="toggleSettingsGroup(this)">
+                🎤 参考音频（声音克隆）
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="settings-group-body">
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">选取模式</span>
+                        <span class="settings-item-desc">speaker_local: 优先自身原声，过短时扩展相邻段；segment: 仅用自身原声</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <select class="settings-select" id="cfg-ref_select_mode">
+                            <option value="speaker_local" ${cfg.ref_select_mode === 'speaker_local' ? 'selected' : ''}>speaker_local（推荐）</option>
+                            <option value="segment" ${cfg.ref_select_mode === 'segment' ? 'selected' : ''}>segment</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">最短参考时长（秒）</span>
+                        <span class="settings-item-desc">segment 自身时长低于此值触发扩展/fallback</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <input type="number" class="settings-input" id="cfg-ref_min_duration"
+                            value="${cfg.ref_min_duration}" min="1" max="10" step="1">
+                    </div>
+                </div>
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">目标参考时长（秒）</span>
+                        <span class="settings-item-desc">过短 segment 扩展时的目标累计时长</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <input type="number" class="settings-input" id="cfg-ref_target_duration"
+                            value="${cfg.ref_target_duration}" min="3" max="30" step="1">
+                    </div>
+                </div>
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">最大参考时长（秒）</span>
+                        <span class="settings-item-desc">参考音频硬上限，超过则以目标句为中心截取</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <input type="number" class="settings-input" id="cfg-ref_max_duration"
+                            value="${cfg.ref_max_duration}" min="5" max="60" step="1">
                     </div>
                 </div>
             </div>
@@ -1693,6 +1781,36 @@ function renderSettingsForm(cfg) {
         </div>
         </div>
 
+        <!-- 转录缺口补录 -->
+        <div class="settings-group">
+            <div class="settings-group-title collapsible collapsed" onclick="toggleSettingsGroup(this)">
+                🔍 转录缺口补录
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="settings-group-body">
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">缺口触发间隙（秒）</span>
+                        <span class="settings-item-desc">segment 之间超过此间隙才检查是否漏检</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <input type="number" class="settings-input" id="cfg-transcribe_gap_min_seconds"
+                            value="${cfg.transcribe_gap_min_seconds}" min="1" max="10" step="0.5">
+                    </div>
+                </div>
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">语音判定阈值（dBFS）</span>
+                        <span class="settings-item-desc">缺口内平均音量高于此值视为有语音内容，需要补录</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <input type="number" class="settings-input" id="cfg-transcribe_gap_voice_dbfs"
+                            value="${cfg.transcribe_gap_voice_dbfs}" min="-60" max="0" step="1">
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Ollama -->
         <div class="settings-group">
             <div class="settings-group-title collapsible collapsed" onclick="toggleSettingsGroup(this)">
@@ -1728,6 +1846,30 @@ function renderSettingsForm(cfg) {
                 <div class="settings-item-control">
                     <input type="number" class="settings-input" id="cfg-llm_batch_size"
                         value="${cfg.llm_batch_size}" min="1" max="30" step="1">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">最大输出 Token 数</span>
+                    <span class="settings-item-desc">LLM 单次调用最大输出量，调大支持更长翻译但响应变慢</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-llm_num_predict"
+                        value="${cfg.llm_num_predict}" min="512" max="32768" step="512">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">翻译温度</span>
+                    <span class="settings-item-desc">LLM 翻译的创造性（0 = 确定性强，1 = 更灵活多样）</span>
+                </div>
+                <div class="settings-item-control">
+                    <div class="settings-range-wrap">
+                        <input type="range" class="settings-range" id="cfg-llm_translate_temperature"
+                            min="0" max="1" step="0.05" value="${cfg.llm_translate_temperature}"
+                            oninput="document.getElementById('val-llm_translate_temperature').textContent = this.value">
+                        <span class="settings-range-val" id="val-llm_translate_temperature">${cfg.llm_translate_temperature}</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1766,6 +1908,56 @@ function renderSettingsForm(cfg) {
                 </div>
             </div>
         </div>
+        </div>
+
+        <!-- 音频混音 -->
+        <div class="settings-group">
+            <div class="settings-group-title collapsible collapsed" onclick="toggleSettingsGroup(this)">
+                🎚️ 音频混音
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="settings-group-body">
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">TTS 目标响度（dBFS）</span>
+                        <span class="settings-item-desc">统一所有 TTS 句子的音量，越接近 0 越响</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <input type="number" class="settings-input" id="cfg-tts_target_dbfs"
+                            value="${cfg.tts_target_dbfs}" min="-30" max="0" step="1">
+                    </div>
+                </div>
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">句间静音间隔（毫秒）</span>
+                        <span class="settings-item-desc">TTS 句子之间的静音时长，保证呼吸感</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <input type="number" class="settings-input" id="cfg-mixer_default_gap_ms"
+                            value="${cfg.mixer_default_gap_ms}" min="0" max="2000" step="50">
+                    </div>
+                </div>
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">淡入淡出（毫秒）</span>
+                        <span class="settings-item-desc">每句 TTS 开头/结尾的淡入淡出时长</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <input type="number" class="settings-input" id="cfg-mixer_fade_ms"
+                            value="${cfg.mixer_fade_ms}" min="0" max="500" step="10">
+                    </div>
+                </div>
+                <div class="settings-item">
+                    <div class="settings-item-label">
+                        <span class="settings-item-name">背景音音量（dB）</span>
+                        <span class="settings-item-desc">混入的背景音乐音量调整，负值 = 降低音量</span>
+                    </div>
+                    <div class="settings-item-control">
+                        <input type="number" class="settings-input" id="cfg-mixer_bgm_gain_db"
+                            value="${cfg.mixer_bgm_gain_db}" min="-30" max="0" step="1">
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- 登录认证 -->
@@ -1871,6 +2063,25 @@ async function saveSettings() {
         auth_username: getValue('cfg-auth_username'),
         auth_password: getValue('cfg-auth_password'),
         keep_bgm: getValue('cfg-keep_bgm'),
+        // 句子翻译
+        sentence_cn_ratio: getValue('cfg-sentence_cn_ratio'),
+        sentence_tts_voice_clone: getValue('cfg-sentence_tts_voice_clone'),
+        // 参考音频
+        ref_select_mode: getValue('cfg-ref_select_mode'),
+        ref_min_duration: getValue('cfg-ref_min_duration'),
+        ref_target_duration: getValue('cfg-ref_target_duration'),
+        ref_max_duration: getValue('cfg-ref_max_duration'),
+        // LLM
+        llm_num_predict: getValue('cfg-llm_num_predict'),
+        llm_translate_temperature: getValue('cfg-llm_translate_temperature'),
+        // 音频混音
+        tts_target_dbfs: getValue('cfg-tts_target_dbfs'),
+        mixer_default_gap_ms: getValue('cfg-mixer_default_gap_ms'),
+        mixer_fade_ms: getValue('cfg-mixer_fade_ms'),
+        mixer_bgm_gain_db: getValue('cfg-mixer_bgm_gain_db'),
+        // 转录缺口补录
+        transcribe_gap_min_seconds: getValue('cfg-transcribe_gap_min_seconds'),
+        transcribe_gap_voice_dbfs: getValue('cfg-transcribe_gap_voice_dbfs'),
     };
 
     try {

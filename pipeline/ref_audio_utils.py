@@ -33,7 +33,7 @@ def _get_audio_duration_ms(audio_path: str) -> int:
 
 
 def _extract_audio_clip(audio_path: str, start_ms: int, end_ms: int,
-                        output_path: str, timeout: int = 120) -> None:
+                        output_path: str) -> None:
     """
     Extract an audio clip using ffmpeg subprocess.
     Does NOT load the full source file into memory — ffmpeg handles seeking.
@@ -46,7 +46,6 @@ def _extract_audio_clip(audio_path: str, start_ms: int, end_ms: int,
         start_ms: Start time in milliseconds
         end_ms: End time in milliseconds
         output_path: Output WAV file path
-        timeout: Maximum seconds for ffmpeg to run
 
     Raises:
         subprocess.TimeoutExpired: if ffmpeg takes too long
@@ -54,6 +53,7 @@ def _extract_audio_clip(audio_path: str, start_ms: int, end_ms: int,
     """
     start_s = start_ms / 1000.0
     duration_s = (end_ms - start_ms) / 1000.0
+    timeout = getattr(config, "REF_EXTRACT_TIMEOUT", 120)
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-ss", str(start_s),
@@ -113,9 +113,12 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
                 （同轮次共享时 source 可能不同于 segment_index）
     """
     if ref_duration is None:
-        ref_duration = getattr(config, "QWEN3_TTS_REF_DURATION", 8)
+        ref_duration = getattr(config, "REF_MAX_DURATION", 15)
 
     os.makedirs(output_dir, exist_ok=True)
+
+    extreme_clip_sec = getattr(config, "REF_EXTREME_CLIP_SECONDS", 60)
+    extreme_clip_ms = int(extreme_clip_sec * 1000)
 
     # 找出所有涉及的 segment_index（需要 TTS 的 segment）
     seg_indices = sorted(set(r["segment_index"] for r in replacements))
@@ -144,14 +147,13 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
             continue
 
         # 用自己的段边界做参考，不向外扩展
-        # 极长段（>60s）从中间取 60s 防极端情况
-        self_max = max(ref_duration_ms * 2, 60_000)
+        # 极长段从中间截取 extreme_clip_sec 防极端情况
         clip_start = seg_start_ms
         clip_end = seg_end_ms
-        if clip_end - clip_start > self_max:
+        if clip_end - clip_start > extreme_clip_ms:
             seg_mid_ms = (seg_start_ms + seg_end_ms) // 2
-            clip_start = max(0, seg_mid_ms - self_max // 2)
-            clip_end = min(audio_duration_ms, clip_start + self_max)
+            clip_start = max(0, seg_mid_ms - extreme_clip_ms // 2)
+            clip_end = min(audio_duration_ms, clip_start + extreme_clip_ms)
 
         ref_filename = f"ref_seg_{seg_idx}.wav"
         ref_path = os.path.join(output_dir, ref_filename)
@@ -232,28 +234,26 @@ def _find_global_longest_segment(segments: list,
 
 
 def extract_ref_audio_speaker_local(audio_path: str, segments: list,
-                                    replacements: list, output_dir: str,
-                                    engine: str = "fish") -> tuple:
+                                    replacements: list, output_dir: str) -> tuple:
     """
     说话人感知的本地参考音频提取（音色一致 + 情绪保真）。
 
     策略：
     - 每句优先用自身原声做参考（情绪/节奏最贴合该句）。
-    - 自身过短（< min_ref_duration）时，向同说话人的相邻 segment 扩展边界，
+    - 自身过短（< REF_MIN_DURATION）时，向同说话人的相邻 segment 扩展边界，
       单次 ffmpeg 提取覆盖 [首段.start, 末段.end]，inter-segment 静音自然保留，
-      直到达到 target_ref_duration 或无更多同说话人相邻段。
+      直到达到 REF_TARGET_DURATION 或无更多同说话人相邻段。
     - 严格校验 speaker 一致 + gap ≤ SAME_SPEAKER_GAP，杜绝跨说话人污染。
     - 扩展后仍不足时，回退到该说话人全篇最长的一段（牺牲情绪换音色稳定）；
       若同 speaker 无更长段（如该 speaker 全篇仅此一短句），进一步放宽到
       全篇任意 speaker 最长段（牺牲音色匹配换可用性，避免极短碎片直接做参考）。
-    - 极长段以目标句为中心截取到 max_ref_duration。
+    - 极长段以目标句为中心截取到 REF_MAX_DURATION。
 
     Args:
         audio_path: 原始音频文件路径
         segments: WhisperX segments 列表
         replacements: 替换列表，每项含 segment_index
         output_dir: 参考音频输出目录
-        engine: "fish" 或 "qwen"，决定参考时长默认值
 
     Returns:
         tuple: (ref_map, ref_source_map, ref_text_map)
@@ -263,13 +263,9 @@ def extract_ref_audio_speaker_local(audio_path: str, segments: list,
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    if engine == "fish":
-        min_ref = getattr(config, "FISH_SPEECH_MIN_REF_DURATION", 4)
-        target_ref = getattr(config, "FISH_SPEECH_REF_DURATION", 12)
-    else:
-        min_ref = getattr(config, "SEGMENT_REF_MIN_DURATION", 2)
-        target_ref = getattr(config, "REF_TARGET_DURATION", 5)
-    max_ref = getattr(config, "REF_MAX_DURATION", 30)
+    min_ref = getattr(config, "REF_MIN_DURATION", 2)
+    target_ref = getattr(config, "REF_TARGET_DURATION", 5)
+    max_ref = getattr(config, "REF_MAX_DURATION", 15)
 
     min_ref_ms = int(min_ref * 1000)
     target_ref_ms = int(target_ref * 1000)
@@ -288,7 +284,7 @@ def extract_ref_audio_speaker_local(audio_path: str, segments: list,
     ref_source_map = {}
     ref_text_map = {}
 
-    print(f"[Step3-{engine}] 说话人感知参考提取: {len(seg_indices)} 个 segment, "
+    print(f"[Step3-RefAudio] 说话人感知参考提取: {len(seg_indices)} 个 segment, "
           f"min={min_ref}s target={target_ref}s max={max_ref}s")
 
     for seg_idx in seg_indices:
@@ -393,5 +389,5 @@ def extract_ref_audio_speaker_local(audio_path: str, segments: list,
               f"(clip {clip_start/1000:.1f}s-{clip_end/1000:.1f}s, "
               f"{clip_dur:.1f}s{extra})")
 
-    print(f"[Step3-{engine}] 共 {len(ref_map)} 个参考音频")
+    print(f"[Step3-RefAudio] 共 {len(ref_map)} 个参考音频")
     return ref_map, ref_source_map, ref_text_map

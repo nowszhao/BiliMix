@@ -77,7 +77,7 @@ LLM_NUM_PREDICT = 8192
 # 生词识别任务（JSON 输出）: 偏低更稳定，避免输出格式错误
 # 翻译任务（口语地道性）: 偏高让译文更自然灵活，但过高会引入幻觉
 LLM_IDENTIFY_TEMPERATURE = 0.3   # LLM 推理用
-LLM_TRANSLATE_TEMPERATURE = 0.3  # 翻译用（降低幻觉，口语自然度靠 prompt 保证）
+LLM_TRANSLATE_TEMPERATURE = 0.3
 
 # ========================
 # 难度等级配置
@@ -124,8 +124,20 @@ CONFUCIUS4_TTS_NUM_WORKERS = 2
 #                  情绪/节奏随原句自然变化（推荐）
 #   segment: 每句仅用自身原声，不扩展（旧行为，短句易音色漂移）
 REF_SELECT_MODE = "speaker_local"
+# 参考音频最小时长阈值（秒）：segment 自身时长低于此值触发扩展/fallback
+REF_MIN_DURATION = 2
+# 参考音频目标时长（秒）：过短 segment 扩展时的目标累计时长
+REF_TARGET_DURATION = 5
 # 参考音频最大硬上限（秒）：超过则以目标句为中心截取
 REF_MAX_DURATION = 15
+# 同说话人判定间隔（秒）：segment 间隙 <= 此值视为同一说话人连续说话
+# 用于参考音频扩展时校验 speaker 一致性，杜绝跨说话人音色污染
+SAME_SPEAKER_GAP = 0.8
+# 极长 segment 截取硬上限（秒）：当 segment 超过此值时，截取中间部分作为参考
+# 防止数十分钟的长段作为参考导致 ffmpeg 处理缓慢
+REF_EXTREME_CLIP_SECONDS = 60
+# ffmpeg 提取参考音频子进程超时（秒）
+REF_EXTRACT_TIMEOUT = 120
 
 # ========================
 # 相邻词合并配置
@@ -204,6 +216,59 @@ OUTPUT_BITRATE = "192k"
 # 默认保留背景音乐/环境音（需人声分离）
 # 可在 Web 设置页面修改，新建任务时作为 BGM 选项的默认值
 KEEP_BGM = True
+# TTS 音频目标响度（dBFS），统一所有句子的音量
+TTS_TARGET_DBFS = -20.0
+# 句间固定间隙（毫秒），保证相邻句子不粘连又有呼吸感（mixer 内部默认值）
+MIXER_DEFAULT_GAP_MS = 150
+# 句首/句尾淡入淡出（毫秒），平滑音色衔接
+MIXER_FADE_MS = 60
+# 背景音混入时的音量调整（dB，负值=降低音量）
+MIXER_BGM_GAIN_DB = -10.0
+
+# ========================
+# WhisperX 转录缺口补录配置
+# ========================
+# 触发缺口补录的最小间隙（秒）：相邻 segment 之间超过此值才检查是否漏检
+TRANSCRIBE_GAP_MIN_SECONDS = 3.0
+# 判定缺口内确实有语音内容的最小平均音量阈值（dBFS，越接近0越响）
+TRANSCRIBE_GAP_VOICE_DBFS = -35.0
+
+# ========================
+# 视频组装配置
+# ========================
+# ffmpeg 编码线程数上限
+FFMPEG_THREADS_CAP = 4
+# 视频组装 ffmpeg 子进程超时（秒）
+VIDEO_ASSEMBLE_TIMEOUT = 1800
+# 输出视频比特率
+VIDEO_BITRATE = "1500k"
+# 输出音频比特率
+VIDEO_AUDIO_BITRATE = "128k"
+# 输出音频采样率
+VIDEO_AUDIO_SAMPLE_RATE = 44100
+# 输出音频声道数
+VIDEO_AUDIO_CHANNELS = 2
+# 视频与混音时长差异容差（秒），差值在此范围内不做截断/延长
+VIDEO_DURATION_TOLERANCE = 0.3
+
+# ========================
+# ASS 字幕样式配置
+# ========================
+# 默认视频高度（用于未探测到真实高度时的回退值）
+ASS_DEFAULT_VIDEO_HEIGHT = 720
+# 字幕字号范围 [min, max]
+ASS_FONT_SIZE_MIN = 28
+ASS_FONT_SIZE_MAX = 80
+# 底部边距最小值
+ASS_MARGIN_V_MIN = 30
+# 底部边距比例（相对视频高度）
+ASS_MARGIN_V_RATIO = 0.07
+# 英文行 margin 增量比例（相对字号），双语模式下英文在上，需要更大的底部边距
+ASS_MARGIN_EN_RATIO = 1.4
+# 字幕描边宽度
+ASS_OUTLINE = 2.5
+# 字幕阴影深度
+ASS_SHADOW = 0
 
 # ========================
 # 本地配置覆盖（不影响服务端默认值）

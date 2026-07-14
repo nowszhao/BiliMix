@@ -11,9 +11,9 @@ from core import config
 
 
 # 触发缺口补录的最小间隙（秒）：相邻 segment 之间超过此值才检查是否漏检
-_GAP_MIN_SECONDS = 3.0
+_GAP_MIN_SECONDS = getattr(config, "TRANSCRIBE_GAP_MIN_SECONDS", 3.0)
 # 判定缺口内确实有语音内容的最小平均音量阈值（dBFS，越接近0越响）
-_GAP_VOICE_DBFS_THRESHOLD = -35.0
+_GAP_VOICE_DBFS_THRESHOLD = getattr(config, "TRANSCRIBE_GAP_VOICE_DBFS", -35.0)
 
 
 def _probe_audio_duration(audio_path: str) -> float:
