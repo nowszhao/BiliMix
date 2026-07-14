@@ -1730,6 +1730,8 @@ function renderSettingsForm(cfg) {
                         <option value="small" ${cfg.whisperx_model === 'small' ? 'selected' : ''}>small</option>
                         <option value="medium" ${cfg.whisperx_model === 'medium' ? 'selected' : ''}>medium</option>
                         <option value="large-v2" ${cfg.whisperx_model === 'large-v2' ? 'selected' : ''}>large-v2</option>
+                        <option value="large-v3" ${cfg.whisperx_model === 'large-v3' ? 'selected' : ''}>large-v3</option>
+
                     </select>
                 </div>
             </div>
