@@ -243,10 +243,10 @@ def _build_filter_graph(
     从 time_mapping 生成逐句 trim + setpts + concat 的 filter graph。
 
     对每个 tts_chinese 条目：
-      - 从原视频裁剪对应时间段（trim）
+      - 从原视频裁剪对应 segment 时间段（trim）
       - 按混音时长/原始时长比例变速（setpts）
-      - 拼接所有片段（concat）
-      - 可选烧录字幕（ass）
+      - 相邻 segment 之间：裁剪原视频中的停顿间隙，也做变速
+      - 拼接所有片段（segment + 间隙），保持 concat 时间轴与混音音频一致
 
     filter graph 写入临时文件，通过 -/filter_complex 传给 ffmpeg，
     避免命令行长度限制。
@@ -267,6 +267,8 @@ def _build_filter_graph(
         return None
 
     parts = []
+    part_idx = 0
+
     for i, entry in enumerate(tts_entries):
         orig_start = entry["orig_start"]
         orig_end = entry["orig_end"]
@@ -279,20 +281,39 @@ def _build_filter_graph(
             continue
 
         speed_ratio = mixed_dur / orig_dur
-        # PTS-STARTPTS 重置时间戳（trim 输出仍带原始 PTS），
-        # 然后用 speed_ratio 变速，format 统一像素格式
         parts.append(
             f"[0:v]trim=start={orig_start:.3f}:duration={orig_dur:.3f},"
             f"setpts=PTS-STARTPTS,"
             f"setpts={speed_ratio:.6f}*PTS,"
-            f"format=yuv420p[v{i}]"
+            f"format=yuv420p[v{part_idx}]"
         )
+        part_idx += 1
+
+        # 句子间间隙：从原视频中取停顿画面，也做变速
+        # 这样 concat 后的视频时间轴与混音音频（含句间静音）一致
+        if i < len(tts_entries) - 1:
+            next_entry = tts_entries[i + 1]
+            gap_orig_start = orig_end
+            gap_orig_end = next_entry["orig_start"]
+            gap_mixed_start = mixed_end
+            gap_mixed_end = next_entry["mixed_start"]
+            gap_orig_dur = gap_orig_end - gap_orig_start
+            gap_mixed_dur = gap_mixed_end - gap_mixed_start
+
+            if gap_orig_dur > 0 and gap_mixed_dur > 0:
+                gap_ratio = gap_mixed_dur / gap_orig_dur
+                parts.append(
+                    f"[0:v]trim=start={gap_orig_start:.3f}:duration={gap_orig_dur:.3f},"
+                    f"setpts=PTS-STARTPTS,"
+                    f"setpts={gap_ratio:.6f}*PTS,"
+                    f"format=yuv420p[v{part_idx}]"
+                )
+                part_idx += 1
 
     if not parts:
         return None
 
     n = len(parts)
-    # 拼接所有视频片段
     concat_inputs = "".join(f"[v{i}]" for i in range(n))
     concat_part = f"{concat_inputs}concat=n={n}:v=1:a=0"
 
@@ -308,8 +329,11 @@ def _build_filter_graph(
     with os.fdopen(fd, "w") as f:
         f.write(graph)
 
-    print(f"[Step5] 生成 filter graph: {n} 个 segment, "
-          f"{len(graph)} 字节 → {graph_path}")
+    seg_count = sum(1 for e in tts_entries
+                    if e.get("orig_end", 0) > e.get("orig_start", 0)
+                    and (e["mixed_end"] - e["mixed_start"]) > 0)
+    print(f"[Step5] 生成 filter graph: {seg_count} 个 segment + "
+          f"{n - seg_count} 个间隙, {n} 条, {len(graph)} 字节 → {graph_path}")
     return graph_path
 
 
