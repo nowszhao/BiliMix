@@ -61,6 +61,8 @@ UPDATABLE_CONFIGS = {
     # --- 转录缺口补录 ---
     "transcribe_gap_min_seconds": ("TRANSCRIBE_GAP_MIN_SECONDS", float),
     "transcribe_gap_voice_dbfs": ("TRANSCRIBE_GAP_VOICE_DBFS", float),
+    # --- 视频组装 ---
+    "ffmpeg_threads_cap": ("FFMPEG_THREADS_CAP", int),
 }
 
 
@@ -129,6 +131,8 @@ def get_all_config() -> dict:
         # 转录缺口补录
         "transcribe_gap_min_seconds": getattr(config, "TRANSCRIBE_GAP_MIN_SECONDS", 3.0),
         "transcribe_gap_voice_dbfs": getattr(config, "TRANSCRIBE_GAP_VOICE_DBFS", -35.0),
+        # 视频组装
+        "ffmpeg_threads_cap": getattr(config, "FFMPEG_THREADS_CAP", 8),
     }
 
 

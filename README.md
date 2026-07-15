@@ -161,7 +161,7 @@ python services/web_app.py 5555
 | demucs 子进程失败 | 检查 `sys.executable` 是否在 bilimix env 中 |
 | 下载慢/超时 | setup.sh 自动检测网络，慢时切换清华镜像（pip + conda + HuggingFace）|
 | 硬件资源不足 | 启动时自动检测 CPU/内存/磁盘，低于最低要求会打印详细警告与优化建议 |
-| 视频组装报错 Unknown encoder 'libx264' | 系统 FFmpeg 不含 H.264 编码支持，参考 README 硬件要求安装完整版 FFmpeg |
+| 视频组装报错「未找到 libx264」或超时 | 系统 FFmpeg 不含 libx264 编码器（libopenh264 太慢会超时），强制要求安装带 libx264 的 FFmpeg |
 | HuggingFace 模型下载失败 | 确认 `export HF_ENDPOINT=https://hf-mirror.com`（setup.sh 已持久化到 shell rc）|
 
 ## 目录结构
@@ -295,7 +295,7 @@ BiliMix/
 2. **Ollama** 服务运行中，已拉取翻译模型
 3. **Confucius4-TTS-CPU** 已克隆到 BiliMix 同级目录
 4. **WhisperX** 已安装（转录引擎，建议独立 conda 环境）
-5. **ffmpeg** 系统已安装
+5. **ffmpeg** 系统已安装（**必须含 libx264 编码器**，否则视频组装将拒绝运行）
 6. **yt-dlp** (pip install yt-dlp) — 视频配音必需
 7. **demucs** (pip install demucs) — 背景音乐保留必需
 

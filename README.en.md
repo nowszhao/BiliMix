@@ -163,7 +163,7 @@ See `core/config_local.example.py` for the template.
 | demucs subprocess fails | Check that `sys.executable` points to the bilimix env |
 | Slow downloads/timeouts | setup.sh auto-detects slow network, switches to Tsinghua mirrors (pip + conda + HuggingFace) |
 | Low hardware resources | Startup auto-detects CPU/memory/disk, prints detailed warnings and optimization tips |
-| Video assembly error: Unknown encoder 'libx264' | System FFmpeg lacks H.264 encoding support; install a full FFmpeg build with encoder support |
+| Video assembly error: libx264 not found / timeout | System FFmpeg lacks libx264 encoder (libopenh264 is too slow and will timeout). Install FFmpeg with libx264 support |
 | HuggingFace model download fails | Ensure `export HF_ENDPOINT=https://hf-mirror.com` (setup.sh persists this to shell rc) |
 
 ## Directory Structure
@@ -297,7 +297,7 @@ All settings can be modified dynamically via the Web UI — no service restart n
 2. **Ollama** service running with translation model pulled
 3. **Confucius4-TTS-CPU** cloned alongside BiliMix
 4. **WhisperX** installed (transcription engine; separate conda env recommended)
-5. **ffmpeg** installed system-wide
+5. **ffmpeg** installed system-wide (**must include libx264 encoder**, otherwise video assembly will refuse to run)
 6. **yt-dlp** (`pip install yt-dlp`) — required for video dubbing
 7. **demucs** (`pip install demucs`) — required for BGM retention
 

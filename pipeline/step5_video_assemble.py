@@ -27,27 +27,43 @@ _ENCODER_CACHE: Optional[dict] = None
 
 
 def _detect_encoders() -> dict:
-    """探测系统可用的视频/音频编码器，按优先级回退，结果缓存。"""
+    """探测系统可用的视频/音频编码器。
+
+    视频编码器强制要求 libx264（libopenh264 编码太慢，会导致超时）。
+    不可用时打印具体平台的安装指引并返回 None。
+    """
     global _ENCODER_CACHE
     if _ENCODER_CACHE is not None:
         return _ENCODER_CACHE
 
     try:
-        out = subprocess.check_output(
+        enc_out = subprocess.check_output(
             ["ffmpeg", "-encoders"], text=True, timeout=10, stderr=subprocess.DEVNULL
         )
     except Exception:
         _ENCODER_CACHE = {"video": None, "audio": None}
         return _ENCODER_CACHE
 
-    # 视频编码器优先级：libx264 > libopenh264（两者均输出浏览器兼容的 H.264）
-    for enc in ["libx264", "libopenh264"]:
-        if enc in out:
-            _ENCODER_CACHE = {"video": enc, "audio": "aac"}
-            return _ENCODER_CACHE
+    has_x264 = "libx264" in enc_out
+    has_openh264 = "libopenh264" in enc_out
+    video_enc = "libx264" if has_x264 else None
 
-    # 无可用 H.264 编码器 → 记录为 None，后续报错提示用户安装
-    _ENCODER_CACHE = {"video": None, "audio": "aac"}
+    if not video_enc:
+        print("[Step5] ═══════════════════════════════════════════")
+        print("[Step5] 错误: 未找到 libx264 视频编码器")
+        print("[Step5]")
+        if has_openh264:
+            print("[Step5] 检测到 libopenh264，但该编码器性能不足，")
+            print("[Step5] 逐句变速模式下极易超时（编码速度慢 2-3 倍）。")
+            print("[Step5]")
+        print("[Step5] 请安装带 libx264 的 FFmpeg:")
+        print("[Step5]   Ubuntu/Debian:  apt install ffmpeg")
+        print("[Step5]   CentOS/RHEL 8+: yum install epel-release && yum install ffmpeg")
+        print("[Step5]   macOS:          brew install ffmpeg")
+        print("[Step5]   conda:          conda install -c conda-forge ffmpeg")
+        print("[Step5] ═══════════════════════════════════════════")
+
+    _ENCODER_CACHE = {"video": video_enc, "audio": "aac"}
     return _ENCODER_CACHE
 
 
@@ -379,10 +395,7 @@ def assemble_video(
     audio_enc = encoders.get("audio", "aac")
 
     if not video_enc:
-        print("[Step5] 失败: 未找到可用的 H.264 视频编码器（libx264 / libopenh264）")
-        print("[Step5] 请安装带 H.264 编码支持的 FFmpeg：")
-        print("[Step5]   CentOS 8+:  dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm && dnf install ffmpeg")
-        print("[Step5]   其他发行版: apt install ffmpeg / 或从 https://ffmpeg.org 编译安装")
+        # 错误信息已在 _detect_encoders 中打印
         return ""
 
     video_bitrate = getattr(config, "VIDEO_BITRATE", "1500k")
@@ -430,7 +443,8 @@ def assemble_video(
         "-c:v", video_enc, "-b:v", video_bitrate,
     ]
     if video_enc == "libx264":
-        cmd += ["-profile:v", "high", "-level", "5.0"]
+        preset = getattr(config, "VIDEO_X264_PRESET", "veryfast")
+        cmd += ["-preset", preset, "-profile:v", "high", "-level", "5.0"]
     cmd += [
         "-pix_fmt", "yuv420p",
         "-c:a", audio_enc, "-b:a", audio_bitrate,

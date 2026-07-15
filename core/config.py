@@ -237,9 +237,13 @@ TRANSCRIBE_GAP_VOICE_DBFS = -35.0
 # 视频组装配置
 # ========================
 # ffmpeg 编码线程数上限
-FFMPEG_THREADS_CAP = 4
+FFMPEG_THREADS_CAP = 8
 # 视频组装 ffmpeg 子进程超时（秒）
-VIDEO_ASSEMBLE_TIMEOUT = 1800
+VIDEO_ASSEMBLE_TIMEOUT = 7200
+# libx264 编码预设（控制编码速度/压缩比权衡）
+# veryfast: 极快编码，适合长视频
+# medium:   默认，平衡速度与压缩率
+VIDEO_X264_PRESET = "veryfast"
 # 输出视频比特率
 VIDEO_BITRATE = "1500k"
 # 输出音频比特率

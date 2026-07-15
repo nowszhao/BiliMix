@@ -1808,6 +1808,16 @@ function renderSettingsForm(cfg) {
                         value="${cfg.demucs_timeout ?? 1800}" min="60" max="7200" step="60">
                 </div>
             </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">FFmpeg 编码线程数上限</span>
+                    <span class="settings-item-desc">视频组装时 ffmpeg 编码的最大线程数，0 表示自动</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-ffmpeg_threads_cap"
+                        value="${cfg.ffmpeg_threads_cap ?? 8}" min="0" max="64" step="1">
+                </div>
+            </div>
         </div>
         </div>
 
@@ -2074,6 +2084,7 @@ async function saveSettings() {
         whisperx_language: getValue('cfg-whisperx_language'),
         whisperx_threads: getValue('cfg-whisperx_threads'),
         demucs_timeout: getValue('cfg-demucs_timeout'),
+        ffmpeg_threads_cap: getValue('cfg-ffmpeg_threads_cap'),
         ollama_base_url: getValue('cfg-ollama_base_url'),
         ollama_model: getValue('cfg-ollama_model'),
         llm_batch_size: getValue('cfg-llm_batch_size'),

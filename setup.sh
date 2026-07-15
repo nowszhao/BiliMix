@@ -170,6 +170,16 @@ else
 fi
 ok "系统依赖就绪（ffmpeg / ollama）"
 
+# ---------- 验证 ffmpeg 带 libx264 编码器 ----------
+if ! ffmpeg -encoders 2>/dev/null | grep -q libx264; then
+    warn "ffmpeg 缺少 libx264 视频编码器（视频组装可能超时或失败）"
+    if [ "$OS_TYPE" = "macos" ]; then
+        info "macOS: brew install ffmpeg 默认包含 libx264，无需额外操作"
+    else
+        info "Linux: 请安装带 libx264 的 ffmpeg — conda install -c conda-forge ffmpeg"
+    fi
+fi
+
 # ---------- 4. 主 Python 依赖 ----------
 info "安装主 Python 依赖 (requirements.txt) ..."
 _pip install -r requirements.txt
