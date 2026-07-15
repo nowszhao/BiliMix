@@ -994,6 +994,36 @@ body { background: var(--bg-page); color: var(--text-1); }
 .task-list-panel.collapsed .toggle-chevron {
     transform: rotate(180deg);
 }
+.task-toolbar-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.btn-toolbar-icon {
+    width: 26px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    color: var(--text-3);
+    transition: all 0.12s;
+    flex-shrink: 0;
+}
+.btn-toolbar-icon:hover {
+    background: var(--bg-hover);
+    color: var(--accent);
+}
+.btn-toolbar-icon.spinning svg {
+    animation: btn-toolbar-spin 0.8s linear infinite;
+}
+@keyframes btn-toolbar-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
 /* Collapsed state */
 .task-list-panel.collapsed {
     width: 36px;
@@ -1003,11 +1033,16 @@ body { background: var(--bg-page); color: var(--text-1); }
 }
 .task-list-panel.collapsed .task-filter-bar,
 .task-list-panel.collapsed #tasks-list-container,
-.task-list-panel.collapsed .btn-new-task-sm { display: none; }
+.task-list-panel.collapsed .btn-new-task-sm,
+.task-list-panel.collapsed .btn-toolbar-icon { display: none; }
 .task-list-panel.collapsed .task-list-toolbar {
     flex-direction: column;
     align-items: center;
     padding: 8px 0;
+}
+.task-list-panel.collapsed .task-toolbar-actions {
+    flex-direction: column;
+    gap: 4px;
 }
 .task-list-panel.collapsed .btn-toggle-panel { margin: 0; }
 /* Detail panel fills when list collapsed */

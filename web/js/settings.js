@@ -286,6 +286,34 @@ let allTasksCache = [];             // 全部任务缓存
 // ============================================================
 
 // ============================================================
+// 刷新任务列表
+// ============================================================
+
+async function refreshTaskList() {
+    const btn = document.getElementById('btn-refresh-tasks');
+    if (!btn || btn.classList.contains('spinning')) return;
+    btn.classList.add('spinning');
+    try {
+        if (typeof loadHistory === 'function') {
+            await loadHistory();
+        } else {
+            const resp = await fetch('/api/tasks?limit=50');
+            const data = await resp.json();
+            allTasksCache = data.tasks || [];
+            renderTaskTable();
+        }
+        if (typeof loadTaskBadges === 'function') {
+            await loadTaskBadges();
+        }
+        showToast('🔄 任务列表已刷新');
+    } catch (err) {
+        showToast('❌ 刷新失败: ' + err.message);
+    } finally {
+        setTimeout(() => btn.classList.remove('spinning'), 400);
+    }
+}
+
+// ============================================================
 // 任务列表面板折叠/展开
 // ============================================================
 
