@@ -101,7 +101,7 @@ CONFUCIUS4_TTS_DEVICE = "cpu"
 # 单条 TTS 合成超时（秒），CPU 推理较慢，长句可能需要 60-120s
 CONFUCIUS4_TTS_PER_JOB_TIMEOUT = 6000
 # T2S 采样温度（0.0~1.0），越高输出越多样，越低越稳定。语音风格不一致时调低
-CONFUCIUS4_TTS_TEMPERATURE = 0.3
+CONFUCIUS4_TTS_TEMPERATURE = 0.6
 # 核采样概率阈值
 CONFUCIUS4_TTS_TOP_P = 0.9
 # Top-k 采样参数（0 表示不限制）
@@ -123,7 +123,7 @@ CONFUCIUS4_TTS_NUM_WORKERS = 2
 #                  （单次 ffmpeg 提取覆盖 [首段.start, 末段.end]），保证音色一致 +
 #                  情绪/节奏随原句自然变化（推荐）
 #   segment: 每句仅用自身原声，不扩展（旧行为，短句易音色漂移）
-REF_SELECT_MODE = "speaker_local"
+REF_SELECT_MODE = "segment"
 # 参考音频最小时长阈值（秒）：segment 自身时长低于此值触发扩展/fallback
 REF_MIN_DURATION = 2
 # 参考音频目标时长（秒）：过短 segment 扩展时的目标累计时长
