@@ -2476,6 +2476,12 @@ def delete_task(task_id):
                     os.remove(p)
                     cleaned.append(f"data/downloads/{basename}{ext}")
 
+    # 如果任务还在排队，从队列中移除，防止后续任务死锁
+    with _queue_condition:
+        if task_id in _queue_waiters:
+            _queue_waiters.remove(task_id)
+        _queue_condition.notify_all()
+
     with tasks_lock:
         tasks.pop(task_id, None)
     cancel_flags.pop(task_id, None)
