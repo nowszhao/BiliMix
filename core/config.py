@@ -101,17 +101,17 @@ CONFUCIUS4_TTS_DEVICE = "cpu"
 # 单条 TTS 合成超时（秒），CPU 推理较慢，长句可能需要 60-120s
 CONFUCIUS4_TTS_PER_JOB_TIMEOUT = 6000
 # T2S 采样温度（0.0~1.0），越高输出越多样，越低越稳定。语音风格不一致时调低
-CONFUCIUS4_TTS_TEMPERATURE = 0.6
+CONFUCIUS4_TTS_TEMPERATURE = 0.3
 # 核采样概率阈值
-CONFUCIUS4_TTS_TOP_P = 0.9
+CONFUCIUS4_TTS_TOP_P = 0.5
 # Top-k 采样参数（0 表示不限制）
 CONFUCIUS4_TTS_TOP_K = 0
-# 束搜索宽度（1 = 贪心解码，确定性强）
-CONFUCIUS4_TTS_NUM_BEAMS = 1
+# 束搜索宽度（3 = beam search，确定性强于贪心解码）
+CONFUCIUS4_TTS_NUM_BEAMS = 3
 # 重复惩罚系数（越高重复越少）
 CONFUCIUS4_TTS_REPETITION_PENALTY = 1.2
-# 扩散步骤数（越高音质越好，25 为原始默认值）
-CONFUCIUS4_TTS_N_TIMESTEPS = 40
+# 扩散步骤数（越高音质越好越稳定，50 平衡质量与速度）
+CONFUCIUS4_TTS_N_TIMESTEPS = 50
 # 无分类器引导强度（越高越紧跟参考音频的语速/音量风格）
 CONFUCIUS4_TTS_INFERENCE_CFG_RATE = 0.9
 # 并行 Worker 数量（利用多核并行合成，1 = 串行，建议 2-3）
@@ -123,7 +123,7 @@ CONFUCIUS4_TTS_NUM_WORKERS = 2
 #                  （单次 ffmpeg 提取覆盖 [首段.start, 末段.end]），保证音色一致 +
 #                  情绪/节奏随原句自然变化（推荐）
 #   segment: 每句仅用自身原声，不扩展（旧行为，短句易音色漂移）
-REF_SELECT_MODE = "segment"
+REF_SELECT_MODE = "speaker_local"
 # 参考音频最小时长阈值（秒）：segment 自身时长低于此值触发扩展/fallback
 REF_MIN_DURATION = 2
 # 参考音频目标时长（秒）：过短 segment 扩展时的目标累计时长
@@ -224,6 +224,13 @@ MIXER_DEFAULT_GAP_MS = 150
 MIXER_FADE_MS = 60
 # 背景音混入时的音量调整（dB，负值=降低音量）
 MIXER_BGM_GAIN_DB = -10.0
+# 动态句间间隙：基于原始音频 inter-segment gap 的硬限制
+# 是否启用动态间隙（False 则回退到 SENTENCE_GAP_MS / SENTENCE_FULL_GAP_MS）
+DYNAMIC_GAP_ENABLED = True
+# 动态间隙最小毫秒数（防止抢话粘连感）
+DYNAMIC_GAP_MIN_MS = 120
+# 动态间隙最大毫秒数（防止过长停顿感）
+DYNAMIC_GAP_MAX_MS = 1200
 
 # ========================
 # WhisperX 转录缺口补录配置

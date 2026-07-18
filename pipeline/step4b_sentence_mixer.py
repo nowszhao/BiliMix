@@ -9,6 +9,11 @@ Step 4b: 全翻译音频组装
   - build_segments_with_mixed_time() 将所有 segment 的时间戳
     从 WhisperX 原始值替换为混合音频时间轴的对应值，
     前端字幕和 ASS 字幕均使用新时间戳，与音频精确同步
+
+句间间隙策略：
+  - 动态间隙：基于原始音频中相邻 segment 的实际 inter-segment gap，
+    夹在 [DYNAMIC_GAP_MIN_MS, DYNAMIC_GAP_MAX_MS] 范围内
+  - 当无法获取原始 gap 时回退到固定间隙（_DEFAULT_GAP_MS）
 """
 import os
 from typing import Optional
@@ -20,11 +25,15 @@ from core import config
 # TTS 音频目标响度（dBFS），统一所有句子的音量
 _TTS_TARGET_DBFS = getattr(config, "TTS_TARGET_DBFS", -20.0)
 
-# 句间固定间隙（毫秒），保证相邻句子不粘连又有呼吸感
+# 句间固定间隙（毫秒），作为无原始 gap 信息时的回退默认值
 _DEFAULT_GAP_MS = getattr(config, "MIXER_DEFAULT_GAP_MS", 150)
 
 # 句首/句尾淡入淡出（毫秒），平滑音色衔接
 _FADE_MS = getattr(config, "MIXER_FADE_MS", 60)
+
+# 动态间隙约束：基于原始音频 inter-segment gap 的 min/max 硬限制
+_DYNAMIC_GAP_MIN_MS = getattr(config, "DYNAMIC_GAP_MIN_MS", 120)
+_DYNAMIC_GAP_MAX_MS = getattr(config, "DYNAMIC_GAP_MAX_MS", 1200)
 
 
 def _normalize_tts_audio(audio: AudioSegment,
@@ -34,6 +43,39 @@ def _normalize_tts_audio(audio: AudioSegment,
         return audio
     gain = target_dbfs - audio.dBFS
     return audio.apply_gain(gain)
+
+
+def _compute_dynamic_gap_ms(segments: list, seg_idx: int,
+                           next_seg_idx: int) -> float:
+    """
+    计算两个连续 segment 之间的动态间隙。
+
+    基于原始音频中相邻 segment 的 inter-segment gap（next.start - current.end），
+    夹在 [_DYNAMIC_GAP_MIN_MS, _DYNAMIC_GAP_MAX_MS] 范围内。
+
+    当无法获取原始 gap（segments 缺失或 gap 异常）时，回退到 _DEFAULT_GAP_MS。
+
+    Args:
+        segments: WhisperX segments 列表
+        seg_idx: 当前 segment 索引
+        next_seg_idx: 下一个 segment 索引
+
+    Returns:
+        float: 间隙时长（毫秒）
+    """
+    if (seg_idx >= len(segments) or next_seg_idx >= len(segments)):
+        return _DEFAULT_GAP_MS
+
+    current_end = segments[seg_idx].get("end", 0)
+    next_start = segments[next_seg_idx].get("start", 0)
+    raw_gap_s = next_start - current_end
+
+    # 异常 gap（负数或过大）→ 回退固定间隙
+    if raw_gap_s <= 0 or raw_gap_s > 10.0:
+        return _DEFAULT_GAP_MS
+
+    raw_gap_ms = raw_gap_s * 1000.0
+    return max(_DYNAMIC_GAP_MIN_MS, min(raw_gap_ms, _DYNAMIC_GAP_MAX_MS))
 
 
 def mix_sentence_audio(
@@ -116,16 +158,32 @@ def mix_sentence_audio(
             pass
 
     # ---- 顺序拼接所有 TTS 片段 ----
-    silence = AudioSegment.silent(duration=gap_ms, frame_rate=target_sr)
-    if target_channels == 2:
-        silence = silence.set_channels(2)
-
     result = AudioSegment.empty()
     time_mapping = []
     mixed_pos_ms = 0
 
-    print(f"[Step4b] 自然拼接模式: {len(sorted_indices)} 句中文 TTS, "
-          f"句间间隙 {gap_ms}ms")
+    # 统计间隙使用情况
+    gap_stats = {"dynamic": 0, "fallback": 0}
+    # 生成用于拼接的 silence 缓存：按需创建不同时长的静音片段
+    _silence_cache = {}
+
+    def _get_silence(duration_ms: float) -> AudioSegment:
+        dur = int(round(duration_ms))
+        if dur <= 0:
+            return AudioSegment.empty()
+        key = (dur, target_channels, target_sr)
+        if key not in _silence_cache:
+            s = AudioSegment.silent(duration=dur, frame_rate=target_sr)
+            if target_channels == 2:
+                s = s.set_channels(2)
+            _silence_cache[key] = s
+        return _silence_cache[key]
+
+    use_dynamic = getattr(config, "DYNAMIC_GAP_ENABLED", True)
+
+    print(f"[Step4b] 拼接模式: {len(sorted_indices)} 句中文 TTS, "
+          f"间隙={'动态' if use_dynamic else '固定 ' + str(gap_ms) + 'ms'} "
+          f"(范围 {_DYNAMIC_GAP_MIN_MS}-{_DYNAMIC_GAP_MAX_MS}ms)")
 
     for i, seg_idx in enumerate(sorted_indices):
         seg = segments[seg_idx] if seg_idx < len(segments) else {}
@@ -149,7 +207,7 @@ def mix_sentence_audio(
                   f"({tts_len_ms}ms)")
         else:
             # TTS 缺失：插入固定间隙，保持时间轴连贯
-            tts_len_ms = gap_ms
+            tts_len_ms = _DEFAULT_GAP_MS
             entry_type = "silence"
             print(f"  [{seg_idx}] [跳过] TTS 文件缺失，停顿 {tts_len_ms}ms")
 
@@ -172,8 +230,19 @@ def mix_sentence_audio(
 
         # 句间间隙（最后一句后面不加）
         if i < len(sorted_indices) - 1:
-            result += silence
-            mixed_pos_ms += gap_ms
+            next_seg_idx = sorted_indices[i + 1]
+            if use_dynamic:
+                cur_gap_ms = _compute_dynamic_gap_ms(
+                    segments, seg_idx, next_seg_idx)
+                if cur_gap_ms == _DEFAULT_GAP_MS:
+                    gap_stats["fallback"] += 1
+                else:
+                    gap_stats["dynamic"] += 1
+            else:
+                cur_gap_ms = gap_ms
+
+            result += _get_silence(cur_gap_ms)
+            mixed_pos_ms += cur_gap_ms
 
     # ---- 可选 BGM 叠加 ----
     if bgm_path and os.path.exists(bgm_path):
@@ -214,6 +283,9 @@ def mix_sentence_audio(
     print(f"  原始时长: {original_duration:.1f}s")
     print(f"  混合时长: {mixed_duration:.1f}s ({sign}{change_pct:.0f}%)")
     print(f"  中文句数: {cn_count}/{len(sorted_indices)}")
+    if use_dynamic:
+        print(f"  动态间隙: {gap_stats['dynamic']} 处 | 回退固定间隙: {gap_stats['fallback']} 处 "
+              f"(范围 {_DYNAMIC_GAP_MIN_MS}-{_DYNAMIC_GAP_MAX_MS}ms)")
     print(f"  输出: {output_path}")
 
     return {
