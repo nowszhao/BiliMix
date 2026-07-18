@@ -35,14 +35,86 @@ _FADE_MS = getattr(config, "MIXER_FADE_MS", 60)
 _DYNAMIC_GAP_MIN_MS = getattr(config, "DYNAMIC_GAP_MIN_MS", 120)
 _DYNAMIC_GAP_MAX_MS = getattr(config, "DYNAMIC_GAP_MAX_MS", 1200)
 
+# LUFS 响度归一化目标（EBU R128 标准：-23 LUFS 为广播标准）
+_TARGET_LUFS = getattr(config, "TTS_TARGET_LUFS", -23.0)
+
+# Compressor 参数
+_COMPRESSOR_THRESHOLD_DB = getattr(config, "COMPRESSOR_THRESHOLD_DB", -18.0)
+_COMPRESSOR_RATIO = getattr(config, "COMPRESSOR_RATIO", 2.0)
+_COMPRESSOR_ATTACK_MS = getattr(config, "COMPRESSOR_ATTACK_MS", 5.0)
+_COMPRESSOR_RELEASE_MS = getattr(config, "COMPRESSOR_RELEASE_MS", 50.0)
+
+# Limiter 参数（硬限幅，防止爆音）
+_LIMITER_THRESHOLD_DB = getattr(config, "LIMITER_THRESHOLD_DB", -1.0)
+
 
 def _normalize_tts_audio(audio: AudioSegment,
                          target_dbfs: float = _TTS_TARGET_DBFS) -> AudioSegment:
-    """将 TTS 音频统一到目标响度，消除不同句子之间的音量差异。"""
-    if audio.dBFS == float('-inf'):
-        return audio
-    gain = target_dbfs - audio.dBFS
-    return audio.apply_gain(gain)
+    """
+    将 TTS 音频统一到目标响度，消除不同句子之间的音量差异。
+
+    使用 ITU-R BS.1770 (LUFS) 响度标准替代简单的 dBFS RMS 估值，
+    对短句（如单字/两字应答）的感知响度归一化更精确。
+    """
+    import numpy as np
+    try:
+        import pyloudnorm as pyln
+    except ImportError:
+        # pyloudnorm 不可用时回退到 pydub dBFS
+        if audio.dBFS == float('-inf'):
+            return audio
+        gain = target_dbfs - audio.dBFS
+        return audio.apply_gain(gain)
+
+    # 将 pydub AudioSegment 转为 numpy 数组供 pyloudnorm 处理
+    samples = np.array(audio.get_array_of_samples(), dtype=np.float64)
+    # 归一化到 [-1, 1] 范围
+    max_val = float(2 ** (audio.sample_width * 8 - 1))
+    samples = samples / max_val
+
+    # 测量当前响度
+    meter = pyln.Meter(audio.frame_rate)
+    current_loudness = meter.integrated_loudness(samples)
+
+    # 计算需要的增益并应用
+    if np.isfinite(current_loudness):
+        gain_db = _TARGET_LUFS - current_loudness
+        gain_linear = 10.0 ** (gain_db / 20.0)
+        samples = samples * gain_linear
+    # else: 静音片段，不做增益
+
+    # 转回 pydub AudioSegment
+    samples = np.clip(samples, -1.0, 1.0)
+    samples_int = (samples * max_val).astype(np.int16)
+    return AudioSegment(
+        samples_int.tobytes(),
+        frame_rate=audio.frame_rate,
+        sample_width=audio.sample_width,
+        channels=audio.channels,
+    )
+
+
+def _apply_dynamics_processing(audio: AudioSegment) -> AudioSegment:
+    """
+    对 TTS 音频做 compressor + limiter 后处理。
+
+    压缩器缩小动态范围（避免忽高忽低），限幅器削掉偶发的爆音峰值。
+    使用 pydub 内置的 compress_dynamic_range 实现。
+    """
+    # Compressor: 压缩动态范围
+    audio = audio.compress_dynamic_range(
+        threshold=_COMPRESSOR_THRESHOLD_DB,
+        ratio=_COMPRESSOR_RATIO,
+        attack=_COMPRESSOR_ATTACK_MS,
+        release=_COMPRESSOR_RELEASE_MS,
+    )
+    # Limiter: 硬限幅，防止爆音
+    # pydub 没有内置 limiter，用 apply_gain 后 clip 近似
+    # 先把整体降到 limiter 阈值以下再切掉超出的部分
+    headroom = audio.max_dBFS - _LIMITER_THRESHOLD_DB
+    if headroom > 0:
+        audio = audio.apply_gain(-headroom)
+    return audio
 
 
 def _compute_dynamic_gap_ms(segments: list, seg_idx: int,
@@ -197,6 +269,7 @@ def mix_sentence_audio(
                 tts_clip = tts_clip.set_frame_rate(target_sr)
 
             tts_clip = _normalize_tts_audio(tts_clip)
+            tts_clip = _apply_dynamics_processing(tts_clip)
             tts_clip = tts_clip.fade_in(_FADE_MS).fade_out(_FADE_MS)
             tts_len_ms = len(tts_clip)
 

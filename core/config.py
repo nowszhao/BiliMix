@@ -224,6 +224,22 @@ MIXER_DEFAULT_GAP_MS = 150
 MIXER_FADE_MS = 60
 # 背景音混入时的音量调整（dB，负值=降低音量）
 MIXER_BGM_GAIN_DB = -10.0
+
+# --- 动态范围处理（compressor / limiter）---
+# TTS 目标响度（LUFS），ITU-R BS.1770 标准，替代 dBFS RMS
+# -23 LUFS = EBU R128 广播标准，适合语音内容
+TTS_TARGET_LUFS = -23.0
+# Compressor 阈值（dB），高于此值的信号被压缩
+COMPRESSOR_THRESHOLD_DB = -18.0
+# Compressor 压缩比，2.0 表示每 2dB 输入 → 1dB 输出
+COMPRESSOR_RATIO = 2.0
+# Compressor 起音时间（ms）
+COMPRESSOR_ATTACK_MS = 5.0
+# Compressor 释放时间（ms）
+COMPRESSOR_RELEASE_MS = 50.0
+# Limiter 硬限幅阈值（dBFS），削掉超出此值的爆音峰值
+LIMITER_THRESHOLD_DB = -1.0
+
 # 动态句间间隙：基于原始音频 inter-segment gap 的硬限制
 # 是否启用动态间隙（False 则回退到 SENTENCE_GAP_MS / SENTENCE_FULL_GAP_MS）
 DYNAMIC_GAP_ENABLED = True
