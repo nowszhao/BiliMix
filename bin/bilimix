@@ -26,15 +26,40 @@ PID_FILE="/tmp/bilimix.pid"
 
 # ── Python 检测（Linux 上 python 可能指向 Python2）──────────
 _detect_python() {
-    if [[ -n "${BILIMIX_PYTHON:-}" ]] && command -v "$BILIMIX_PYTHON" &>/dev/null; then
-        echo "$BILIMIX_PYTHON"
-    elif command -v python3 &>/dev/null; then
-        echo "python3"
-    elif command -v python &>/dev/null; then
-        echo "python"
-    else
-        echo ""
+    local candidate=""
+
+    # 1. 用户显式指定 BILIMIX_PYTHON
+    if [[ -n "${BILIMIX_PYTHON:-}" ]]; then
+        candidate="$BILIMIX_PYTHON"
+        # 如果用户给的是目录（如 .../bin/），自动补 python
+        if [[ -d "$candidate" ]]; then
+            candidate="${candidate%/}/python"
+        fi
+        if [[ -x "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+        # 也尝试 command -v（适用于 PATH 中的名字如 python3.10）
+        if command -v "$BILIMIX_PYTHON" &>/dev/null; then
+            echo "$BILIMIX_PYTHON"
+            return 0
+        fi
     fi
+
+    # 2. 自动检测 python3
+    if command -v python3 &>/dev/null; then
+        echo "python3"
+        return 0
+    fi
+
+    # 3. 回退 python
+    if command -v python &>/dev/null; then
+        echo "python"
+        return 0
+    fi
+
+    echo ""
+    return 1
 }
 PYTHON_BIN=$(_detect_python)
 
