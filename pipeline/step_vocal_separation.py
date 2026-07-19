@@ -62,8 +62,11 @@ def separate_vocals(audio_path: str, cache_dir: str, timeout: int = None) -> dic
                 "error": f"人声分离超时（>{timeout}s）"}
 
     if r.returncode != 0:
-        err = r.stderr.strip()[-500:]
-        print(f"[VocalSep] 分离失败: {err}")
+        err = r.stderr.strip()[-1000:] if r.stderr else "无错误输出"
+        # 也检查 stdout，demucs 有时把错误打到 stdout
+        if not err or err == "无错误输出":
+            err = r.stdout.strip()[-1000:] if r.stdout else "无错误输出"
+        print(f"[VocalSep] 分离失败 (code={r.returncode}): {err}")
         return {"ok": False, "vocals_path": "", "no_vocals_path": "", "error": err}
 
     if not os.path.exists(no_vocals_path):

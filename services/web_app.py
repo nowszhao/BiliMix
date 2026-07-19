@@ -765,16 +765,22 @@ def continue_after_sentence_confirmation(task_id: str):
         # 导致合成出的中文 TTS 中夹杂背景音乐。
         vocals_path = task.get("_vocals_path", "")
         if not vocals_path or not os.path.exists(vocals_path):
+            print(f"[VocalSep] keep_bgm={task.get('keep_bgm', False)}，"
+                  f"vocals_path 缺失，执行 demucs 分离...")
             sep_cache_dir = os.path.join(result_dir, "vocal_separation")
             sep_result = separate_vocals(audio_path, sep_cache_dir)
             if sep_result.get("ok"):
                 vocals_path = sep_result.get("vocals_path", "")
                 update_task(task_id, _vocals_path=vocals_path)
+                print(f"[VocalSep] 分离成功: vocals={vocals_path}")
                 # 如果 keep_bgm=True，同时保存 bgm_path 用于最终混音
                 if task.get("keep_bgm", False):
                     bgm_path = sep_result.get("no_vocals_path", "")
                     if bgm_path:
                         update_task(task_id, _bgm_path=bgm_path)
+            else:
+                print(f"[VocalSep] 分离失败: {sep_result.get('error', '未知错误')}，"
+                      f"TTS 参考音频将回退到原始音频（可能含 BGM）")
 
         ref_audio_source = vocals_path if vocals_path and os.path.exists(vocals_path) else audio_path
 
