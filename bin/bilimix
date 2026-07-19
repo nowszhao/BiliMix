@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# ============================================================
+# BiliMix 服务管理脚本
+#
+# 用法:
+#   ./bin/bilimix start         启动服务（默认端口 5001）
+#   ./bin/bilimix stop          停止服务
+#   ./bin/bilimix restart       重启服务（清空旧日志）
+#   ./bin/bilimix status        查看服务状态
+#   ./bin/bilimix logs          实时查看日志（tail -f）
+#   ./bin/bilimix logs -n 50    查看最近 50 行日志
+#   ./bin/bilimix tail          同 logs
+#
+# 环境变量:
+#   BILIMIX_PORT    服务端口（默认 5001）
+#   BILIMIX_LOG     日志文件路径（默认 /tmp/bilimix.log）
+# ============================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PORT="${BILIMIX_PORT:-5001}"
+LOG_FILE="${BILIMIX_LOG:-/tmp/bilimix.log}"
+PID_FILE="/tmp/bilimix.pid"
+
+# 颜色
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# ── helpers ────────────────────────────────────────────────
+
+_log()  { echo -e "${CYAN}[bilimix]${NC} $*"; }
+_ok()   { echo -e "${GREEN}[bilimix]${NC} $*"; }
+_warn() { echo -e "${YELLOW}[bilimix]${NC} $*"; }
+_err()  { echo -e "${RED}[bilimix]${NC} $*"; }
+
+_get_pid() {
+    if [[ -f "$PID_FILE" ]]; then
+        local pid
+        pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            echo "$pid"
+            return 0
+        fi
+    fi
+    # fallback: 按命令行特征查找
+    pgrep -f "python.*services/web_app\.py.*$PORT" 2>/dev/null | head -1 || true
+}
+
+_is_running() {
+    local pid
+    pid=$(_get_pid)
+    [[ -n "$pid" ]]
+}
+
+# ── commands ────────────────────────────────────────────────
+
+cmd_start() {
+    if _is_running; then
+        _warn "服务已在运行 (pid=$(_get_pid))"
+        return 1
+    fi
+
+    _log "启动 BiliMix 服务..."
+    cd "$PROJECT_DIR"
+
+    nohup python services/web_app.py "$PORT" >> "$LOG_FILE" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$PID_FILE"
+
+    # 等待端口就绪
+    local waited=0
+    while ! curl -s "http://localhost:$PORT/api/tasks" > /dev/null 2>&1; do
+        sleep 1
+        waited=$((waited + 1))
+        if [[ $waited -gt 15 ]]; then
+            _err "服务启动超时（>15s），检查日志: tail $LOG_FILE"
+            return 1
+        fi
+    done
+
+    _ok "BiliMix 已启动  pid=$pid  port=$PORT"
+    _log "日志: $LOG_FILE"
+    _log "访问: http://localhost:$PORT"
+}
+
+cmd_stop() {
+    local pid
+    pid=$(_get_pid)
+    if [[ -z "$pid" ]]; then
+        _warn "服务未运行"
+        rm -f "$PID_FILE"
+        return 0
+    fi
+
+    _log "停止 BiliMix (pid=$pid)..."
+    kill "$pid" 2>/dev/null || true
+
+    # 等待进程退出
+    local waited=0
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 1
+        waited=$((waited + 1))
+        if [[ $waited -gt 10 ]]; then
+            _warn "强制终止..."
+            kill -9 "$pid" 2>/dev/null || true
+            break
+        fi
+    done
+
+    rm -f "$PID_FILE"
+    _ok "BiliMix 已停止"
+}
+
+cmd_restart() {
+    _log "重启 BiliMix..."
+    cmd_stop || true
+    # 清空旧日志
+    if [[ -f "$LOG_FILE" ]]; then
+        rm -f "$LOG_FILE"
+        _log "旧日志已清空"
+    fi
+    sleep 1
+    cmd_start
+}
+
+cmd_status() {
+    local pid
+    pid=$(_get_pid)
+    if [[ -z "$pid" ]]; then
+        _warn "状态: 未运行"
+        return 1
+    fi
+
+    # 检查端口
+    if curl -s "http://localhost:$PORT/api/tasks" > /dev/null 2>&1; then
+        _ok "状态: 运行中  pid=$pid  port=$PORT"
+    else
+        _warn "状态: 进程存在但端口无响应  pid=$pid  port=$PORT"
+    fi
+
+    # 运行时长
+    local elapsed
+    elapsed=$(ps -o etime= -p "$pid" 2>/dev/null | xargs)
+    _log "运行时长: $elapsed"
+
+    # 日志大小
+    if [[ -f "$LOG_FILE" ]]; then
+        local size
+        size=$(du -h "$LOG_FILE" 2>/dev/null | cut -f1)
+        _log "日志大小: $size  ($LOG_FILE)"
+    fi
+}
+
+cmd_logs() {
+    if [[ ! -f "$LOG_FILE" ]]; then
+        _warn "日志文件不存在: $LOG_FILE"
+        return 1
+    fi
+
+    local lines="${1:--f}"  # 默认 tail -f
+    if [[ "$lines" == "-f" ]]; then
+        _log "实时日志 (Ctrl+C 退出)..."
+        tail -f "$LOG_FILE"
+    elif [[ "$lines" == "-n" ]]; then
+        tail -n "${2:-50}" "$LOG_FILE"
+    else
+        tail -n "$lines" "$LOG_FILE"
+    fi
+}
+
+# ── main ────────────────────────────────────────────────────
+
+CMD="${1:-status}"
+shift || true
+
+case "$CMD" in
+    start)    cmd_start "$@" ;;
+    stop)     cmd_stop "$@" ;;
+    restart)  cmd_restart "$@" ;;
+    status)   cmd_status "$@" ;;
+    logs|tail)
+        if [[ "${1:-}" == "-n" ]]; then
+            cmd_logs "-n" "${2:-50}"
+        else
+            cmd_logs "${1:--f}"
+        fi
+        ;;
+    -h|--help|help)
+        echo "BiliMix 服务管理脚本"
+        echo ""
+        echo "用法: ./bin/bilimix <command>"
+        echo ""
+        echo "命令:"
+        echo "  start          启动服务"
+        echo "  stop           停止服务"
+        echo "  restart        重启服务（清空旧日志）"
+        echo "  status         查看服务状态"
+        echo "  logs           实时查看日志 (Ctrl+C 退出)"
+        echo "  logs -n 50     查看最近 50 行日志"
+        echo ""
+        echo "环境变量:"
+        echo "  BILIMIX_PORT   服务端口 (默认 5001)"
+        echo "  BILIMIX_LOG    日志文件路径 (默认 /tmp/bilimix.log)"
+        ;;
+    *)
+        _err "未知命令: $CMD"
+        echo "用法: ./bin/bilimix {start|stop|restart|status|logs}"
+        exit 1
+        ;;
+esac
