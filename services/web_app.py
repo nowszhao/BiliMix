@@ -627,33 +627,30 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
         os.makedirs(result_dir, exist_ok=True)
         update_task(task_id, _basename=basename, _audio_path=audio_path)
 
-        # ---- Step 0: 人声/背景音分离（若开启背景音保留）----
-        # 提前分离的好处：
-        #   1) 转录基于纯人声音频，不受背景音乐/环境音干扰，识别更准确
-        #      （背景音是一种噪声源，容易导致 VAD 漏检或 ASR 幻觉）
-        #   2) 分离结果（no_vocals）直接留到 Step4 混音阶段复用，
-        #      不需要在混音时重新调用一次 demucs
-        # demucs 是逐帧处理，不改变音频时长，分离前后时间轴严格一致，
-        # 用 vocals.wav 转录得到的时间戳可以直接复用，无需额外校准。
+        # ---- Step 0: 人声/背景音分离（始终执行）----
+        # 无论 keep_bgm 为何值，都需要分离纯人声用于 TTS 参考音频。
+        # keep_bgm 仅控制最终混音时是否叠加 BGM 轨。
         task_pre = get_task(task_id) or {}
         keep_bgm = task_pre.get("keep_bgm", False)
         transcribe_audio_path = audio_path
         vocals_path = ""
         bgm_path = None
-        if keep_bgm:
-            update_task(task_id, status="processing", step="separate",
-                        progress=3, message="正在分离人声与背景音...")
-            sep_cache_dir = os.path.join(result_dir, "vocal_separation")
-            sep_result = separate_vocals(audio_path, sep_cache_dir)
-            if sep_result.get("ok"):
-                vocals_path = sep_result.get("vocals_path", "")
-                bgm_path = sep_result.get("no_vocals_path", "")
-                if vocals_path and os.path.exists(vocals_path):
-                    transcribe_audio_path = vocals_path
-                    print(f"[VocalSep] 提前分离成功，转录将使用纯人声音频: {vocals_path}")
-                update_task(task_id, _bgm_path=bgm_path, _vocals_path=vocals_path)
-            else:
-                print(f"[VocalSep] 提前分离失败，转录使用原始音频: {sep_result.get('error')}")
+
+        update_task(task_id, status="processing", step="separate",
+                    progress=3, message="正在分离人声与背景音...")
+        sep_cache_dir = os.path.join(result_dir, "vocal_separation")
+        sep_result = separate_vocals(audio_path, sep_cache_dir)
+        if sep_result.get("ok"):
+            vocals_path = sep_result.get("vocals_path", "")
+            bgm_path = sep_result.get("no_vocals_path", "")
+            if vocals_path and os.path.exists(vocals_path):
+                transcribe_audio_path = vocals_path
+                print(f"[VocalSep] 分离成功，转录将使用纯人声音频: {vocals_path}")
+            update_task(task_id, _vocals_path=vocals_path)
+            if keep_bgm and bgm_path:
+                update_task(task_id, _bgm_path=bgm_path)
+        else:
+            print(f"[VocalSep] 分离失败，转录使用原始音频: {sep_result.get('error')}")
 
         # ---- Step 1: 转录 ----
         if is_cancelled(task_id):
@@ -794,6 +791,99 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
 # 句子翻译/智能翻译的共享后半段
 # ============================================================
 
+def _ensure_vocals_for_tts(task_id: str) -> str:
+    """
+    确保存在纯人声音频用于 TTS 参考音频提取。
+
+    无论 keep_bgm 为何值、无论任务是否续跑，TTS 声音克隆都需要
+    纯人声参考音频，否则原始音频中的 BGM 会被 Confucius4-TTS
+    的声音克隆学进去。
+
+    若已有 _vocals_path 则直接复用；否则执行 demucs 分离。
+
+    Returns:
+        str: vocals.wav 路径（纯人声），失败时返回原始 audio_path
+    """
+    task = get_task(task_id)
+    if not task:
+        return ""
+
+    audio_path = task.get("_audio_path", "")
+    if not audio_path:
+        return ""
+
+    # 已有缓存直接复用
+    vocals_path = task.get("_vocals_path", "")
+    if vocals_path and os.path.exists(vocals_path):
+        return vocals_path
+
+    # 执行 demucs 分离
+    basename = task.get("_basename", "")
+    result_dir = os.path.join(config.RESULT_DIR, basename)
+    sep_cache_dir = os.path.join(result_dir, "vocal_separation")
+
+    print(f"[VocalSep] keep_bgm={task.get('keep_bgm', False)}，"
+          f"vocals_path 缺失，执行 demucs 分离...")
+    sep_result = separate_vocals(audio_path, sep_cache_dir)
+    if sep_result.get("ok"):
+        vocals_path = sep_result.get("vocals_path", "")
+        update_task(task_id, _vocals_path=vocals_path)
+        print(f"[VocalSep] 分离成功: vocals={vocals_path}")
+        # 如果 keep_bgm=True，同时保存 bgm_path 用于最终混音
+        if task.get("keep_bgm", False):
+            bgm_path = sep_result.get("no_vocals_path", "")
+            if bgm_path:
+                update_task(task_id, _bgm_path=bgm_path)
+        return vocals_path
+
+    print(f"[VocalSep] 分离失败: {sep_result.get('error', '未知错误')}，"
+          f"回退到原始音频（可能含 BGM）")
+    return audio_path
+
+
+def _build_confucius_ref_map(task_id: str, segments: list,
+                              translated_indices: list) -> dict:
+    """
+    为 Confucius4-TTS 构建参考音频映射。
+
+    先从 _ensure_vocals_for_tts 获取纯人声，再调用参考音频提取。
+    """
+    task = get_task(task_id)
+    if not task:
+        return {}
+
+    voice_clone = getattr(config, "SENTENCE_TTS_VOICE_CLONE", True)
+    if not voice_clone:
+        return {}
+
+    ref_audio_source = _ensure_vocals_for_tts(task_id)
+    if not ref_audio_source:
+        return {}
+
+    basename = task.get("_basename", "")
+    result_dir = os.path.join(config.RESULT_DIR, basename)
+    confucius_ref_dir = os.path.join(result_dir, "tts_confucius_cache", "ref_audio")
+    os.makedirs(confucius_ref_dir, exist_ok=True)
+
+    pseudo_replacements = [
+        {"segment_index": idx}
+        for idx in translated_indices if idx < len(segments)
+    ]
+
+    ref_mode = getattr(config, "REF_SELECT_MODE", "speaker_local")
+    if ref_mode == "speaker_local":
+        ref_map, _, _ = extract_ref_audio_speaker_local(
+            ref_audio_source, segments, pseudo_replacements,
+            confucius_ref_dir)
+    else:
+        ref_map, _ = extract_ref_audio_for_segments(
+            ref_audio_source, segments, pseudo_replacements,
+            confucius_ref_dir)
+
+    print(f"[Confucius] 提取了 {len(ref_map)} 个参考音频 (mode={ref_mode})")
+    return ref_map
+
+
 def continue_after_sentence_confirmation(task_id: str):
     """句子翻译模式后半段：TTS 合成 → 音频组装 → 完成"""
     try:
@@ -813,29 +903,8 @@ def continue_after_sentence_confirmation(task_id: str):
         result_dir = os.path.join(config.RESULT_DIR, basename)
         os.makedirs(result_dir, exist_ok=True)
 
-        # 即使 keep_bgm=False，也需要分离纯人声给 TTS 做参考音频，
-        # 否则原始音频中的 BGM 会被 Confucius4-TTS 的声音克隆学进去，
-        # 导致合成出的中文 TTS 中夹杂背景音乐。
-        vocals_path = task.get("_vocals_path", "")
-        if not vocals_path or not os.path.exists(vocals_path):
-            print(f"[VocalSep] keep_bgm={task.get('keep_bgm', False)}，"
-                  f"vocals_path 缺失，执行 demucs 分离...")
-            sep_cache_dir = os.path.join(result_dir, "vocal_separation")
-            sep_result = separate_vocals(audio_path, sep_cache_dir)
-            if sep_result.get("ok"):
-                vocals_path = sep_result.get("vocals_path", "")
-                update_task(task_id, _vocals_path=vocals_path)
-                print(f"[VocalSep] 分离成功: vocals={vocals_path}")
-                # 如果 keep_bgm=True，同时保存 bgm_path 用于最终混音
-                if task.get("keep_bgm", False):
-                    bgm_path = sep_result.get("no_vocals_path", "")
-                    if bgm_path:
-                        update_task(task_id, _bgm_path=bgm_path)
-            else:
-                print(f"[VocalSep] 分离失败: {sep_result.get('error', '未知错误')}，"
-                      f"TTS 参考音频将回退到原始音频（可能含 BGM）")
-
-        ref_audio_source = vocals_path if vocals_path and os.path.exists(vocals_path) else audio_path
+        # 确保 TTS 参考音频使用纯人声（不受 keep_bgm 开关影响）
+        ref_audio_source = _ensure_vocals_for_tts(task_id) or audio_path
 
         translations = {int(k): v for k, v in translations.items()}
         translated_indices = sorted([idx for idx in translated_indices
@@ -2217,10 +2286,12 @@ def _synthesis_resume(task_id):
         update_task(task_id, status="processing", step="synthesize",
                     progress=60, message=f"补充合成 {len(missing_indices)} 条 TTS...")
         try:
+            confucius_ref_map = _build_confucius_ref_map(
+                task_id, segments, missing_indices)
             new_tts = synthesize_sentences_with_confucius_tts(
                 segments, missing_indices, missing_translations,
                 audio_path, confucius_cache_dir,
-                ref_audio_map={},
+                ref_audio_map=confucius_ref_map,
                 cancel_check=_cancel, progress_cb=_progress, task_id=task_id)
         except InterruptedError:
             update_task(task_id, status="cancelled", message="重试已被取消")
