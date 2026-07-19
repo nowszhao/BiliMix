@@ -106,8 +106,8 @@ CONFUCIUS4_TTS_TEMPERATURE = 0.3
 CONFUCIUS4_TTS_TOP_P = 0.5
 # Top-k 采样参数（0 表示不限制）
 CONFUCIUS4_TTS_TOP_K = 0
-# 束搜索宽度（3 = beam search，确定性强于贪心解码）
-CONFUCIUS4_TTS_NUM_BEAMS = 3
+# 束搜索宽度（1 = 贪心解码，避免长句序列超 max_length 导致杂音）
+CONFUCIUS4_TTS_NUM_BEAMS = 1
 # 重复惩罚系数（越高重复越少）
 CONFUCIUS4_TTS_REPETITION_PENALTY = 1.2
 # 扩散步骤数（越高音质越好越稳定，50 平衡质量与速度）
