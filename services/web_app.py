@@ -115,6 +115,59 @@ def _check_required_dependencies():
         )
         pip_pkgs_to_install.append("demucs")
 
+    # 2b. demucs 实际推理能力检查（烟雾测试）
+    # --help 通过不代表模型权重已下载，用最小输入做一次快速推理验证
+    if not missing_hints:
+        try:
+            _smoke_input = os.path.join(config.DATA_DIR, "_demucs_smoke.wav")
+            _smoke_outdir = os.path.join(config.DATA_DIR, "_demucs_smoke_out")
+            if not os.path.exists(_smoke_input):
+                # 生成 1 秒静音 WAV 作为烟雾测试输入
+                import struct, wave
+                os.makedirs(os.path.dirname(_smoke_input), exist_ok=True)
+                with wave.open(_smoke_input, "w") as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)
+                    wf.setframerate(44100)
+                    wf.writeframes(b"\x00\x00" * 44100)
+            r = subprocess.run(
+                [sys.executable, "-m", "demucs",
+                 "--two-stems", "vocals", "-n", "htdemucs",
+                 "-d", "cpu", "-o", _smoke_outdir, _smoke_input],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r.returncode != 0:
+                err = r.stderr.strip()[-500:] if r.stderr else ""
+                missing_hints.append(
+                    f"  - demucs 推理测试失败（模型权重可能未下载或 OOM）\n"
+                    f"    stderr: {err}"
+                )
+                pip_pkgs_to_install.append("demucs")
+            else:
+                # 清理烟雾测试产物
+                import shutil
+                shutil.rmtree(_smoke_outdir, ignore_errors=True)
+        except subprocess.TimeoutExpired:
+            missing_hints.append(
+                "  - demucs 推理测试超时（>120s），模型加载可能卡住"
+            )
+        except FileNotFoundError:
+            missing_hints.append(
+                f"  - demucs 推理测试失败：{sys.executable} 不可用"
+            )
+        except Exception as e:
+            missing_hints.append(
+                f"  - demucs 推理测试异常：{str(e)[:200]}"
+            )
+        finally:
+            # 清理烟雾测试文件
+            try:
+                os.remove(_smoke_input) if '_smoke_input' in dir() and os.path.exists(_smoke_input) else None
+                import shutil
+                shutil.rmtree(_smoke_outdir, ignore_errors=True) if '_smoke_outdir' in dir() and os.path.exists(_smoke_outdir) else None
+            except Exception:
+                pass
+
     # ---- 3. CLI 工具（PATH 中的可执行文件）----
     cli_tools = [
         ("ffmpeg", "音视频转码/字幕烧录/人声分离", "brew install ffmpeg"),
