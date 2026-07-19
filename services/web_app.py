@@ -756,13 +756,14 @@ def continue_after_sentence_confirmation(task_id: str):
         # _raw_segments 缺失时（如断点续传从磁盘恢复）回退到精简 segments
         segments = task.get("_raw_segments") or task.get("segments", [])
 
-        # 若前置阶段已做过人声分离，TTS 参考音频提取也用纯人声音频，
-        # 避免参考音频里混入背景音乐影响声音克隆的音色纯净度
-        vocals_path = task.get("_vocals_path", "")
+        full_text = task.get("transcription_text", "")
+        result_dir = os.path.join(config.RESULT_DIR, basename)
+        os.makedirs(result_dir, exist_ok=True)
 
         # 即使 keep_bgm=False，也需要分离纯人声给 TTS 做参考音频，
         # 否则原始音频中的 BGM 会被 Confucius4-TTS 的声音克隆学进去，
         # 导致合成出的中文 TTS 中夹杂背景音乐。
+        vocals_path = task.get("_vocals_path", "")
         if not vocals_path or not os.path.exists(vocals_path):
             sep_cache_dir = os.path.join(result_dir, "vocal_separation")
             sep_result = separate_vocals(audio_path, sep_cache_dir)
@@ -776,10 +777,6 @@ def continue_after_sentence_confirmation(task_id: str):
                         update_task(task_id, _bgm_path=bgm_path)
 
         ref_audio_source = vocals_path if vocals_path and os.path.exists(vocals_path) else audio_path
-
-        full_text = task.get("transcription_text", "")
-        result_dir = os.path.join(config.RESULT_DIR, basename)
-        os.makedirs(result_dir, exist_ok=True)
 
         translations = {int(k): v for k, v in translations.items()}
         translated_indices = sorted([idx for idx in translated_indices
