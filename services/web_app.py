@@ -759,6 +759,22 @@ def continue_after_sentence_confirmation(task_id: str):
         # 若前置阶段已做过人声分离，TTS 参考音频提取也用纯人声音频，
         # 避免参考音频里混入背景音乐影响声音克隆的音色纯净度
         vocals_path = task.get("_vocals_path", "")
+
+        # 即使 keep_bgm=False，也需要分离纯人声给 TTS 做参考音频，
+        # 否则原始音频中的 BGM 会被 Confucius4-TTS 的声音克隆学进去，
+        # 导致合成出的中文 TTS 中夹杂背景音乐。
+        if not vocals_path or not os.path.exists(vocals_path):
+            sep_cache_dir = os.path.join(result_dir, "vocal_separation")
+            sep_result = separate_vocals(audio_path, sep_cache_dir)
+            if sep_result.get("ok"):
+                vocals_path = sep_result.get("vocals_path", "")
+                update_task(task_id, _vocals_path=vocals_path)
+                # 如果 keep_bgm=True，同时保存 bgm_path 用于最终混音
+                if task.get("keep_bgm", False):
+                    bgm_path = sep_result.get("no_vocals_path", "")
+                    if bgm_path:
+                        update_task(task_id, _bgm_path=bgm_path)
+
         ref_audio_source = vocals_path if vocals_path and os.path.exists(vocals_path) else audio_path
 
         full_text = task.get("transcription_text", "")
