@@ -696,6 +696,8 @@ function _renderTaskDetailPanel(task) {
         metaParts.push(formatTime(dur));
     }
     if (trCount > 0) metaParts.push(`${trCount} 句翻译`);
+    const bgmLabel = task.keep_bgm ? '🎵 BGM 保留' : '🔇 无 BGM';
+    metaParts.push(bgmLabel);
     if (task.created_at) {
         const created = new Date(task.created_at);
         const now = new Date();
@@ -943,6 +945,7 @@ function renderTaskDetailPage(data) {
     document.getElementById('meta-dur').textContent = typeof formatTime==='function'?formatTime(dur):dur+'s';
     document.getElementById('meta-mdur').textContent = typeof formatTime==='function'?formatTime(mixedDur):mixedDur+'s';
     document.getElementById('meta-tr').textContent = trCount + ' 句';
+    document.getElementById('meta-bgm').textContent = data.keep_bgm ? '保留' : '不保留';
 
     const vw = document.getElementById('detail-video-wrapper');
     const aw = document.getElementById('detail-audio-inline');

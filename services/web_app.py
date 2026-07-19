@@ -2558,6 +2558,7 @@ def get_task_result(task_id):
         "sentence_pairs": task.get("sentence_pairs", []),
         "result": task.get("result"),
         "time_mapping": task.get("time_mapping", []),
+        "keep_bgm": task.get("keep_bgm", False),
         "video_result": task.get("video_result"),
         # 步骤耗时：内存没有时从磁盘 task_result.json 恢复
         "_step_timing": task.get("_step_timing") or _load_step_timing_from_disk(task),
