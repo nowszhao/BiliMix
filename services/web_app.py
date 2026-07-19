@@ -1255,6 +1255,10 @@ def api_add_subscription():
 def api_remove_subscription():
     """移除 RSS 订阅"""
     data = request.get_json()
+    if not data or "rss_url" not in data:
+        return jsonify({"error": "请提供 rss_url"}), 400
+    remove_subscription(data["rss_url"])
+    return jsonify({"ok": True})
 
 
 @app.route("/api/subscriptions/refresh", methods=["POST"])
@@ -1263,10 +1267,6 @@ def api_refresh_subscriptions():
     import threading as _th
     _th.Thread(target=_refresh_all_subscriptions, daemon=True).start()
     return jsonify({"ok": True, "message": "刷新已开始"})
-    if not data or "rss_url" not in data:
-        return jsonify({"error": "请提供 rss_url"}), 400
-    remove_subscription(data["rss_url"])
-    return jsonify({"ok": True})
 
 
 # ============================================================
