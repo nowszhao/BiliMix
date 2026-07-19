@@ -543,6 +543,27 @@ function useSubscriptionRss(rssUrl) {
 }
 
 // ============================================================
+// 订阅刷新
+// ============================================================
+
+async function refreshAllSubscriptions() {
+    const btn = document.querySelector('.sidebar-subs-refresh');
+    if (btn) btn.classList.add('spinning');
+    try {
+        await fetch('/api/subscriptions/refresh', { method: 'POST' });
+    } catch (e) {
+        console.warn('Refresh failed:', e);
+    }
+    // 延迟 3 秒后刷新侧边栏（给后端拉取 RSS 的时间）
+    setTimeout(() => {
+        if (btn) btn.classList.remove('spinning');
+        // 重新加载订阅列表和单集
+        if (typeof loadSubscriptions === 'function') loadSubscriptions();
+        if (typeof loadEpisodes === 'function') loadEpisodes();
+    }, 3000);
+}
+
+// ============================================================
 // Search Suggestions
 // ============================================================
 

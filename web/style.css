@@ -4732,6 +4732,36 @@ body {
     color: var(--accent);
 }
 
+.sidebar-subs-refresh {
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: var(--bg-hover);
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition);
+    margin-right: 2px;
+}
+
+.sidebar-subs-refresh:hover {
+    background: var(--accent-light);
+    color: var(--accent);
+}
+
+.sidebar-subs-refresh.spinning {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
 .sidebar-subs {
     flex: 1;
     overflow-y: auto;

@@ -335,6 +335,67 @@ _check_required_dependencies()
 _check_hardware_requirements()
 
 
+# ============================================================
+# 订阅自动刷新（后台线程）
+# ============================================================
+_last_refresh_time: float = 0.0  # 上次刷新时间戳
+_refresh_lock = threading.Lock()  # 防止并发刷新
+
+
+def _refresh_all_subscriptions():
+    """拉取所有订阅的最新 RSS，更新单集数据库。"""
+    global _last_refresh_time
+    with _refresh_lock:
+        subs = get_subscriptions()
+        if not subs:
+            return
+
+        total_new = 0
+        for sub in subs:
+            rss_url = sub.get("rss_url", "")
+            title = sub.get("title", rss_url[:50])
+            if not rss_url:
+                continue
+            try:
+                result = parse_rss_feed(rss_url)
+                episodes = result.get("episodes", [])
+                if episodes:
+                    new_count = upsert_episodes(rss_url, episodes)
+                    total_new += new_count
+            except Exception as e:
+                print(f"[Refresh] 订阅刷新失败 [{title}]: {e}")
+
+        _last_refresh_time = time.time()
+        if total_new > 0:
+            print(f"[Refresh] 刷新完成: {len(subs)} 个订阅, "
+                  f"新增 {total_new} 集")
+
+
+def _start_subscription_refresh_loop():
+    """启动订阅自动刷新后台线程。"""
+    interval_minutes = getattr(config, "SUBSCRIPTION_REFRESH_INTERVAL_MINUTES", 60)
+    if interval_minutes <= 0:
+        print("[Refresh] 订阅自动刷新已禁用 (interval=0)")
+        return
+
+    def _loop():
+        # 首次延迟 30s，等数据库和服务就绪
+        time.sleep(30)
+        while True:
+            try:
+                _refresh_all_subscriptions()
+            except Exception as e:
+                print(f"[Refresh] 刷新异常: {e}")
+            time.sleep(interval_minutes * 60)
+
+    t = threading.Thread(target=_loop, daemon=True, name="subscription-refresh")
+    t.start()
+    print(f"[Refresh] 订阅自动刷新已启动 (间隔 {interval_minutes} 分钟)")
+
+
+_start_subscription_refresh_loop()
+
+
 # 全局任务队列：保证同一时间只有一个任务在运行，后续任务按提交顺序排队（FIFO）
 # 用 Condition + deque 实现公平排队，替代非公平的 threading.Lock 轮询
 import collections as _collections
@@ -1169,7 +1230,10 @@ def api_check_favorite():
 @app.route("/api/subscriptions")
 def api_get_subscriptions():
     """获取全部 RSS 订阅"""
-    return jsonify({"subscriptions": get_subscriptions()})
+    return jsonify({
+        "subscriptions": get_subscriptions(),
+        "last_refresh": _last_refresh_time,
+    })
 
 
 @app.route("/api/subscriptions", methods=["POST"])
@@ -1191,6 +1255,14 @@ def api_add_subscription():
 def api_remove_subscription():
     """移除 RSS 订阅"""
     data = request.get_json()
+
+
+@app.route("/api/subscriptions/refresh", methods=["POST"])
+def api_refresh_subscriptions():
+    """手动刷新所有订阅"""
+    import threading as _th
+    _th.Thread(target=_refresh_all_subscriptions, daemon=True).start()
+    return jsonify({"ok": True, "message": "刷新已开始"})
     if not data or "rss_url" not in data:
         return jsonify({"error": "请提供 rss_url"}), 400
     remove_subscription(data["rss_url"])

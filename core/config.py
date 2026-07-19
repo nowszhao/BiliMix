@@ -240,6 +240,9 @@ COMPRESSOR_RELEASE_MS = 50.0
 # Limiter 硬限幅阈值（dBFS），削掉超出此值的爆音峰值
 LIMITER_THRESHOLD_DB = -1.0
 
+# 订阅自动刷新间隔（分钟），0 表示禁用
+SUBSCRIPTION_REFRESH_INTERVAL_MINUTES = 60
+
 # 动态句间间隙：基于原始音频 inter-segment gap 的硬限制
 # 是否启用动态间隙（False 则回退到 SENTENCE_GAP_MS / SENTENCE_FULL_GAP_MS）
 DYNAMIC_GAP_ENABLED = True
