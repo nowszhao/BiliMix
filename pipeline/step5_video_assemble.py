@@ -14,6 +14,8 @@ import re
 import subprocess
 import shutil
 import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List
 
 from core import config
@@ -107,6 +109,7 @@ def generate_bilingual_srt(
     output_path: str,
     subtitle_mode: str = "bilingual",
     video_height: Optional[int] = None,
+    time_offset: float = 0.0,
 ) -> str:
     """
     生成 ASS 字幕文件（尽管函数名/参数保留 srt 命名以兼容旧调用方，
@@ -115,6 +118,8 @@ def generate_bilingual_srt(
     英文行使用浅灰白色，中文行使用金黄色，视觉上清晰区分两种语言。
     字幕固定底部居中对齐（Alignment=2），边距按视频高度百分比计算，
     避免不同分辨率下字幕位置视觉不一致。
+
+    time_offset: 用于分块模式，所有时间戳减去该偏移量（块内音频从 0 开始）。
     """
     if video_height is None:
         video_height = getattr(config, "ASS_DEFAULT_VIDEO_HEIGHT", 720)
@@ -123,16 +128,16 @@ def generate_bilingual_srt(
     for entry in time_mapping:
         if entry.get("type") == "tts_chinese" and entry.get("segment_index", -1) >= 0:
             tts_time_map[entry["segment_index"]] = {
-                "start": entry["mixed_start"],
-                "end": entry["mixed_end"],
+                "start": max(0, entry["mixed_start"] - time_offset),
+                "end": max(0, entry["mixed_end"] - time_offset),
             }
     orig_time_map = {}
     for entry in time_mapping:
         if entry.get("type") == "original" and entry.get("segment_index", -1) >= 0:
             sidx = entry["segment_index"]
             orig_time_map[sidx] = {
-                "start": entry.get("orig_start", entry["mixed_start"]),
-                "end": entry.get("orig_end", entry["mixed_end"]),
+                "start": max(0, entry.get("orig_start", entry["mixed_start"]) - time_offset),
+                "end": max(0, entry.get("orig_end", entry["mixed_end"]) - time_offset),
             }
 
     entries = []
@@ -146,7 +151,8 @@ def generate_bilingual_srt(
         elif idx in orig_time_map:
             start, end = orig_time_map[idx]["start"], orig_time_map[idx]["end"]
         else:
-            start, end = seg.get("start", 0), seg.get("end", 0)
+            start = max(0, seg.get("start", 0) - time_offset)
+            end = max(0, seg.get("end", 0) - time_offset)
         if end <= start:
             continue
         entries.append({"index": len(entries) + 1, "start": start, "end": end,
@@ -189,9 +195,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         chn_text = e["chinese"].replace("\n", "\\N") if e["chinese"] else ""
         if subtitle_mode == "bilingual":
             if eng_text and chn_text:
-                # 英文在上/中文在下，顺序固定，加 q0 自动换行
+                # 英文在上/中文在下，顺序固定
+                # 英文: q0=按词换行  中文: q1=按字符换行（中文无空格需q1才能换行）
                 lines.append(f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{{\\q0}}{eng_text}")
-                lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{{\\q0}}{chn_text}")
+                lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{{\\q1}}{chn_text}")
             else:
                 text = chn_text or eng_text
                 style = "Chinese" if chn_text else "English"
@@ -353,6 +360,338 @@ def _build_filter_graph(
     return graph_path
 
 
+# ============================================================
+# 分块并行视频组装（用于长视频，避免 ffmpeg concat filter 卡死）
+# ============================================================
+
+def _build_block_filter_graph(tts_entries, ass_path=None, include_trailing_gap=True):
+    """为单块构建 filter graph。返回 (graph_path, chain_count)。
+
+    每个 sentence 生成一个 trim+setpts+format 链，句间间隙也做变速。
+    include_trailing_gap: 非末块为 True（包含到下一块的间隙），末块为 False。
+    每块 ~50 句 → ~100 条 chain，避免 ffmpeg concat filter O(n²) 问题。
+    """
+    parts = []
+    pidx = 0
+    if include_trailing_gap:
+        n_process = len(tts_entries) - 1  # 最后一条仅用于间隙计算
+    else:
+        n_process = len(tts_entries)
+
+    for i in range(n_process):
+        entry = tts_entries[i]
+        orig_start = entry["orig_start"]
+        orig_end = entry["orig_end"]
+        mixed_start = entry["mixed_start"]
+        mixed_end = entry["mixed_end"]
+        od = orig_end - orig_start
+        md = mixed_end - mixed_start
+        if od <= 0 or md <= 0:
+            continue
+
+        sr = md / od
+        parts.append(
+            f"[0:v]trim=start={orig_start:.3f}:duration={od:.3f},"
+            f"setpts=PTS-STARTPTS,"
+            f"setpts={sr:.6f}*PTS,"
+            f"format=yuv420p[v{pidx}]"
+        )
+        pidx += 1
+
+        if i + 1 < len(tts_entries):
+            ne = tts_entries[i + 1]
+            gos, goe = orig_end, ne["orig_start"]
+            gms, gme = mixed_end, ne["mixed_start"]
+            god, gmd = goe - gos, gme - gms
+            if god > 0 and gmd > 0:
+                gr = gmd / god
+                parts.append(
+                    f"[0:v]trim=start={gos:.3f}:duration={god:.3f},"
+                    f"setpts=PTS-STARTPTS,"
+                    f"setpts={gr:.6f}*PTS,"
+                    f"format=yuv420p[v{pidx}]"
+                )
+                pidx += 1
+
+    if not parts:
+        return None, 0
+
+    n = len(parts)
+    ci = "".join(f"[v{i}]" for i in range(n))
+    cp = f"{ci}concat=n={n}:v=1:a=0"
+    if ass_path and os.path.isfile(ass_path):
+        ea = _escape_path_for_filter(ass_path)
+        graph = ";\n".join(parts) + f";\n{cp},ass=filename='{ea}'[outv]"
+    else:
+        graph = ";\n".join(parts) + f";\n{cp}[outv]"
+
+    fd, gp = tempfile.mkstemp(suffix=".txt", prefix="bilimix_blk_")
+    with os.fdopen(fd, "w") as f:
+        f.write(graph)
+    return gp, n
+
+
+def _run_one_block(video_path, chunk_audio_path, filter_graph_path, out_path,
+                   block_threads, timeout):
+    """运行单个 ffmpeg 块。返回 out_path 或 raise。"""
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-threads", str(block_threads),
+        "-i", video_path, "-i", chunk_audio_path,
+        "-/filter_complex", filter_graph_path,
+        "-map", "[outv]", "-map", "1:a:0",
+        "-c:v", "libx264",
+        "-b:v", getattr(config, "VIDEO_BITRATE", "1500k"),
+        "-preset", getattr(config, "VIDEO_X264_PRESET", "veryfast"),
+        "-profile:v", "high", "-level", "5.0",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", getattr(config, "VIDEO_AUDIO_BITRATE", "128k"),
+        "-ar", str(getattr(config, "VIDEO_AUDIO_SAMPLE_RATE", 44100)),
+        "-ac", str(getattr(config, "VIDEO_AUDIO_CHANNELS", 2)),
+        "-movflags", "+faststart", out_path,
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0:
+        err = (r.stderr or "no output").strip()[-400:]
+        raise RuntimeError(f"ffmpeg block failed: {err}")
+    if not os.path.isfile(out_path):
+        raise RuntimeError(f"Block output missing: {out_path}")
+    return out_path
+
+
+def _assemble_video_blocks(
+    video_path: str,
+    mixed_audio_path: str,
+    srt_path: str,
+    output_path: str,
+    time_mapping: list,
+    timeout: int,
+) -> str:
+    """分块并行视频组装：将长视频按句子数切块，逐块变速拼接后合并。
+
+    当 time_mapping 句子数超过 VIDEO_MAX_CONCAT_SEGMENTS 时自动启用。
+    每块 ~50 句，filter chain ~100 条，ffmpeg concat 稳定运行。
+    """
+    block_size = getattr(config, "VIDEO_BLOCK_SIZE", 50)
+    block_threads = getattr(config, "VIDEO_BLOCK_FFMPEG_THREADS", 2)
+    block_workers = getattr(config, "VIDEO_BLOCK_WORKERS", 2)
+    block_timeout = max(timeout // 4, 1800)  # 每块超时，最少 30 分钟
+
+    tts_entries = [
+        e for e in time_mapping
+        if e.get("type") == "tts_chinese" and e.get("orig_end", 0) > e.get("orig_start", 0)
+    ]
+    total = len(tts_entries)
+    n_blocks = (total + block_size - 1) // block_size
+
+    print(f"[Step5] ══ 分块并行模式 ══")
+    print(f"[Step5] 句子总数: {total}, 块大小: {block_size}, 块数: {n_blocks}")
+    print(f"[Step5] 并行 workers: {block_workers}, 线程/块: {block_threads}")
+
+    # ---- 构建块元数据 ----
+    blocks = []
+    for bi in range(n_blocks):
+        s = bi * block_size
+        e = min(s + block_size, total)
+        is_last = (bi == n_blocks - 1)
+
+        if is_last:
+            entries = tts_entries[s:e]
+        else:
+            entries = tts_entries[s:e + 1]  # +1 用于末尾间隙
+
+        if is_last:
+            sub_entries = entries
+        else:
+            sub_entries = entries[:-1]  # 字幕不包含末尾间隙条目
+
+        audio_start = tts_entries[s]["mixed_start"]
+        if is_last:
+            audio_end = tts_entries[-1]["mixed_end"]
+        else:
+            audio_end = tts_entries[e]["mixed_start"]
+        audio_dur = audio_end - audio_start
+
+        # 收集段索引
+        seg_indices = sorted(set(
+            x.get("segment_index", -1) for x in sub_entries if x.get("segment_index", -1) >= 0
+        ))
+
+        blocks.append({
+            "idx": bi,
+            "entries": entries,
+            "sub_entries": sub_entries,
+            "is_last": is_last,
+            "audio_start": audio_start,
+            "audio_dur": audio_dur,
+            "seg_indices": seg_indices,
+            "n_sent": e - s,
+        })
+
+    # 打印概览
+    for blk in blocks:
+        print(f"[Step5]   块 {blk['idx']:02d}: 句 {blk['seg_indices'][0]}-{blk['seg_indices'][-1]}"
+              f" ({blk['n_sent']}句), 音频 {blk['audio_dur']/60:.1f}min")
+
+    # ---- 需要 segments + translations 用于字幕 ----
+    # 此处依赖调用方提供，但 assemble_video 接口不含 segments/translations
+    # 需要从 time_mapping 反向构建
+    # 处理: 优先从 time_mapping 取 chinese 字段，segments 信息从 task 获取较复杂
+    # 简化: 使用已有的 srt_path 为每块切出子字幕
+
+    base_dir = os.path.dirname(output_path)
+    block_outputs = [None] * n_blocks
+
+    def _process_block(blk):
+        """处理单个块的完整流程。"""
+        bi = blk["idx"]
+        bd = os.path.join(base_dir, f"_block_{bi:03d}")
+        os.makedirs(bd, exist_ok=True)
+
+        # 1. 提取音频
+        ap = os.path.join(bd, "audio.mp3")
+        subprocess.run([
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-ss", str(blk["audio_start"]),
+            "-i", mixed_audio_path,
+            "-t", str(blk["audio_dur"]),
+            "-c:a", "copy", ap,
+        ], check=True, capture_output=True, text=True, timeout=120)
+
+        # 2. 构建 filter graph（先不传字幕）
+        fgp, nc = _build_block_filter_graph(
+            blk["entries"], None,
+            include_trailing_gap=not blk["is_last"],
+        )
+        if fgp is None:
+            raise RuntimeError(f"Block {bi}: empty filter graph")
+
+        # 3. 生成字幕（有 ASS 滤镜的场景）
+        # 注意: 分块模式下字幕需在 filter graph 中通过 ass= 滤镜烧录
+        # 由于 generate_bilingual_srt 需要 segments/translations，这里用简化的
+        # ASS 构建逻辑（从 time_mapping 中直接取 chinese 字段）
+        if blk["sub_entries"]:
+            asp = os.path.join(bd, "subs.ass")
+            _build_block_ass(blk["sub_entries"], blk["audio_start"], asp)
+
+            # 用带字幕的 filter graph 替换
+            try:
+                os.remove(fgp)
+            except OSError:
+                pass
+            fgp, nc = _build_block_filter_graph(
+                blk["entries"], asp,
+                include_trailing_gap=not blk["is_last"],
+            )
+
+        op = os.path.join(bd, "output.mp4")
+
+        # 4. 运行 ffmpeg
+        _run_one_block(video_path, ap, fgp, op, block_threads, block_timeout)
+
+        # 清理
+        try:
+            os.remove(fgp)
+        except OSError:
+            pass
+
+        return bi, op
+
+    # ---- 并行处理 ----
+    t_start = time.time()
+
+    with ThreadPoolExecutor(max_workers=block_workers) as executor:
+        futures = {executor.submit(_process_block, blk): blk["idx"] for blk in blocks}
+        for future in as_completed(futures):
+            bi, opath = future.result()
+            block_outputs[bi] = opath
+            elapsed = time.time() - t_start
+            done = sum(1 for x in block_outputs if x is not None)
+            print(f"[Step5]   块 {bi:02d} 完成 ({done}/{n_blocks}, {elapsed/60:.1f}min)")
+
+    total_elapsed = time.time() - t_start
+    print(f"[Step5] 所有块完成，耗时 {total_elapsed/60:.1f}min")
+
+    # ---- 拼接 ----
+    concat_list = os.path.join(base_dir, "_block_concat.txt")
+    with open(concat_list, "w") as f:
+        for opath in block_outputs:
+            f.write(f"file '{opath}'\n")
+
+    print(f"[Step5] 拼接 {n_blocks} 个块 ...")
+    subprocess.run([
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-f", "concat", "-safe", "0",
+        "-i", concat_list,
+        "-c", "copy", output_path,
+    ], check=True, capture_output=True, text=True, timeout=600)
+
+    if os.path.exists(output_path):
+        size_mb = os.path.getsize(output_path) / (1024 * 1024)
+        final_dur = _probe_video_duration(output_path)
+        print(f"[Step5] 组装完成: {os.path.basename(output_path)} ({size_mb:.1f} MB, {final_dur:.2f}s)")
+        return output_path
+    return ""
+
+
+def _build_block_ass(tts_entries, time_offset, out_path, video_height=720):
+    """从 time_mapping 条目直接构建块内 ASS 字幕。
+
+    注: 当前仅构建中文字幕（从 time_mapping.chinese 字段），
+    英文原文需要 segments 数据。如需双语字幕，调用方应传入 segments
+    并使用 generate_bilingual_srt(time_offset=...) 生成块内 ASS。
+    """
+    entries = []
+    for e in tts_entries:
+        si = e.get("segment_index", -1)
+        if si < 0:
+            continue
+        ms = max(0, e["mixed_start"] - time_offset)
+        me = max(0, e["mixed_end"] - time_offset)
+        if me <= ms:
+            continue
+        chn = e.get("chinese", "").strip()
+        if not chn:
+            continue
+        entries.append({"start": ms, "end": me, "chinese": chn})
+
+    if not entries:
+        return None
+
+    fs = min(max(getattr(config, "ASS_FONT_SIZE_MIN", 28), video_height // 28),
+             getattr(config, "ASS_FONT_SIZE_MAX", 80))
+    mv = max(getattr(config, "ASS_MARGIN_V_MIN", 30),
+             int(video_height * getattr(config, "ASS_MARGIN_V_RATIO", 0.07)))
+    ol = getattr(config, "ASS_OUTLINE", 2.5)
+    sh = getattr(config, "ASS_SHADOW", 0)
+
+    hdr = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: {video_height if video_height >= 1080 else 1080}
+ScaledBorderAndShadow: yes
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Chinese,Noto Sans CJK SC,{fs},&H0000D7FF&,&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,{ol},{sh},2,20,20,{mv},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    lines = [hdr]
+    for ent in entries:
+        ts = _seconds_to_ass_time(ent["start"])
+        te = _seconds_to_ass_time(ent["end"])
+        cn = ent["chinese"].replace("\n", "\\N")
+        lines.append(f"Dialogue: 0,{ts},{te},Chinese,,0,0,0,,{{\\q1}}{cn}")
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return out_path
+
+
 def assemble_video(
     video_path: str,
     mixed_audio_path: str,
@@ -388,6 +727,19 @@ def assemble_video(
     # ---- 尝试生成逐句变速 filter graph ----
     filter_graph_path = None
     if time_mapping and has_srt:
+        # 检测是否超过 concat 阈值，自动切换分块并行模式
+        tts_count = len([
+            e for e in time_mapping
+            if e.get("type") == "tts_chinese" and e.get("orig_end", 0) > e.get("orig_start", 0)
+        ])
+        max_concat = getattr(config, "VIDEO_MAX_CONCAT_SEGMENTS", 200)
+        if tts_count > max_concat:
+            print(f"[Step5] 检测到长视频 ({tts_count} 句 > {max_concat})，启用分块并行模式")
+            # 注意: 分块模式内部自行生成字幕，不依赖外部 srt_path
+            return _assemble_video_blocks(
+                video_path, mixed_audio_path, srt_path,
+                output_path, time_mapping, timeout,
+            )
         filter_graph_path = _build_filter_graph(time_mapping, srt_path)
 
     encoders = _detect_encoders()

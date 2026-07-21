@@ -49,6 +49,8 @@ WHISPERX_DIARIZE = True
 # HuggingFace Token（需同意 pyannote/speaker-diarization-3.1 模型协议）
 # https://huggingface.co/pyannote/speaker-diarization-3.1
 WHISPERX_HF_TOKEN = os.environ.get("HF_TOKEN", "")
+
+# 在 core/config_local.py 或环境变量 HF_TOKEN 中设置你的 HF Token
 # 最少说话人数（0=自动）
 WHISPERX_MIN_SPEAKERS = 0
 # 最多说话人数（0=自动）
@@ -265,7 +267,7 @@ TRANSCRIBE_GAP_VOICE_DBFS = -35.0
 # ffmpeg 编码线程数上限
 FFMPEG_THREADS_CAP = 8
 # 视频组装 ffmpeg 子进程超时（秒）
-VIDEO_ASSEMBLE_TIMEOUT = 7200
+VIDEO_ASSEMBLE_TIMEOUT = 14400
 # libx264 编码预设（控制编码速度/压缩比权衡）
 # veryfast: 极快编码，适合长视频
 # medium:   默认，平衡速度与压缩率
@@ -280,6 +282,17 @@ VIDEO_AUDIO_SAMPLE_RATE = 44100
 VIDEO_AUDIO_CHANNELS = 2
 # 视频与混音时长差异容差（秒），差值在此范围内不做截断/延长
 VIDEO_DURATION_TOLERANCE = 0.3
+
+# ---- 分块并行模式（避免 ffmpeg concat filter 在大量 segment 时卡死） ----
+# 当逐句变速的 TTS 句子数超过此阈值时，自动启用分块并行模式
+# 设为 0 禁用分块模式
+VIDEO_MAX_CONCAT_SEGMENTS = 200
+# 每块包含的句子数（对应 ~2x filter chains）
+VIDEO_BLOCK_SIZE = 50
+# 并行处理的块数
+VIDEO_BLOCK_WORKERS = 2
+# 每块 ffmpeg 使用的编码线程数
+VIDEO_BLOCK_FFMPEG_THREADS = 2
 
 # ========================
 # ASS 字幕样式配置

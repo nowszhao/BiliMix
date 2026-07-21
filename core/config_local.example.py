@@ -55,3 +55,21 @@ OUTPUT_FORMAT = "mp3"
 OUTPUT_BITRATE = "192k"
 
 AUTH_ENABLED = False                # Web 服务是否启用登录认证
+
+# --- 视频组装 ---
+# ffmpeg 编码线程数上限
+# FFMPEG_THREADS_CAP = 8
+# 视频组装超时（秒），长视频建议设为 28800（8小时）
+# VIDEO_ASSEMBLE_TIMEOUT = 14400
+# libx264 编码预设（veryfast/ultrafast，越快文件越大）
+# VIDEO_X264_PRESET = "veryfast"
+# 视频比特率（720p 推荐 500k-1500k，讲稿类可用低码率）
+# VIDEO_BITRATE = "1500k"
+
+# --- 分块并行组装（长视频自动启用） ---
+# 当 TTS 句子数超过此值时自动分块（设 0 禁用）
+# VIDEO_MAX_CONCAT_SEGMENTS = 200
+# 每块句子数
+# VIDEO_BLOCK_SIZE = 50
+# 并行块数
+# VIDEO_BLOCK_WORKERS = 2
