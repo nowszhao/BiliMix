@@ -543,6 +543,26 @@ def cmd_audio_upload(args, client):
     return EXIT_OK
 
 
+def _download_file(client, path, output, label, quiet):
+    """流式下载文件并显示进度，返回下载字节数"""
+    resp = client.get_raw(path, stream=True)
+    total = int(resp.headers.get("Content-Length", 0))
+    downloaded = 0
+    with open(output, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=64 * 1024):
+            if chunk:
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total and not quiet:
+                    pct = int(downloaded * 100 / total)
+                    sys.stderr.write(f"\r[{label}] {pct:3d}% "
+                                     f"({downloaded // 1024}KB/{total // 1024}KB)")
+                    sys.stderr.flush()
+    if not quiet:
+        sys.stderr.write(f"\n[{label}] 已保存: {output}\n")
+    return downloaded
+
+
 def cmd_audio_download(args, client):
     if args.path:
         path = args.path
@@ -552,21 +572,7 @@ def cmd_audio_download(args, client):
         raise CLIError("必须提供 --path 或 --task-id")
 
     output = args.output or os.path.basename(path) or "audio.bin"
-    resp = client.get_raw(path, stream=True)
-    total = int(resp.headers.get("Content-Length", 0))
-    downloaded = 0
-    with open(output, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=64 * 1024):
-            if chunk:
-                f.write(chunk)
-                downloaded += len(chunk)
-                if total and not args.quiet:
-                    pct = int(downloaded * 100 / total)
-                    sys.stderr.write(f"\r[audio] {pct:3d}% "
-                                     f"({downloaded // 1024}KB/{total // 1024}KB)")
-                    sys.stderr.flush()
-    if not args.quiet:
-        sys.stderr.write(f"\n[audio] 已保存: {output}\n")
+    downloaded = _download_file(client, path, output, label="audio", quiet=args.quiet)
     emit({"ok": True, "path": output, "size_bytes": downloaded},
          pretty=args.pretty, field=args.field)
     return EXIT_OK
@@ -581,6 +587,62 @@ def cmd_audio_url(args, client):
         raise CLIError("必须提供 --path 或 --task-id")
     url = f"{client.server}{path}"
     print(url)
+    return EXIT_OK
+
+
+# ============================================================
+# video 命令
+# ============================================================
+
+def _resolve_video_path(client, task_id, mode):
+    """从视频任务结果解析文件的 URL 路径
+
+    Args:
+        mode: "video" 解析 video_url, "srt" 解析 srt_url
+    """
+    result = client.get(f"/api/task/{task_id}/result")
+    video_result = result.get("video_result")
+    if not video_result:
+        raise CLIError(f"任务结果中未找到视频结果（可能不是视频任务），"
+                       f"任务状态: {result.get('status')}")
+
+    key = "video_url" if mode == "video" else "srt_url"
+    path = video_result.get(key)
+    if not path:
+        label = "视频" if mode == "video" else "字幕"
+        raise CLIError(f"任务结果中未找到{label}路径")
+
+    # video_url / srt_url 已是 /api/audio/... 格式，直接使用
+    return path
+
+
+def cmd_video_download(args, client):
+    if args.path:
+        path = args.path
+    elif args.task_id:
+        path = _resolve_video_path(client, args.task_id, mode="video")
+    else:
+        raise CLIError("必须提供 --path 或 --task-id")
+
+    output = args.output or os.path.basename(path) or "dubbed.mp4"
+    downloaded = _download_file(client, path, output, label="video", quiet=args.quiet)
+    emit({"ok": True, "path": output, "size_bytes": downloaded},
+         pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_video_download_srt(args, client):
+    if args.path:
+        path = args.path
+    elif args.task_id:
+        path = _resolve_video_path(client, args.task_id, mode="srt")
+    else:
+        raise CLIError("必须提供 --path 或 --task-id")
+
+    output = args.output or os.path.basename(path) or "subtitle.ass"
+    downloaded = _download_file(client, path, output, label="srt", quiet=args.quiet)
+    emit({"ok": True, "path": output, "size_bytes": downloaded},
+         pretty=args.pretty, field=args.field)
     return EXIT_OK
 
 
@@ -997,14 +1059,14 @@ def build_parser():
     g.add_argument("--task-id", help="通过任务 ID 解析视频路径")
     g.add_argument("--path", help="直接指定 URL 路径 (如 basename/basename_dubbed.mp4)")
     p.add_argument("-o", "--output", help="输出文件名")
-    p.set_defaults(func=cmd_audio_download)
+    p.set_defaults(func=cmd_video_download)
 
     p = add_cmd(vid_sub, "download-srt", help="下载字幕文件")
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--task-id", help="通过任务 ID 解析 SRT 路径")
     g.add_argument("--path", help="直接指定 SRT URL 路径")
     p.add_argument("-o", "--output", help="输出文件名")
-    p.set_defaults(func=cmd_audio_download)
+    p.set_defaults(func=cmd_video_download_srt)
 
     # ---- translate ----
     p_tr = add_cmd(sub, "translate", help="翻译工具")

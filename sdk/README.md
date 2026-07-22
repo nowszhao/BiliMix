@@ -102,9 +102,10 @@ bmx auth login --username admin --password bilimix2024
 | 命令 | 说明 |
 |------|------|
 | `bmx audio upload <file>` | 上传音频/视频文件 |
-| `bmx audio download [--task-id\|--path]` | 下载音频 |
-| `bmx video download --task-id <id>` | 下载配音视频 |
-| `bmx video download-srt --task-id <id>` | 下载字幕 SRT |
+| `bmx audio download [--task-id\|--path] [--type mixed\|original] [-o FILE]` | 下载配音/原始音频 |
+| `bmx audio url [--task-id\|--path]` | 获取音频下载 URL |
+| `bmx video download [--task-id\|--path] [-o FILE]` | 下载配音视频 |
+| `bmx video download-srt [--task-id\|--path] [-o FILE]` | 下载字幕文件 (ASS) |
 
 ### 翻译 & 工具
 
@@ -112,8 +113,6 @@ bmx auth login --username admin --password bilimix2024
 |------|------|
 | `bmx translate word <english> [--context]` | 翻译单词/短语 |
 | `bmx translate word-levels --words <...>` | 查询 BNC/COCA 词频等级 |
-| `bmx audio upload <file>` | 上传音频 |
-| `bmx audio download [--task-id\|--path]` | 下载音频 |
 | `bmx config get / set` | 配置管理 |
 | `bmx api` | API 端点目录 |
 
@@ -131,8 +130,16 @@ bmx auth login --username admin --password bilimix2024
 # 音频配音：提交 + 等待完成 + 提取混合音频 URL
 bmx task submit --url https://example.com/ep.mp3 --wait --field result.mixed_audio
 
-# 视频配音：本地文件 + 双语字幕 + 保留背景音 + 等待完成
-bmx task submit --type video --local-path ./test.mp4 --subtitle-mode bilingual --keep-bgm --wait
+# 音频配音：提交 + 等待 + 下载混合音频
+bmx task submit --url https://example.com/ep.mp3 --skip-confirm --wait
+bmx audio download --task-id <id> -o output.mp3
+
+# 视频配音：本地文件 + 双语字幕 + 等待完成
+bmx task submit --type video --local-path ./test.mp4 --subtitle-mode bilingual --wait
+
+# 下载配音视频 + 字幕
+bmx video download --task-id <id> -o dubbed.mp4
+bmx video download-srt --task-id <id> -o subtitles.ass
 
 # 完整重做失败的任务
 bmx task redo <task_id> --wait

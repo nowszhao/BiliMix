@@ -24,7 +24,6 @@ _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-import functools
 from flask import Flask, jsonify, request, send_file, send_from_directory, session, redirect
 
 from core import config
@@ -36,17 +35,24 @@ from core.task_manager import (
 )
 from core.database import (
     setup_database, delete_task_from_index, save_task_to_index,
-    load_tasks_index, get_subscriptions, add_subscription, remove_subscription,
-    add_search_keyword, get_search_suggestions, clear_search_history,
-    get_recent_podcasts,
-    upsert_episodes, get_episodes, update_episode_status,
-    get_episode_stats, get_unread_counts_by_subscription,
-    update_episode_status_by_task, mark_all_episodes_read,
-    add_favorite, remove_favorite, is_favorite, get_favorites,
+    load_tasks_index,
+    update_episode_status_by_task,
+    get_subscriptions, add_subscription, remove_subscription,  # still used by refresh in pipeline
 )
-from services.podcast_service import search_podcasts_itunes, parse_rss_feed
+from services.shared import (
+    _queue_condition, _queue_waiters, _run_with_retry,
+    _cleanup_intermediate_files, _kill_task_subprocesses,
+    _probe_audio_duration, download_audio, generate_task_id,
+    _try_resolve_local_url, _make_audio_url,
+    _load_step_timing_from_disk, _load_video_result_from_disk,
+)
 
-from core.config_manager import get_all_config, update_config
+# ── Blueprint imports (extracted modules) ──
+from services.auth import auth_bp
+from services.podcast_api import podcast_bp
+from services.tools_api import tools_bp
+from services.media_api import media_bp
+from services.task_query import task_query_bp
 
 from pipeline.step1_transcribe import transcribe, extract_full_text
 # step2_identify_difficult_words removed (word_replace mode deleted)
@@ -65,6 +71,13 @@ from pipeline.step5_video_assemble import generate_bilingual_srt, assemble_video
 _web_dir = os.path.join(config.BASE_DIR, "web")
 app = Flask(__name__, static_folder=_web_dir, static_url_path="")
 app.secret_key = getattr(config, "SECRET_KEY", "bilimix-secret-key-change-me")
+
+# ── Register extracted Blueprints ──
+app.register_blueprint(auth_bp)
+app.register_blueprint(podcast_bp)
+app.register_blueprint(tools_bp)
+app.register_blueprint(media_bp)
+app.register_blueprint(task_query_bp)
 
 
 # ============================================================
@@ -397,281 +410,11 @@ _start_subscription_refresh_loop()
 
 
 # 全局任务队列：保证同一时间只有一个任务在运行，后续任务按提交顺序排队（FIFO）
-# 用 Condition + deque 实现公平排队，替代非公平的 threading.Lock 轮询
-import collections as _collections
-_queue_condition = threading.Condition()
-_queue_waiters = _collections.deque()  # 按提交顺序存储等待中的 task_id
-
-
-# ============================================================
-# 登录认证
-# ============================================================
-
-
-
-@app.before_request
-def check_auth():
-    """全局请求拦截：未登录时只允许访问登录相关路由和静态资源"""
-    if not getattr(config, "AUTH_ENABLED", True):
-        return None
-
-    # 允许访问的路径（不需要登录）
-    allowed_paths = ["/login", "/api/login", "/api/auth/check"]
-    if request.path in allowed_paths:
-        return None
-
-    # 允许登录页面的静态资源
-    if request.path == "/login.html":
-        return None
-
-    # 已登录则放行
-    if session.get("logged_in"):
-        return None
-
-    # 未登录：API 返回 401，页面请求重定向到登录页
-    if request.path.startswith("/api/"):
-        return jsonify({"error": "未登录", "code": "AUTH_REQUIRED"}), 401
-
-    # 允许加载 CSS/JS/图标等静态资源（登录页面需要用）
-    static_exts = (".css", ".js", ".svg", ".png", ".ico", ".woff", ".woff2", ".ttf")
-    if any(request.path.endswith(ext) for ext in static_exts):
-        return None
-
-    return redirect("/login")
-
-
-def _run_with_retry(fn, *args, name="", max_retries=None, **kwargs):
-    """通用自动重试：调用 fn(*args, **kwargs)，失败自动重试"""
-    import time as _time
-    if max_retries is None:
-        max_retries = getattr(config, "AUTO_RETRY_MAX", 2)
-    last_err = None
-    for attempt in range(max_retries + 1):
-        try:
-            return fn(*args, **kwargs)
-        except InterruptedError:
-            raise
-        except Exception as e:
-            last_err = e
-            if attempt < max_retries:
-                wait = 2 ** attempt
-                print(f"[Retry] {name} 失败 (尝试 {attempt + 1}/{max_retries + 1}): {e}，"
-                      f"{wait}s 后重试...")
-                _time.sleep(wait)
-            else:
-                print(f"[Retry] {name} 重试耗尽 ({max_retries + 1} 次失败): {e}")
-    raise last_err
-
-
-@app.route("/login")
-def login_page():
-    """登录页面"""
-    if session.get("logged_in") and getattr(config, "AUTH_ENABLED", True):
-        return redirect("/")
-    return send_from_directory(_web_dir, "login.html")
-
-
-@app.route("/api/login", methods=["POST"])
-def api_login():
-    """登录接口"""
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "请提供登录信息"}), 400
-
-    username = data.get("username", "").strip()
-    password = data.get("password", "").strip()
-
-    expected_user = getattr(config, "AUTH_USERNAME", "admin")
-    expected_pass = getattr(config, "AUTH_PASSWORD", "bilimix2024")
-
-    if username == expected_user and password == expected_pass:
-        session["logged_in"] = True
-        session["username"] = username
-        return jsonify({"ok": True, "message": "登录成功"})
-    else:
-        return jsonify({"error": "用户名或密码错误"}), 401
-
-
-@app.route("/api/logout", methods=["POST"])
-def api_logout():
-    """退出登录"""
-    session.clear()
-    return jsonify({"ok": True, "message": "已退出登录"})
-
-
-@app.route("/api/auth/check")
-def api_auth_check():
-    """检查登录状态"""
-    auth_enabled = getattr(config, "AUTH_ENABLED", True)
-    if not auth_enabled:
-        return jsonify({"authenticated": True, "auth_enabled": False})
-    return jsonify({
-        "authenticated": bool(session.get("logged_in")),
-        "auth_enabled": True,
-        "username": session.get("username", ""),
-    })
 
 
 # ============================================================
 # 核心处理流程（在后台线程中执行）
 # ============================================================
-
-def _probe_audio_duration(path: str) -> float:
-    """从本地音频文件快速读取时长（秒）。失败返回 0。"""
-    try:
-        from pydub import AudioSegment
-        seg = AudioSegment.from_file(path)
-        return seg.duration_seconds
-    except Exception:
-        return 0.0
-
-
-def download_audio(url: str, save_path: str, task_id: str) -> bool:
-    """下载音频文件（支持终止）"""
-    try:
-        update_task(task_id, message="正在下载音频文件...")
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            total = resp.headers.get("Content-Length")
-            total = int(total) if total else None
-            downloaded = 0
-            chunk_size = 1024 * 64
-
-            with open(save_path, "wb") as f:
-                while True:
-                    if is_cancelled(task_id):
-                        f.close()
-                        if os.path.exists(save_path):
-                            os.remove(save_path)
-                        raise InterruptedError("任务已被用户终止")
-
-                    chunk = resp.read(chunk_size)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total:
-                        pct = min(int(downloaded / total * 100), 100)
-                        update_task(task_id, message=f"正在下载音频... {pct}%")
-
-        size_mb = os.path.getsize(save_path) / (1024 * 1024)
-        update_task(task_id, message=f"音频下载完成 ({size_mb:.1f} MB)")
-
-        # 探测音频时长，更新到内存 tasks 字典并落盘，使任务列表立即可显示
-        try:
-            duration = _probe_audio_duration(save_path)
-            if duration > 0:
-                update_task(task_id, original_duration=duration)
-        except Exception:
-            pass
-
-        return True
-    except InterruptedError:
-        update_task(task_id, status="cancelled", message="任务已终止")
-        return False
-    except Exception as e:
-        update_task(task_id, status="error", message=f"下载失败: {str(e)}")
-        return False
-
-
-def generate_task_id(url: str) -> str:
-    """根据URL生成唯一任务ID"""
-    return hashlib.md5(url.encode("utf-8")).hexdigest()
-
-
-def _load_step_timing_from_disk(task: dict) -> list:
-    """从磁盘的 task_result.json 中加载步骤耗时数据"""
-    basename = task.get("_basename", "") or ((task.get("result") or {}).get("basename", ""))
-    if not basename:
-        return []
-    result_file = os.path.join(config.RESULT_DIR, basename, "task_result.json")
-    if not os.path.exists(result_file):
-        return []
-    try:
-        with open(result_file, "r") as f:
-            disk = json.load(f)
-        return disk.get("_step_timing", [])
-    except Exception:
-        return []
-
-def _load_video_result_from_disk(task: dict) -> dict:
-    """从磁盘的 task_result.json 中加载视频结果"""
-    basename = task.get("_basename", "") or ((task.get("result") or {}).get("basename", ""))
-    if not basename:
-        return None
-    result_file = os.path.join(config.RESULT_DIR, basename, "task_result.json")
-    if not os.path.exists(result_file):
-        return None
-    try:
-        with open(result_file, "r") as f:
-            disk = json.load(f)
-        return disk.get("video_result")
-    except Exception:
-        return None
-
-def _cleanup_intermediate_files(result_dir: str):
-    """删除任务完成后不再需要的中间文件（参考音频、TTS 缓存）"""
-    cleanup_dirs = [
-        "tts_fish_cache",
-        "tts_sent_cache",
-        "tts_cache",
-        "tts_confucius_cache",
-        "ref_audio",
-    ]
-    for subdir in cleanup_dirs:
-        path = os.path.join(result_dir, subdir)
-        if os.path.isdir(path):
-            shutil.rmtree(path, ignore_errors=True)
-            print(f"[Cleanup] 已删除: {subdir}/")
-
-
-def _try_resolve_local_url(url: str) -> str:
-    """
-    检测是否为本地服务器自己的音频 URL，如果是则解析到本地文件路径。
-
-    支持两种模式：
-    1. /api/audio/<basename>/<filename>  → data/results/<basename>/<filename>
-    2. /api/audio/<basename>.<ext>       → 依次查 results/、downloads/、项目根目录
-
-    这样可以避免后台下载线程对本地 URL 发起 HTTP 请求导致的 401 认证问题。
-
-    Returns:
-        str: 本地文件路径，如果不是本地 URL 或无对应文件则返回空字符串
-    """
-    # 匹配 /api/audio/<path> 模式
-    m = re.search(r'/api/audio/(.+)', url)
-    if not m:
-        return ""
-
-    # 检查 host 是否指向本地服务器
-    from urllib.parse import urlparse
-    parsed = urlparse(url)
-    local_hosts = {"127.0.0.1", "localhost", "0.0.0.0"}
-    hostname = parsed.hostname or ""
-    port = parsed.port or 5000
-
-    # 仅当 host 匹配本地或同机器时才解析
-    # （外网 URL 不应该被误解析为本地文件）
-    if hostname not in local_hosts and not hostname.startswith(("192.168.", "10.", "172.")):
-        # 可能是外网 URL，不做本地解析
-        return ""
-
-    filepath = m.group(1)
-
-    # 按 serve_audio 的查找顺序查找文件
-    search_paths = [
-        os.path.join(config.RESULT_DIR, filepath),
-        os.path.join(config.DOWNLOAD_DIR, filepath),
-        os.path.join(config.BASE_DIR, filepath),
-    ]
-    for p in search_paths:
-        if os.path.isfile(p):
-            print(f"[本地解析] {url} → {p}")
-            return p
-
-    return ""
 
 
 # ============================================================
@@ -1181,373 +924,110 @@ def continue_after_sentence_confirmation(task_id: str):
         task_subprocesses.pop(task_id, None)
 
 
-
-
-
-
-
-
 # ============================================================
-# API 路由 — 播客收藏
-# ============================================================
-@app.route("/api/favorites")
-def api_get_favorites():
-    return jsonify({"favorites": get_favorites()})
-
-
-@app.route("/api/favorites", methods=["POST"])
-def api_add_favorite():
-    data = request.get_json()
-    if not data or "rss_url" not in data:
-        return jsonify({"error": "请提供 rss_url"}), 400
-    fav = add_favorite(title=data.get("title", ""), author=data.get("author", ""),
-                       image=data.get("image", ""), rss_url=data["rss_url"])
-    return jsonify({"ok": True, "favorite": fav})
-
-
-@app.route("/api/favorites", methods=["DELETE"])
-def api_remove_favorite():
-    data = request.get_json()
-    if not data or "rss_url" not in data:
-        return jsonify({"error": "请提供 rss_url"}), 400
-    remove_favorite(data["rss_url"])
-    return jsonify({"ok": True})
-
-
-@app.route("/api/favorites/check")
-def api_check_favorite():
-    rss_url = request.args.get("rss_url", "").strip()
-    if not rss_url:
-        return jsonify({"error": "请提供 rss_url"}), 400
-    return jsonify({"is_favorite": is_favorite(rss_url)})
-
-
-
-# ============================================================
-# API 路由 — RSS 订阅管理
+# 视频后处理（Module-level，同时被正常提交流程和断点续传复用）
 # ============================================================
 
-@app.route("/api/subscriptions")
-def api_get_subscriptions():
-    """获取全部 RSS 订阅"""
-    return jsonify({
-        "subscriptions": get_subscriptions(),
-        "last_refresh": _last_refresh_time,
-    })
+def _run_video_post_process(task_id):
+    """视频任务后处理：生成双语字幕 + 组装配音视频。
 
-
-@app.route("/api/subscriptions", methods=["POST"])
-def api_add_subscription():
-    """添加 RSS 订阅"""
-    data = request.get_json()
-    if not data or "rss_url" not in data:
-        return jsonify({"error": "请提供 rss_url"}), 400
-    sub = add_subscription(
-        title=data.get("title", ""),
-        author=data.get("author", ""),
-        image=data.get("image", ""),
-        rss_url=data["rss_url"],
-    )
-    return jsonify({"ok": True, "subscription": sub})
-
-
-@app.route("/api/subscriptions", methods=["DELETE"])
-def api_remove_subscription():
-    """移除 RSS 订阅"""
-    data = request.get_json()
-    if not data or "rss_url" not in data:
-        return jsonify({"error": "请提供 rss_url"}), 400
-    remove_subscription(data["rss_url"])
-    return jsonify({"ok": True})
-
-
-@app.route("/api/subscriptions/refresh", methods=["POST"])
-def api_refresh_subscriptions():
-    """手动刷新所有订阅"""
-    import threading as _th
-    _th.Thread(target=_refresh_all_subscriptions, daemon=True).start()
-    return jsonify({"ok": True, "message": "刷新已开始"})
-
-
-# ============================================================
-# API 路由 — 订阅单集 (Episodes)
-# ============================================================
-
-def _normalize_episodes_for_insert(episodes, rss_url):
-    """将 parse_rss_feed 返回的 episode 列表标准化为 upsert_episodes 需要的格式"""
-    for i, ep in enumerate(episodes):
-        ep["audio_url"] = ep.get("enclosureUrl", "")
-        ep["published_at"] = ep.get("datePublished", "")
-        if not ep.get("guid"):
-            ep["guid"] = ep.get("enclosureUrl") or f"{rss_url}#{i}"
-
-
-def _refresh_single_feed(rss_url):
-    """刷新单个 RSS Feed，返回 (new_count, error_dict)"""
-    feed_data = parse_rss_feed(rss_url, max_episodes=50)
-    if "error" in feed_data:
-        return None, {"rss_url": rss_url, "error": feed_data["error"]}
-    episodes = feed_data.get("episodes", [])
-    _normalize_episodes_for_insert(episodes, rss_url)
-    return upsert_episodes(rss_url, episodes), None
-
-
-
-@app.route("/api/episodes")
-def api_get_episodes():
-    """获取订阅单集列表，支持筛选"""
-    status_filter = request.args.get("status", "all")
-    rss_url = request.args.get("rss_url", "")
-    time_range = request.args.get("time_range", "week")
-    page = int(request.args.get("page", 1))
-    page_size = int(request.args.get("page_size", 100))
-    result = get_episodes(status_filter=status_filter, rss_url=rss_url,
-                          time_range=time_range, page=page, page_size=page_size)
-    return jsonify(result)
-
-
-@app.route("/api/episodes/stats")
-def api_episode_stats():
-    """获取单集状态统计"""
-    rss_url = request.args.get("rss_url", "")
-    time_range = request.args.get("time_range", "all")
-    stats = get_episode_stats(rss_url=rss_url, time_range=time_range)
-    subs = get_unread_counts_by_subscription(time_range=time_range)
-    return jsonify({"stats": stats, "subscriptions": subs})
-
-
-@app.route("/api/episodes/<int:episode_id>", methods=["PATCH"])
-def api_update_episode(episode_id):
-    """更新单集状态"""
-    data = request.get_json()
-    status = data.get("status", "")
-    task_id = data.get("task_id", "")
-    if status not in ("unread", "read", "transcribed", "dismissed"):
-        return jsonify({"error": "无效的状态"}), 400
-    ep = update_episode_status(episode_id, status, task_id)
-    if not ep:
-        return jsonify({"error": "单集不存在"}), 404
-    return jsonify({"ok": True, "episode": ep})
-
-
-@app.route("/api/episodes/mark-all-read", methods=["POST"])
-def api_mark_all_episodes_read():
-    """批量将未读单集标记为已读"""
-    data = request.get_json(silent=True) or {}
-    rss_url = data.get("rss_url", "")
-    time_range = data.get("time_range", "all")
-    affected = mark_all_episodes_read(rss_url=rss_url, time_range=time_range)
-    return jsonify({"ok": True, "affected": affected})
-
-
-@app.route("/api/episodes/refresh", methods=["POST"])
-def api_refresh_episodes():
-    """手动刷新所有订阅源，并发拉取最新单集"""
-    subs = get_subscriptions()
-    total_new = 0
-    errors = []
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    def _refresh_one(sub):
-        rss_url = sub["rss_url"]
-        count, err = _refresh_single_feed(rss_url)
-        return count, err
-
-    with ThreadPoolExecutor(max_workers=5) as pool:
-        futures = {pool.submit(_refresh_one, sub): sub for sub in subs}
-        for future in as_completed(futures):
-            count, err = future.result()
-            if count is None:
-                errors.append(err)
-            else:
-                total_new += count
-
-    return jsonify({
-        "ok": True,
-        "refreshed": len(subs),
-        "new_episodes": total_new,
-        "errors": errors,
-    })
-
-
-@app.route("/api/episodes/refresh/<path:rss_url>", methods=["POST"])
-def api_refresh_single_feed(rss_url):
-    """刷新单个订阅源，用于新订阅时即时拉取单集"""
-    from urllib.parse import unquote as _unquote
-    rss_url = _unquote(rss_url)
-    count, err = _refresh_single_feed(rss_url)
-    if count is None:
-        return jsonify({"ok": False, "error": err.get("error", "刷新失败")}), 502
-    return jsonify({"ok": True, "new_episodes": count})
-
-
-
-# ============================================================
-
-def _translate_word(english, context_sentence=None):
-    """简化的翻译函数：调用 LLM 翻译单个英文词/短语"""
+    从任务 state 读取 result + _video_path，执行 Step 5 并更新状态。
+    返回 True/False 表示是否成功。
+    """
     try:
-        from core.llm_utils import call_ollama
-        prompt = f'Translate the following English word/phrase to Chinese. Return only the Chinese translation, nothing else.\n\nEnglish: {english}'
-        if context_sentence:
-            prompt += f'\nContext: {context_sentence}'
-        result = call_ollama(prompt, raw=True)
-        return {"english": english, "chinese": (result or "").strip()}
+        task = get_task(task_id)
+        if not task:
+            return False
+        result = (task.get("result") or {})
+        if not result:
+            print(f"[Video] 无混音结果，跳过后处理")
+            return False
+
+        mode = task.get("_subtitle_mode", "bilingual")
+        basename = task.get("_basename", "")
+        video_path = task.get("_video_path", "")
+        mixed_audio = result.get("mixed_audio", "")
+        result_dir = os.path.join(config.RESULT_DIR, basename)
+
+        if not video_path or not os.path.isfile(video_path):
+            print(f"[Video] 视频文件缺失: {video_path}")
+            return False
+        if not mixed_audio or not os.path.isfile(mixed_audio):
+            print(f"[Video] 混音文件缺失: {mixed_audio}")
+            return False
+
+        # Step 5a: 生成双语 ASS 字幕
+        update_task(task_id, step="subtitle", progress=93,
+                    message="正在生成字幕...")
+        segments = task.get("segments", [])
+        translations = task.get("translations", {})
+        time_mapping = task.get("time_mapping", [])
+        srt_path = os.path.join(result_dir, f"{basename}.ass")
+        _, video_h = _probe_video_size(video_path)
+        srt_result = generate_bilingual_srt(
+            segments, translations, time_mapping, srt_path,
+            subtitle_mode=mode, video_height=video_h)
+        if not srt_result:
+            print(f"[Video] 字幕生成失败")
+            return False
+
+        # Step 5b: 组装视频
+        update_task(task_id, step="assemble", progress=96,
+                    message="正在合成视频（可能需要几分钟）...")
+        output_video = os.path.join(result_dir, f"{basename}_dubbed.mp4")
+        if os.path.exists(output_video):
+            try:
+                os.remove(output_video)
+            except Exception:
+                pass
+        assembled = assemble_video(
+            video_path, mixed_audio, srt_path, output_video,
+            time_mapping=time_mapping)
+
+        if not assembled or not os.path.exists(assembled):
+            update_task(task_id, status="error",
+                        message="视频组装失败，请检查 ffmpeg 和磁盘空间")
+            return False
+
+        # 存储视频结果
+        video_result = {
+            "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",
+            "srt_url": f"/api/audio/{basename}/{basename}.ass",
+            "video_path": assembled,
+            "srt_path": srt_path,
+        }
+        update_task(task_id, status="completed", step="done", progress=100,
+                    message="视频配音完成！",
+                    video_result=video_result)
+
+        # 落盘确保重启不丢
+        try:
+            existing = {}
+            disk_path = os.path.join(result_dir, "task_result.json")
+            if os.path.exists(disk_path):
+                try:
+                    with open(disk_path, "r") as f:
+                        existing = json.load(f)
+                except Exception:
+                    pass
+            existing.update({
+                "video_result": video_result,
+                "_video_path": video_path,
+            })
+            save_task_result_to_disk(result_dir, existing)
+        except Exception as e:
+            print(f"[Video] 落盘失败: {e}")
+
+        return True
+
+    except InterruptedError:
+        update_task(task_id, status="cancelled", message="任务已被终止")
+        return False
     except Exception as e:
-        return {"english": english, "chinese": "", "error": str(e)}
-
-
-def _batch_word_levels(words):
-    """批量查询词频等级（回退到简单实现）"""
-    return {"levels": {}, "level_nums": {}}
-
-
-# API 路由 — 翻译工具
-# ============================================================
-
-@app.route("/api/translate", methods=["POST"])
-def api_translate():
-    """翻译单个英文词/短语为中文"""
-    data = request.get_json()
-    if not data or "english" not in data:
-        return jsonify({"error": "请提供 english 字段"}), 400
-    result = _translate_word(data["english"], data.get("context_sentence"))
-    return jsonify(result)
-
-
-@app.route("/api/word-levels", methods=["POST"])
-def api_word_levels():
-    """查询单词的 BNC/COCA 词频等级"""
-    data = request.get_json()
-    words = data.get("words", []) if data else []
-    if not words:
-        return jsonify({"error": "请提供 words 列表"}), 400
-    result = _batch_word_levels(words)
-    return jsonify(result)
-
-
-# ============================================================
-# API 路由 — 搜索历史
-# ============================================================
-
-@app.route("/api/search-history/suggestions")
-def api_search_suggestions():
-    """获取搜索建议"""
-    prefix = request.args.get("q", "").strip()
-    suggestions = get_search_suggestions(prefix)
-    return jsonify({"suggestions": suggestions})
-
-
-@app.route("/api/search-history", methods=["POST"])
-def api_add_search_history():
-    """记录搜索关键词"""
-    data = request.get_json()
-    if data and "keyword" in data:
-        add_search_keyword(data["keyword"])
-    return jsonify({"ok": True})
-
-
-@app.route("/api/search-history", methods=["DELETE"])
-def api_clear_search_history():
-    """清空搜索历史"""
-    clear_search_history()
-    return jsonify({"ok": True})
-
-
-# ============================================================
-# API 路由 — 最近使用的播客
-# ============================================================
-
-@app.route("/api/recent-podcasts")
-def api_recent_podcasts():
-    """获取最近使用的播客源"""
-    podcasts = get_recent_podcasts()
-    return jsonify({"podcasts": podcasts})
-
-
-
-
-
-# ============================================================
-# API 路由 — 播客搜索
-# ============================================================
-
-@app.route("/api/podcast/search")
-def podcast_search():
-    """搜索播客"""
-    q = request.args.get("q", "").strip()
-    if not q:
-        return jsonify({"error": "请提供搜索关键词 q"}), 400
-    # 记录搜索历史
-    add_search_keyword(q)
-    result = search_podcasts_itunes(q)
-    if "error" in result:
-        return jsonify({"error": result["error"]}), 500
-    return jsonify(result)
-
-
-@app.route("/api/podcast/rss")
-def podcast_rss():
-    """通过 RSS Feed URL 解析播客单集列表"""
-    feed_url = request.args.get("url", "").strip()
-    if not feed_url:
-        return jsonify({"error": "请提供 RSS Feed URL"}), 400
-    if not feed_url.startswith(("http://", "https://")):
-        return jsonify({"error": "请提供有效的 HTTP/HTTPS URL"}), 400
-    result = parse_rss_feed(feed_url)
-    if "error" in result:
-        return jsonify({"error": result["error"]}), 500
-    return jsonify(result)
-
-
-# ============================================================
-# API 路由 — 任务操作
-# ============================================================
-
-@app.route("/")
-def index():
-    """主页"""
-    return send_from_directory(_web_dir, "index.html")
-
-
-@app.route("/api/upload", methods=["POST"])
-def upload_audio():
-    """上传本地音频文件"""
-    if "file" not in request.files:
-        return jsonify({"error": "请选择文件"}), 400
-
-    f = request.files["file"]
-    if not f.filename:
-        return jsonify({"error": "文件名为空"}), 400
-
-    # 校验文件扩展名
-    ext = os.path.splitext(f.filename)[1].lower()
-    allowed = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac",
-               ".mp4", ".mkv", ".mov", ".avi", ".webm"}
-    if ext not in allowed:
-        return jsonify({"error": f"不支持的文件格式: {ext}，支持 {', '.join(sorted(allowed))}"}), 400
-
-    # 生成安全文件名（保留原始文件名但防止路径遍历）
-    safe_name = os.path.basename(f.filename)
-    save_path = os.path.join(config.DOWNLOAD_DIR, safe_name)
-
-    # 如果已存在同名文件，加时间戳
-    if os.path.exists(save_path):
-        name, e = os.path.splitext(safe_name)
-        save_path = os.path.join(config.DOWNLOAD_DIR,
-                                 f"{name}_{int(time.time())}{e}")
-
-    f.save(save_path)
-    size_mb = os.path.getsize(save_path) / (1024 * 1024)
-
-    print(f"[Upload] 已保存: {save_path} ({size_mb:.1f} MB)")
-
-    return jsonify({
-        "ok": True,
-        "local_path": save_path,
-        "filename": os.path.basename(save_path),
-        "size_mb": round(size_mb, 1),
-    })
+        traceback.print_exc()
+        update_task(task_id, status="error",
+                    message=f"视频后处理出错: {str(e)}")
+        return False
 
 
 @app.route("/api/submit", methods=["POST"])
@@ -1771,7 +1251,7 @@ def submit_task():
 
         # ---- 视频任务：追加字幕和组装 ----
         if task_type == "video":
-            _do_video_post_process(task_id)
+            _run_video_post_process(task_id)
 
     def _prepare_audio(task_id, source_url):
         """准备音频文件（下载或使用本地），返回音频路径。"""
@@ -1815,94 +1295,6 @@ def submit_task():
                 if not download_audio(source_url, audio_path, task_id):
                     return None
         return audio_path
-
-    def _do_video_post_process(task_id):
-        """视频任务后处理：生成字幕 + 组装视频。"""
-        try:
-            task = get_task(task_id)
-            if not task:
-                return
-            result = (task.get("result") or {})
-            if not result:
-                print(f"[Video] 无混音结果，跳过后处理")
-                return
-
-            mode = task.get("_subtitle_mode", "bilingual")
-            basename = task.get("_basename", "")
-            video_path = task.get("_video_path", "")
-            mixed_audio = result.get("mixed_audio", "")
-            result_dir = os.path.join(config.RESULT_DIR, basename)
-
-            if not video_path or not os.path.isfile(video_path):
-                print(f"[Video] 视频文件缺失: {video_path}")
-                return
-            if not mixed_audio or not os.path.isfile(mixed_audio):
-                print(f"[Video] 混音文件缺失: {mixed_audio}")
-                return
-
-            # Step 5a: 生成双语 ASS 字幕（内嵌样式：底部对齐 + 中英分色）
-            update_task(task_id, step="subtitle", progress=93,
-                        message="正在生成字幕...")
-            segments = task.get("segments", [])
-            translations = task.get("translations", {})
-            time_mapping = task.get("time_mapping", [])
-            srt_path = os.path.join(result_dir, f"{basename}.ass")
-            _, video_h = _probe_video_size(video_path)
-            srt_result = generate_bilingual_srt(
-                segments, translations, time_mapping, srt_path,
-                subtitle_mode=mode, video_height=video_h)
-            if not srt_result:
-                print(f"[Video] 字幕生成失败")
-                return
-
-            # Step 5b: 组装视频
-            update_task(task_id, step="assemble", progress=96,
-                        message="正在合成视频（可能需要几分钟）...")
-            output_video = os.path.join(result_dir, f"{basename}_dubbed.mp4")
-            assembled = assemble_video(
-                video_path, mixed_audio, srt_path, output_video,
-                time_mapping=time_mapping)
-
-            if not assembled:
-                update_task(task_id, status="error",
-                            message="视频组装失败，请检查 ffmpeg 和磁盘空间")
-                return
-
-            # 存储视频结果
-            video_result = {
-                "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",
-                "srt_url": f"/api/audio/{basename}/{basename}.ass",
-                "video_path": output_video,
-                "srt_path": srt_path,
-            }
-            update_task(task_id, status="completed", step="done", progress=100,
-                        message="视频配音完成！",
-                        video_result=video_result)
-
-            # 落盘确保重启不丢（读取已有数据，合并而非覆盖）
-            try:
-                existing = {}
-                disk_path = os.path.join(result_dir, "task_result.json")
-                if os.path.exists(disk_path):
-                    try:
-                        with open(disk_path, "r") as f:
-                            existing = json.load(f)
-                    except Exception:
-                        pass
-                existing.update({
-                    "video_result": video_result,
-                    "_video_path": video_path,
-                })
-                save_task_result_to_disk(result_dir, existing)
-            except Exception as e:
-                print(f"[Video] 落盘失败: {e}")
-
-        except InterruptedError:
-            update_task(task_id, status="cancelled", message="任务已被终止")
-        except Exception as e:
-            traceback.print_exc()
-            update_task(task_id, status="error",
-                        message=f"视频后处理出错: {str(e)}")
 
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
@@ -1948,8 +1340,6 @@ def cancel_task(task_id):
         _queue_condition.notify_all()
 
     return jsonify({"message": "任务终止请求已发送"})
-
-
 
 
 @app.route("/api/task/<task_id>/confirm_sentences", methods=["POST"])
@@ -2169,12 +1559,11 @@ def _do_redo_video_task(task_id, source_url):
     update_task(task_id, _audio_path=audio_file)
     process_audio_sentence_mode(task_id, audio_file)
     # 视频后处理
-    if get_task(task_id, {}).get("status") != "error":
-        # 重新从内存 task 读取翻译结果
-        task = get_task(task_id)
+    task = get_task(task_id)
+    if task and task.get("status") != "error":
         if task.get("translations") and task.get("translated_indices"):
             try:
-                _do_video_post_process(task_id)
+                _run_video_post_process(task_id)
             except Exception as e:
                 print(f"[Redo] 视频后处理失败: {e}")
 
@@ -2284,16 +1673,46 @@ def retry_task(task_id):
             msg = f"断点续传 — 跳过转录，从翻译恢复 ({len(segments)} 句)"
             print(f"[Retry] {msg}")
             update_task(task_id, _failed_step="", progress=20, message=msg)
-            _retry_target = lambda: process_audio_sentence_mode(task_id, audio_path)
+
+            def _segments_retry():
+                process_audio_sentence_mode(task_id, audio_path)
+                # 视频任务：process_audio_sentence_mode 处理完音频后，追加视频组装
+                task = get_task(task_id)
+                vp = task.get("_video_path", "")
+                if vp and os.path.isfile(vp):
+                    if task.get("translations") and task.get("translated_indices"):
+                        print(f"[Retry] 视频任务，从翻译恢复后追加视频组装...")
+                        _run_video_post_process(task_id)
+
+            _retry_target = _segments_retry
         else:
             # 从头开始
             update_task(task_id, _failed_step="", progress=0,
                         message="断点续传 — 从头开始…")
-            _retry_target = lambda: process_audio_sentence_mode(task_id, audio_path)
+
+            def _from_scratch_inner():
+                process_audio_sentence_mode(task_id, audio_path)
+                task = get_task(task_id)
+                vp = task.get("_video_path", "")
+                if vp and os.path.isfile(vp):
+                    if task.get("translations") and task.get("translated_indices"):
+                        _run_video_post_process(task_id)
+
+            _retry_target = _from_scratch_inner
     else:
+        # 从头开始（if True 的 else 和 外层 else 共享同一逻辑）
         update_task(task_id, _failed_step="", progress=0,
                     message="断点续传 — 从头开始…")
-        _retry_target = lambda: process_audio_sentence_mode(task_id, audio_path)
+
+        def _from_scratch_retry():
+            process_audio_sentence_mode(task_id, audio_path)
+            task = get_task(task_id)
+            vp = task.get("_video_path", "")
+            if vp and os.path.isfile(vp):
+                if task.get("translations") and task.get("translated_indices"):
+                    _run_video_post_process(task_id)
+
+        _retry_target = _from_scratch_retry
 
     def _retry_worker():
         update_task(task_id, status="queued", progress=0,
@@ -2385,7 +1804,51 @@ def _synthesis_resume(task_id):
                                     translated_indices, translations,
                                     tts_audio_map, output_path,
                                     bgm_path=bgm_path)
-    
+    # 更新 time_mapping（mix_sentence_audio 返回的是权威数据，不使用 task 副本中可能过期的值）
+    time_mapping = mix_result.get("time_mapping", [])
+
+    # 如果是视频任务，继��执行视频组装（Step 5）
+    video_path = task.get("_video_path", "")
+    video_result_data = None
+    if video_path and os.path.isfile(video_path):
+        try:
+            mode = task.get("_subtitle_mode", "bilingual")
+            srt_path = os.path.join(result_dir, f"{basename}.ass")
+            _, video_h = _probe_video_size(video_path)
+
+            update_task(task_id, step="subtitle", progress=93,
+                        message="断点续传: 正在生成字幕...")
+            srt_result = generate_bilingual_srt(
+                segments, translations, time_mapping, srt_path,
+                subtitle_mode=mode, video_height=video_h)
+            if srt_result:
+                update_task(task_id, step="assemble", progress=96,
+                            message="断点续传: 正在合成视频...")
+                output_video = os.path.join(result_dir, f"{basename}_dubbed.mp4")
+                if os.path.exists(output_video):
+                    try:
+                        os.remove(output_video)
+                    except Exception:
+                        pass
+                assembled = assemble_video(
+                    video_path, output_path, srt_path, output_video,
+                    time_mapping=time_mapping)
+                if assembled and os.path.exists(assembled):
+                    video_result_data = {
+                        "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",
+                        "srt_url": f"/api/audio/{basename}/{basename}.ass",
+                        "video_path": assembled,
+                        "srt_path": srt_path,
+                    }
+                    print(f"[SynthesisResume] 视频组装完成: {assembled}")
+                else:
+                    print(f"[SynthesisResume] 视频组装失败，仅音频已就绪")
+            else:
+                print(f"[SynthesisResume] 字幕生成失败，跳过视频组装")
+        except Exception as e:
+            traceback.print_exc()
+            print(f"[SynthesisResume] 视频组装异常: {e}")
+
     # 完成
     result_data = {
         "basename": basename,
@@ -2398,8 +1861,9 @@ def _synthesis_resume(task_id):
     }
     update_task(task_id, status="completed", progress=100,
                 step="done", message="断点续传完成!",
-                result=result_data, sentence_pairs=task.get("sentence_pairs", []))
-    save_task_result_to_disk(result_dir, {
+                result=result_data, sentence_pairs=task.get("sentence_pairs", []),
+                video_result=video_result_data)
+    disk_data = {
         **result_data, "task_id": task_id,
         "status": "completed", "segments": segments,
         "translations": translations,
@@ -2407,7 +1871,11 @@ def _synthesis_resume(task_id):
         "process_mode": "sentence_translate",
         "tts_audio_map": task.get("tts_audio_map", {}),
         "_step_timing": task.get("_step_timing", []),
-    })
+    }
+    if video_result_data:
+        disk_data["video_result"] = video_result_data
+        disk_data["_video_path"] = video_path
+    save_task_result_to_disk(result_dir, disk_data)
     save_task_to_index(task_id, {"status": "completed", "progress": 100,
                        "step": "done", "message": "断点续传完成!"})
 
@@ -2504,6 +1972,50 @@ def retry_sentence_synthesis(task_id):
         output_path=output_audio_path,
         bgm_path=bgm_path)
 
+    # 如果是视频任务，执行视频组装（与 _synthesis_resume 保持一致）
+    result_dir = os.path.join(config.RESULT_DIR, basename)
+    time_mapping = mix_result.get("time_mapping", [])
+    video_path = task.get("_video_path", "")
+    video_result_data = None
+    if video_path and os.path.isfile(video_path):
+        try:
+            mode = task.get("_subtitle_mode", "bilingual")
+            srt_path = os.path.join(result_dir, f"{basename}.ass")
+            _, video_h = _probe_video_size(video_path)
+
+            update_task(task_id, step="subtitle", progress=93,
+                        message="重试: 正在生成字幕...")
+            srt_result = generate_bilingual_srt(
+                segments, translations, time_mapping, srt_path,
+                subtitle_mode=mode, video_height=video_h)
+            if srt_result:
+                update_task(task_id, step="assemble", progress=96,
+                            message="重试: 正在合成视频...")
+                output_video = os.path.join(result_dir, f"{basename}_dubbed.mp4")
+                if os.path.exists(output_video):
+                    try:
+                        os.remove(output_video)
+                    except Exception:
+                        pass
+                assembled = assemble_video(
+                    video_path, output_audio_path, srt_path, output_video,
+                    time_mapping=time_mapping)
+                if assembled and os.path.exists(assembled):
+                    video_result_data = {
+                        "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",
+                        "srt_url": f"/api/audio/{basename}/{basename}.ass",
+                        "video_path": assembled,
+                        "srt_path": srt_path,
+                    }
+                    print(f"[RetrySynthesis] 视频组装完成: {assembled}")
+                else:
+                    print(f"[RetrySynthesis] 视频组装失败，仅音频已就绪")
+            else:
+                print(f"[RetrySynthesis] 字幕生成失败，跳过视频组装")
+        except Exception as e:
+            traceback.print_exc()
+            print(f"[RetrySynthesis] 视频组装异常: {e}")
+
     # 构建完整结果
     full_text = task.get("transcription_text", "")
     result_data = {
@@ -2537,9 +2049,10 @@ def retry_sentence_synthesis(task_id):
                 sentence_pairs=sentence_pairs,
                 time_mapping=mix_result["time_mapping"],
                 segments_mixed=segments_mixed,
-                tts_audio_map=tts_audio_map)
+                tts_audio_map=tts_audio_map,
+                video_result=video_result_data)
 
-    save_task_result_to_disk(result_dir, {
+    disk_data = {
         "task_id": task_id, "status": "completed",
         "process_mode": task.get("process_mode", "sentence_translate"),
         "transcription_text": full_text,
@@ -2553,556 +2066,24 @@ def retry_sentence_synthesis(task_id):
         "tts_audio_map": tts_audio_map,
         "_step_timing": task.get("_step_timing", []),
         "_video_path": task.get("_video_path", ""),
-    })
+    }
+    if video_result_data:
+        disk_data["video_result"] = video_result_data
+    save_task_result_to_disk(result_dir, disk_data)
 
     _cleanup_intermediate_files(result_dir)
 
     return jsonify({"message": "重试完成", "result": result_data})
 
 
-
-@app.route("/api/config")
-def api_get_config():
-    """返回前端需要的全部配置"""
-    return jsonify(get_all_config())
-
-
-@app.route("/api/config", methods=["POST"])
-def api_save_config():
-    """保存配置（更新内存 + 写回文件）"""
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "无效的配置数据"}), 400
-
-    updated, error = update_config(data)
-    if error:
-        return jsonify({"error": error, "updated": updated}), 207
-    return jsonify({"ok": True, "updated": updated})
-
-
 # ============================================================
 # API 路由 — 任务查询与管理
 # ============================================================
-
-@app.route("/api/tasks")
-def list_tasks():
-    """获取所有历史任务列表"""
-    index = load_tasks_index()
-    result = {}
-    for tid, summary in index.items():
-        result[tid] = summary
-
-    with tasks_lock:
-        for tid, task in tasks.items():
-            # 对于终态任务（completed/error/cancelled），优先使用 SQLite 中的状态，
-            # 避免内存中残留的 processing 状态覆盖重启时标记的 error
-            sqlite_summary = index.get(tid, {})
-            sqlite_status = sqlite_summary.get("status", "")
-            mem_status = task.get("status", "")
-            if sqlite_status in ("completed", "error", "cancelled"):
-                # 终态任务以 SQLite 为准，不再被内存中的 processing 覆盖
-                # 已通过 SQLite summary 写入 result，跳过内存覆盖
-                continue
-            result[tid] = {
-                "task_id": task.get("task_id"),
-                "url": task.get("url", ""),
-                "title": task.get("title", ""),
-                "status": task.get("status"),
-                "progress": task.get("progress", 0),
-                "message": task.get("message", ""),
-                "created_at": task.get("created_at", ""),
-                "process_mode": task.get("process_mode", "sentence_translate"),
-                "type": task.get("type", "audio"),
-                "basename": ((task.get("result") or {}).get("basename", "")
-                             if task.get("result") else task.get("_basename", "")),
-                "total_words": ((task.get("result") or {}).get("total_words", 0)
-                                if task.get("result") else 0),
-                "total_replacements": ((task.get("result") or {}).get("total_replacements", 0)
-                                       if task.get("result") else 0),
-                "original_duration": (task.get("original_duration", 0)
-                                      or ((task.get("result") or {}).get("original_duration", 0)
-                                          if task.get("result") else 0)),
-                "mixed_duration": ((task.get("result") or {}).get("mixed_duration", 0)
-                                   if task.get("result") else 0),
-                "keep_bgm": task.get("keep_bgm", False),
-            }
-
-    sorted_tasks = sorted(result.values(),
-                          key=lambda t: t.get("created_at", ""), reverse=True)
-    limit = request.args.get("limit", type=int, default=0)
-    if limit > 0:
-        sorted_tasks = sorted_tasks[:limit]
-    return jsonify({"tasks": sorted_tasks})
-
-
-@app.route("/api/task/<task_id>", methods=["DELETE"])
-def delete_task(task_id):
-    """删除历史任务及其关联文件"""
-    task = get_task(task_id)
-    index = load_tasks_index()
-
-    if not task and task_id not in index:
-        return jsonify({"error": "任务不存在"}), 404
-
-    # 如果任务还在运行，先终止
-    if task and task.get("status") in ("downloading", "processing", "queued"):
-        event = cancel_flags.get(task_id)
-        if event:
-            event.set()
-        proc = task_subprocesses.get(task_id)
-        if proc:
-            procs = proc if isinstance(proc, list) else [proc]
-            for p in procs:
-                if p and p.poll() is None:
-                    try:
-                        p.terminate()
-                    except Exception:
-                        pass
-
-    basename = ""
-    audio_path = ""
-    if task:
-        basename = task.get("_basename", "")
-        audio_path = task.get("_audio_path", "")
-        if not basename and task.get("result"):
-            basename = task["result"].get("basename", "")
-    if not basename and task_id in index:
-        basename = index[task_id].get("basename", "")
-
-    cleaned = []
-    if basename:
-        result_dir = os.path.join(config.RESULT_DIR, basename)
-        if os.path.isdir(result_dir):
-            shutil.rmtree(result_dir, ignore_errors=True)
-            cleaned.append(f"data/results/{basename}/")
-
-        output_json = os.path.join(config.OUTPUT_DIR, f"{basename}.json")
-        if os.path.exists(output_json):
-            os.remove(output_json)
-            cleaned.append(f"data/transcripts/{basename}.json")
-
-        if audio_path and os.path.exists(audio_path):
-            os.remove(audio_path)
-            cleaned.append(os.path.basename(audio_path))
-        else:
-            for ext in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"):
-                p = os.path.join(config.DOWNLOAD_DIR, f"{basename}{ext}")
-                if os.path.exists(p):
-                    os.remove(p)
-                    cleaned.append(f"data/downloads/{basename}{ext}")
-
-    # 如果任务还在排队，从队列中移除，防止后续任务死锁
-    with _queue_condition:
-        if task_id in _queue_waiters:
-            _queue_waiters.remove(task_id)
-        _queue_condition.notify_all()
-
-    with tasks_lock:
-        tasks.pop(task_id, None)
-    cancel_flags.pop(task_id, None)
-    task_subprocesses.pop(task_id, None)
-
-    if task_id in index:
-        delete_task_from_index(task_id)
-
-    return jsonify({"message": "任务已删除", "cleaned_files": cleaned})
-
-
-@app.route("/api/task/<task_id>")
-def get_task_status(task_id):
-    """查询任务状态"""
-    task = get_task(task_id)
-    if not task:
-        task = restore_task_from_disk(task_id)
-    if not task:
-        return jsonify({"error": "任务不存在"}), 404
-
-    return jsonify({
-        "task_id": task.get("task_id"),
-        "status": task.get("status"),
-        "step": task.get("step"),
-        "progress": task.get("progress", 0),
-        "message": task.get("message", ""),
-        "process_mode": task.get("process_mode", "sentence_translate"),
-    })
-
-
-@app.route("/api/task/<task_id>/result")
-def get_task_result(task_id):
-    """获取完整任务结果"""
-    task = get_task(task_id)
-    if not task:
-        task = restore_task_from_disk(task_id)
-    if not task:
-        return jsonify({"error": "任务不存在"}), 404
-
-    result_data = {
-        "task_id": task.get("task_id"),
-        "status": task.get("status"),
-        "progress": task.get("progress", 0),
-        "message": task.get("message", ""),
-        "process_mode": task.get("process_mode", "sentence_translate"),
-        "step": task.get("step", ""),
-        "type": task.get("type", "audio"),
-        "title": task.get("title", ""),
-        "url": task.get("url", ""),
-        "original_duration": task.get("original_duration", 0),
-        "created_at": task.get("created_at", ""),
-        "transcription_text": task.get("transcription_text", ""),
-        "segments": task.get("segments_mixed") or task.get("segments", []),
-        "difficult_words": task.get("difficult_words", []),
-        "replacements": task.get("replacements", []),
-        "translations": task.get("translations", {}),
-        "translated_indices": task.get("translated_indices", []),
-        "sentence_pairs": task.get("sentence_pairs", []),
-        "result": task.get("result"),
-        "time_mapping": task.get("time_mapping", []),
-        "keep_bgm": task.get("keep_bgm", False),
-        "video_result": task.get("video_result"),
-        # 步骤耗时：内存没有时从磁盘 task_result.json 恢复
-        "_step_timing": task.get("_step_timing") or _load_step_timing_from_disk(task),
-        # 视频结果：内存丢失时从磁盘恢复
-        "video_result": task.get("video_result") or _load_video_result_from_disk(task),
-    }
-    # 视频任务：暴露原始视频 URL
-    # 优先 _video_path（step0 下载的），fallback 到任务 url
-    vpath = task.get("_video_path", "")
-    if vpath and os.path.isfile(vpath):
-        rel = _make_audio_url(vpath)
-        if rel:
-            result_data["original_video_url"] = rel
-    elif task.get("url", "").startswith("file://"):
-        fpath = task["url"][len("file://"):]
-        if os.path.isfile(fpath):
-            rel = _make_audio_url(fpath)
-            if rel:
-                result_data["original_video_url"] = rel
-    return jsonify(result_data)
-
-
-def _make_audio_url(abs_path: str) -> str:
-    """将服务端绝对路径转为 /api/audio/<relative> URL"""
-    for marker in ("/data/downloads/", "\\data\\downloads\\",
-                   "/data/results/", "\\data\\results\\"):
-        idx = abs_path.find(marker)
-        if idx != -1:
-            rel = abs_path[idx + len(marker):].replace("\\", "/")
-            return f"/api/audio/{rel}"
-    return f"/api/audio/{os.path.basename(abs_path)}"
-
-
-@app.route("/api/audio/<path:filename>")
-def serve_audio(filename):
-    """服务音频/视频文件"""
-    mime_map = {
-        ".mp3": "audio/mpeg", ".wav": "audio/wav",
-        ".m4a": "audio/mp4", ".ogg": "audio/ogg",
-        ".flac": "audio/flac", ".aac": "audio/aac",
-        ".mp4": "video/mp4", ".mkv": "video/x-matroska",
-        ".srt": "text/plain; charset=utf-8",
-        ".ass": "text/plain; charset=utf-8",
-    }
-    ext = os.path.splitext(filename)[1].lower()
-    mime = mime_map.get(ext, "audio/mpeg")
-
-    result_path = os.path.join(config.RESULT_DIR, filename)
-    if os.path.exists(result_path):
-        return send_file(result_path, mimetype=mime)
-
-    download_path = os.path.join(config.DOWNLOAD_DIR, filename)
-    if os.path.exists(download_path):
-        return send_file(download_path, mimetype=mime)
-
-    root_path = os.path.join(config.BASE_DIR, filename)
-    if os.path.exists(root_path):
-        return send_file(root_path, mimetype=mime)
-
-    return jsonify({"error": "文件不存在"}), 404
 
 
 # ============================================================
 # API 索引 — 暴露全部接口供 Agent 调用
 # ============================================================
-
-@app.route("/api")
-def api_index():
-    """返回所有可用 API 端点的元信息，方便 Agent 发现和调用"""
-    endpoints = [
-        {
-            "path": "/api/submit",
-            "method": "POST",
-            "summary": "提交音频处理任务",
-            "description": "下载远程音频并进行转录、生词识别、TTS合成、混合音频等处理",
-            "request_body": {
-                "content_type": "application/json",
-                "fields": {
-                    "url": {"type": "string", "required": True, "description": "音频文件的 HTTP/HTTPS URL"},
-                    "difficulty": {"type": "string", "required": False, "description": "难度等级，如 CET-4, CET-6, IELTS, GRE 等", "default": "CET-4"},
-                    "process_mode": {"type": "string", "required": False, "description": "处理模式（固定为 sentence_translate 全文翻译）", "default": "sentence_translate"},
-                    "skip_confirmation": {"type": "boolean", "required": False, "description": "是否跳过人工确认步骤", "default": True},
-                },
-            },
-            "response": {"task_id": "string", "message": "string"},
-        },
-        {
-            "path": "/api/tasks",
-            "method": "GET",
-            "summary": "获取所有历史任务列表",
-            "description": "返回所有任务（含内存中运行的和磁盘上已完成的），按创建时间倒序排列",
-            "response": {
-                "tasks": [{"task_id": "string", "url": "string", "status": "string",
-                           "difficulty": "string", "progress": "number",
-                           "message": "string", "created_at": "string",
-                           "basename": "string", "total_words": "number",
-                           "total_replacements": "number",
-                           "original_duration": "number", "mixed_duration": "number"}]
-            },
-        },
-        {
-            "path": "/api/task/<task_id>",
-            "method": "GET",
-            "summary": "查询任务状态",
-            "description": "返回指定任务的当前状态、进度、步骤等信息",
-            "params": {"task_id": {"in": "path", "type": "string", "required": True, "description": "任务ID"}},
-            "response": {"task_id": "string", "status": "string", "step": "string",
-                         "progress": "number", "message": "string", "process_mode": "string"},
-        },
-        {
-            "path": "/api/task/<task_id>/result",
-            "method": "GET",
-            "summary": "获取完整任务结果",
-            "description": "返回任务的转录文本、分段、生词、替换、翻译、混合音频路径等完整结果",
-            "params": {"task_id": {"in": "path", "type": "string", "required": True, "description": "任务ID"}},
-            "response": {"task_id": "string", "status": "string", "process_mode": "string",
-                         "transcription_text": "string", "segments": "array",
-                         "difficult_words": "array", "replacements": "array",
-                         "translations": "object", "translated_indices": "array",
-                         "sentence_pairs": "array", "result": "object", "time_mapping": "array"},
-        },
-        {
-            "path": "/api/task/<task_id>/cancel",
-            "method": "POST",
-            "summary": "终止正在运行的任务",
-            "description": "向指定任务发送终止信号，任务状态变为 cancelled",
-            "params": {"task_id": {"in": "path", "type": "string", "required": True, "description": "任务ID"}},
-            "response": {"message": "string"},
-        },
-        {
-            "path": "/api/task/<task_id>/confirm",
-            "method": "POST",
-            "summary": "确认生词列表并继续处理",
-            "description": "在 word_replace 模式下，用户确认/编辑生词后提交，任务继续执行 TTS 合成和混合",
-            "params": {"task_id": {"in": "path", "type": "string", "required": True, "description": "任务ID"}},
-            "request_body": {
-                "content_type": "application/json",
-                "fields": {
-                    "difficult_words": {"type": "array", "required": True,
-                                        "description": "确认后的生词列表，每项包含 word, translation, start, end 等字段"},
-                },
-            },
-            "response": {"message": "string"},
-        },
-        {
-            "path": "/api/task/<task_id>/confirm_sentences",
-            "method": "POST",
-            "summary": "确认句子翻译并继续处理",
-            "description": "在句子翻译模式下，用户确认/编辑翻译后提交",
-            "params": {"task_id": {"in": "path", "type": "string", "required": True, "description": "任务ID"}},
-            "request_body": {
-                "content_type": "application/json",
-                "fields": {
-                    "translations": {"type": "object", "required": True,
-                                     "description": "翻译映射 {句子索引: 翻译文本}"},
-                    "translated_indices": {"type": "array", "required": False,
-                                           "description": "需要翻译的句子索引列表"},
-                },
-            },
-            "response": {"message": "string"},
-        },
-        {
-            "path": "/api/task/<task_id>",
-            "method": "DELETE",
-            "summary": "删除历史任务及其关联文件",
-            "description": "删除指定任务的所有数据，包括下载文件、结果目录、索引记录等",
-            "params": {"task_id": {"in": "path", "type": "string", "required": True, "description": "任务ID"}},
-            "response": {"message": "string", "cleaned_files": "array"},
-        },
-        {
-            "path": "/api/translate",
-            "method": "POST",
-            "summary": "翻译单个英文词/短语为中文",
-            "description": "调用 LLM 将英文单词或短语翻译为中文，可提供上下文句子以提升翻译准确度",
-            "request_body": {
-                "content_type": "application/json",
-                "fields": {
-                    "english": {"type": "string", "required": True, "description": "待翻译的英文单词或短语"},
-                    "context_sentence": {"type": "string", "required": False, "description": "单词所在的上下文句子"},
-                },
-            },
-            "response": {"english": "string", "chinese": "string"},
-        },
-        {
-            "path": "/api/word-levels",
-            "method": "POST",
-            "summary": "查询单词的 BNC/COCA 词频等级",
-            "description": "批量查询单词在 BNC/COCA 词频表中的等级（如 CET-4, CET-6, GRE 等）",
-            "request_body": {
-                "content_type": "application/json",
-                "fields": {
-                    "words": {"type": "array", "required": True, "description": "待查询的单词列表"},
-                },
-            },
-            "response": {"levels": "object", "level_nums": "object"},
-        },
-        {
-            "path": "/api/config",
-            "method": "GET",
-            "summary": "获取当前配置",
-            "description": "返回前端需要的全部配置项（难度、TTS引擎、API key 等）",
-            "response": "object (所有配置键值对)",
-        },
-        {
-            "path": "/api/config",
-            "method": "POST",
-            "summary": "保存/更新配置",
-            "description": "更新配置项，同时写入内存和配置文件",
-            "request_body": {
-                "content_type": "application/json",
-                "fields": "任意配置键值对，如 {\"DIFFICULTY_LEVEL\": \"CET-6\", \"TTS_ENGINE\": \"edge\"}",
-            },
-            "response": {"ok": True, "updated": "array"},
-        },
-        {
-            "path": "/api/audio/<filename>",
-            "method": "GET",
-            "summary": "获取音频文件",
-            "description": "按文件名提供音频文件流，依次在 results/、downloads/、项目根目录查找",
-            "params": {"filename": {"in": "path", "type": "string", "required": True,
-                                    "description": "音频文件名，如 {basename}.mp3 或 {basename}/{basename}_mixed.mp3"}},
-            "response": "audio binary stream",
-        },
-        {
-            "path": "/api/podcast/search",
-            "method": "GET",
-            "summary": "搜索播客",
-            "description": "通过关键词搜索播客节目",
-            "params": {"q": {"in": "query", "type": "string", "required": True, "description": "搜索关键词"}},
-            "response": "object (搜索结果)",
-        },
-        {
-            "path": "/api/podcast/rss",
-            "method": "GET",
-            "summary": "解析播客 RSS Feed",
-            "description": "通过 RSS Feed URL 获取播客单集列表",
-            "params": {"url": {"in": "query", "type": "string", "required": True, "description": "RSS Feed 的 HTTP/HTTPS URL"}},
-            "response": "object (单集列表)",
-        },
-        {
-            "path": "/api/favorites",
-            "method": "GET",
-            "summary": "获取全部播客收藏",
-            "response": {"favorites": "array"},
-        },
-        {
-            "path": "/api/favorites",
-            "method": "POST",
-            "summary": "添加播客收藏",
-            "request_body": {"fields": {"title": "string", "author": "string", "image": "string", "rss_url": "string (required)"}},
-            "response": {"ok": True, "favorite": "object"},
-        },
-        {
-            "path": "/api/favorites",
-            "method": "DELETE",
-            "summary": "移除播客收藏",
-            "request_body": {"fields": {"rss_url": "string (required)"}},
-            "response": {"ok": True},
-        },
-        {
-            "path": "/api/favorites/check",
-            "method": "GET",
-            "summary": "检查是否已收藏",
-            "params": {"rss_url": {"in": "query", "type": "string", "required": True}},
-        },
-        {
-            "path": "/api/subscriptions",
-            "method": "GET",
-            "summary": "获取全部 RSS 订阅",
-            "response": {"subscriptions": "array"},
-        },
-        {
-            "path": "/api/subscriptions",
-            "method": "POST",
-            "summary": "添加 RSS 订阅",
-            "request_body": {"fields": {"title": "string", "author": "string", "image": "string", "rss_url": "string (required)"}},
-            "response": {"ok": True, "subscription": "object"},
-        },
-        {
-            "path": "/api/subscriptions",
-            "method": "DELETE",
-            "summary": "移除 RSS 订阅",
-            "request_body": {"fields": {"rss_url": "string (required)"}},
-            "response": {"ok": True},
-        },
-        {
-            "path": "/api/search-history/suggestions",
-            "method": "GET",
-            "summary": "获取搜索建议",
-            "params": {"q": {"in": "query", "type": "string", "description": "搜索前缀"}},
-            "response": {"suggestions": "array"},
-        },
-        {
-            "path": "/api/search-history",
-            "method": "DELETE",
-            "summary": "清空搜索历史",
-            "response": {"ok": True},
-        },
-        {
-            "path": "/api/recent-podcasts",
-            "method": "GET",
-            "summary": "获取最近使用的播客源",
-            "response": {"podcasts": "array"},
-        },
-        {
-            "path": "/api/episodes",
-            "method": "GET",
-            "summary": "获取订阅单集列表",
-            "params": {"status": "all|unread|read|transcribed|dismissed",
-                        "rss_url": "筛选指定订阅源",
-                        "time_range": "today|week|month|all"},
-        },
-        {
-            "path": "/api/episodes/stats",
-            "method": "GET",
-            "summary": "获取单集状态统计与各订阅未读数",
-        },
-        {
-            "path": "/api/episodes/<id>",
-            "method": "PATCH",
-            "summary": "更新单集状态",
-            "request_body": {"fields": {"status": "unread|read|transcribed|dismissed"}},
-        },
-        {
-            "path": "/api/episodes/refresh",
-            "method": "POST",
-            "summary": "刷新所有订阅源，拉取最新单集",
-        },
-        {
-            "path": "/api/episodes/mark-all-read",
-            "method": "POST",
-            "summary": "批量将未读单集标记为已读",
-            "request_body": {"fields": {"rss_url": "限定订阅源（可选）",
-                                          "time_range": "today|week|month|all（可选）"}},
-        },
-    ]
-
-    return jsonify({
-        "name": "BiliMix Audio Processing API",
-        "description": "BiliMix — 双语混合音频智能处理服务：支持转录、生词识别、TTS合成、中文翻译混合等功能",
-        "version": "1.0",
-        "base_url": request.host_url.rstrip("/"),
-        "total_endpoints": len(endpoints),
-        "endpoints": endpoints,
-    })
 
 
 # ============================================================
