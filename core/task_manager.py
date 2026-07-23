@@ -269,6 +269,8 @@ def restore_task_from_disk(task_id: str) -> dict:
                 "_audio_path": (saved.get("result", {}).get("original_audio", "")
                                 if saved.get("result") else ""),
                 "keep_bgm": saved.get("keep_bgm", summary.get("keep_bgm", False)),
+                "_subtitle_mode": saved.get("_subtitle_mode", "bilingual"),
+                "_subtitle_font_size": saved.get("_subtitle_font_size"),
             }
             # 恢复翻译/识词批次的断点数据
             if saved.get("_checkpoint_translate_batch"):

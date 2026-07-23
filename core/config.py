@@ -302,6 +302,9 @@ ASS_DEFAULT_VIDEO_HEIGHT = 720
 # 字幕字号范围 [min, max]
 ASS_FONT_SIZE_MIN = 28
 ASS_FONT_SIZE_MAX = 80
+# 用户可自定义的字号安全边界（防止极端值导致渲染异常）
+ASS_FONT_SIZE_USER_MIN = 14
+ASS_FONT_SIZE_USER_MAX = 120
 # 底部边距最小值
 ASS_MARGIN_V_MIN = 30
 # 底部边距比例（相对视频高度）

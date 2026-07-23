@@ -16,7 +16,7 @@ import shutil
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from core import config
 
@@ -110,6 +110,7 @@ def generate_bilingual_srt(
     subtitle_mode: str = "bilingual",
     video_height: Optional[int] = None,
     time_offset: float = 0.0,
+    subtitle_font_size: Optional[int] = None,
 ) -> str:
     """
     生成 ASS 字幕文件（尽管函数名/参数保留 srt 命名以兼容旧调用方，
@@ -163,7 +164,12 @@ def generate_bilingual_srt(
 
     font_size_min = getattr(config, "ASS_FONT_SIZE_MIN", 28)
     font_size_max = getattr(config, "ASS_FONT_SIZE_MAX", 80)
-    font_size = min(max(font_size_min, video_height // 28), font_size_max)
+    if subtitle_font_size is not None:
+        font_size = int(subtitle_font_size)
+        font_size = max(getattr(config, "ASS_FONT_SIZE_USER_MIN", 14), font_size)
+        font_size = min(font_size, getattr(config, "ASS_FONT_SIZE_USER_MAX", 120))
+    else:
+        font_size = min(max(font_size_min, video_height // 28), font_size_max)
     margin_v_min = getattr(config, "ASS_MARGIN_V_MIN", 30)
     margin_v_ratio = getattr(config, "ASS_MARGIN_V_RATIO", 0.07)
     margin_v = max(margin_v_min, int(video_height * margin_v_ratio))
@@ -467,6 +473,10 @@ def _assemble_video_blocks(
     output_path: str,
     time_mapping: list,
     timeout: int,
+    segments: Optional[list] = None,
+    translations: Optional[dict] = None,
+    subtitle_mode: str = "chinese_only",
+    subtitle_font_size: Optional[int] = None,
 ) -> str:
     """分块并行视频组装：将长视频按句子数切块，逐块变速拼接后合并。
 
@@ -573,7 +583,9 @@ def _assemble_video_blocks(
         # ASS 构建逻辑（从 time_mapping 中直接取 chinese 字段）
         if blk["sub_entries"]:
             asp = os.path.join(bd, "subs.ass")
-            _build_block_ass(blk["sub_entries"], blk["audio_start"], asp)
+            _build_block_ass(blk["sub_entries"], blk["audio_start"], asp,
+                             subtitle_mode=subtitle_mode, font_size=subtitle_font_size,
+                             segments=segments, translations=translations)
 
             # 用带字幕的 filter graph 替换
             try:
@@ -635,12 +647,13 @@ def _assemble_video_blocks(
     return ""
 
 
-def _build_block_ass(tts_entries, time_offset, out_path, video_height=720):
-    """从 time_mapping 条目直接构建块内 ASS 字幕。
+def _build_block_ass(tts_entries, time_offset, out_path, video_height=720,
+                     subtitle_mode="chinese_only", font_size=None, segments=None, translations=None):
+    """Build block-internal ASS subtitles from time_mapping entries.
 
-    注: 当前仅构建中文字幕（从 time_mapping.chinese 字段），
-    英文原文需要 segments 数据。如需双语字幕，调用方应传入 segments
-    并使用 generate_bilingual_srt(time_offset=...) 生成块内 ASS。
+    Supports both bilingual and chinese_only modes.
+    In bilingual mode, English text is read from segments, Chinese from translations/time_mapping.
+    font_size: user-specified size (None = auto-calculate from video_height).
     """
     entries = []
     for e in tts_entries:
@@ -652,19 +665,35 @@ def _build_block_ass(tts_entries, time_offset, out_path, video_height=720):
         if me <= ms:
             continue
         chn = e.get("chinese", "").strip()
-        if not chn:
+        if not chn and translations and si in translations:
+            chn = str(translations[si]).strip()
+        eng = ""
+        if subtitle_mode == "bilingual" and segments and 0 <= si < len(segments):
+            eng = segments[si].get("text", "").strip()
+        if not chn and not eng:
             continue
-        entries.append({"start": ms, "end": me, "chinese": chn})
+        entries.append({"start": ms, "end": me, "chinese": chn, "english": eng})
 
     if not entries:
         return None
 
-    fs = min(max(getattr(config, "ASS_FONT_SIZE_MIN", 28), video_height // 28),
-             getattr(config, "ASS_FONT_SIZE_MAX", 80))
+    if font_size is not None:
+        fs = int(font_size)
+        fs = max(getattr(config, "ASS_FONT_SIZE_USER_MIN", 14), fs)
+        fs = min(fs, getattr(config, "ASS_FONT_SIZE_USER_MAX", 120))
+    else:
+        fs = min(max(getattr(config, "ASS_FONT_SIZE_MIN", 28), video_height // 28),
+                 getattr(config, "ASS_FONT_SIZE_MAX", 80))
     mv = max(getattr(config, "ASS_MARGIN_V_MIN", 30),
              int(video_height * getattr(config, "ASS_MARGIN_V_RATIO", 0.07)))
+    m_en = mv + int(fs * getattr(config, "ASS_MARGIN_EN_RATIO", 1.4))
     ol = getattr(config, "ASS_OUTLINE", 2.5)
     sh = getattr(config, "ASS_SHADOW", 0)
+    use_bilingual = subtitle_mode == "bilingual"
+
+    styles = f"Style: Chinese,Noto Sans CJK SC,{fs},&H0000D7FF&,&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,{ol},{sh},2,20,20,{mv},1\n"
+    if use_bilingual:
+        styles += f"Style: English,Noto Sans CJK SC,{fs},&H00E6E6E6&,&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,{ol},{sh},2,20,20,{m_en},1\n"
 
     hdr = f"""[Script Info]
 ScriptType: v4.00+
@@ -675,8 +704,7 @@ WrapStyle: 2
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Chinese,Noto Sans CJK SC,{fs},&H0000D7FF&,&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,{ol},{sh},2,20,20,{mv},1
-
+""" + styles + """
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
@@ -684,8 +712,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     for ent in entries:
         ts = _seconds_to_ass_time(ent["start"])
         te = _seconds_to_ass_time(ent["end"])
-        cn = ent["chinese"].replace("\n", "\\N")
-        lines.append(f"Dialogue: 0,{ts},{te},Chinese,,0,0,0,,{{\\q1}}{cn}")
+        eng = ent["english"]
+        chn = ent["chinese"]
+        if use_bilingual and eng and chn:
+            eng_safe = eng.replace("\n", "\\N")
+            chn_safe = chn.replace("\n", "\\N")
+            lines.append(fr"Dialogue: 0,{ts},{te},English,,0,0,0,,{{\q0}}{eng_safe}")
+            lines.append(fr"Dialogue: 0,{ts},{te},Chinese,,0,0,0,,{{\q1}}{chn_safe}")
+        else:
+            text = chn or eng
+            style = "Chinese" if chn else "English"
+            text_safe = text.replace("\n", "\\N")
+            qmark = "q1" if (chn and not eng) else "q0"
+            lines.append(fr"Dialogue: 0,{ts},{te},{style},,0,0,0,,{{\{qmark}}}{text_safe}")
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -700,6 +739,10 @@ def assemble_video(
     subtitle_style: Optional[str] = None,
     timeout: Optional[int] = None,
     time_mapping: Optional[list] = None,
+    segments: Optional[list] = None,
+    translations: Optional[dict] = None,
+    subtitle_mode: str = "chinese_only",
+    subtitle_font_size: Optional[int] = None,
 ) -> str:
     """
     视频组装（单次 ffmpeg 调用）：
@@ -739,6 +782,8 @@ def assemble_video(
             return _assemble_video_blocks(
                 video_path, mixed_audio_path, srt_path,
                 output_path, time_mapping, timeout,
+                segments=segments, translations=translations,
+                subtitle_mode=subtitle_mode, subtitle_font_size=subtitle_font_size,
             )
         filter_graph_path = _build_filter_graph(time_mapping, srt_path)
 

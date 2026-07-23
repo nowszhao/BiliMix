@@ -900,6 +900,8 @@ def continue_after_sentence_confirmation(task_id: str):
             "_step_timing": task.get("_step_timing", []),
             # 视频任务：保存原始视频路径，用于「原始」标签页播放
             "_video_path": task.get("_video_path", ""),
+            "_subtitle_mode": task.get("_subtitle_mode", "bilingual"),
+            "_subtitle_font_size": task.get("_subtitle_font_size"),
         })
 
         _cleanup_intermediate_files(result_dir)
@@ -944,6 +946,7 @@ def _run_video_post_process(task_id):
             return False
 
         mode = task.get("_subtitle_mode", "bilingual")
+        sub_font_size = task.get("_subtitle_font_size", None)
         basename = task.get("_basename", "")
         video_path = task.get("_video_path", "")
         mixed_audio = result.get("mixed_audio", "")
@@ -966,7 +969,8 @@ def _run_video_post_process(task_id):
         _, video_h = _probe_video_size(video_path)
         srt_result = generate_bilingual_srt(
             segments, translations, time_mapping, srt_path,
-            subtitle_mode=mode, video_height=video_h)
+            subtitle_mode=mode, video_height=video_h,
+            subtitle_font_size=sub_font_size)
         if not srt_result:
             print(f"[Video] 字幕生成失败")
             return False
@@ -982,7 +986,9 @@ def _run_video_post_process(task_id):
                 pass
         assembled = assemble_video(
             video_path, mixed_audio, srt_path, output_video,
-            time_mapping=time_mapping)
+            time_mapping=time_mapping, segments=segments,
+            translations=translations, subtitle_mode=mode,
+            subtitle_font_size=sub_font_size)
 
         if not assembled or not os.path.exists(assembled):
             update_task(task_id, status="error",
@@ -1013,6 +1019,8 @@ def _run_video_post_process(task_id):
             existing.update({
                 "video_result": video_result,
                 "_video_path": video_path,
+                "_subtitle_mode": mode,
+                "_subtitle_font_size": sub_font_size,
             })
             save_task_result_to_disk(result_dir, existing)
         except Exception as e:
@@ -1813,6 +1821,7 @@ def _synthesis_resume(task_id):
     if video_path and os.path.isfile(video_path):
         try:
             mode = task.get("_subtitle_mode", "bilingual")
+            sub_font_size = task.get("_subtitle_font_size", None)
             srt_path = os.path.join(result_dir, f"{basename}.ass")
             _, video_h = _probe_video_size(video_path)
 
@@ -1820,7 +1829,8 @@ def _synthesis_resume(task_id):
                         message="断点续传: 正在生成字幕...")
             srt_result = generate_bilingual_srt(
                 segments, translations, time_mapping, srt_path,
-                subtitle_mode=mode, video_height=video_h)
+                subtitle_mode=mode, video_height=video_h,
+                subtitle_font_size=sub_font_size)
             if srt_result:
                 update_task(task_id, step="assemble", progress=96,
                             message="断点续传: 正在合成视频...")
@@ -1832,7 +1842,9 @@ def _synthesis_resume(task_id):
                         pass
                 assembled = assemble_video(
                     video_path, output_path, srt_path, output_video,
-                    time_mapping=time_mapping)
+                    time_mapping=time_mapping, segments=segments,
+                    translations=translations, subtitle_mode=mode,
+                    subtitle_font_size=sub_font_size)
                 if assembled and os.path.exists(assembled):
                     video_result_data = {
                         "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",
@@ -1871,6 +1883,8 @@ def _synthesis_resume(task_id):
         "process_mode": "sentence_translate",
         "tts_audio_map": task.get("tts_audio_map", {}),
         "_step_timing": task.get("_step_timing", []),
+        "_subtitle_mode": task.get("_subtitle_mode", "bilingual"),
+        "_subtitle_font_size": task.get("_subtitle_font_size"),
     }
     if video_result_data:
         disk_data["video_result"] = video_result_data
@@ -1980,6 +1994,7 @@ def retry_sentence_synthesis(task_id):
     if video_path and os.path.isfile(video_path):
         try:
             mode = task.get("_subtitle_mode", "bilingual")
+            sub_font_size = task.get("_subtitle_font_size", None)
             srt_path = os.path.join(result_dir, f"{basename}.ass")
             _, video_h = _probe_video_size(video_path)
 
@@ -1987,7 +2002,8 @@ def retry_sentence_synthesis(task_id):
                         message="重试: 正在生成字幕...")
             srt_result = generate_bilingual_srt(
                 segments, translations, time_mapping, srt_path,
-                subtitle_mode=mode, video_height=video_h)
+                subtitle_mode=mode, video_height=video_h,
+                subtitle_font_size=sub_font_size)
             if srt_result:
                 update_task(task_id, step="assemble", progress=96,
                             message="重试: 正在合成视频...")
@@ -1999,7 +2015,9 @@ def retry_sentence_synthesis(task_id):
                         pass
                 assembled = assemble_video(
                     video_path, output_audio_path, srt_path, output_video,
-                    time_mapping=time_mapping)
+                    time_mapping=time_mapping, segments=segments,
+                    translations=translations, subtitle_mode=mode,
+                    subtitle_font_size=sub_font_size)
                 if assembled and os.path.exists(assembled):
                     video_result_data = {
                         "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",
@@ -2066,6 +2084,8 @@ def retry_sentence_synthesis(task_id):
         "tts_audio_map": tts_audio_map,
         "_step_timing": task.get("_step_timing", []),
         "_video_path": task.get("_video_path", ""),
+        "_subtitle_mode": task.get("_subtitle_mode", "bilingual"),
+        "_subtitle_font_size": task.get("_subtitle_font_size"),
     }
     if video_result_data:
         disk_data["video_result"] = video_result_data
