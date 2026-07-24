@@ -260,6 +260,70 @@ def _escape_path_for_filter(path: str) -> str:
     return path
 
 
+def _apply_watermark(video_path: str) -> str:
+    """对视频叠加半透明文字水印（drawtext 滤镜）。
+
+    水印位置为右下角，带轻微描边以保证深浅背景均可读。
+    配置项: WATERMARK_ENABLED, WATERMARK_TEXT, WATERMARK_OPACITY
+    返回带水印的新文件路径，或原路径（水印禁用时）。
+    """
+    enabled = getattr(config, "WATERMARK_ENABLED", True)
+    text = getattr(config, "WATERMARK_TEXT", "BiliMix")
+    opacity = getattr(config, "WATERMARK_OPACITY", 0.5)
+
+    if not enabled or not text or not text.strip():
+        return video_path
+
+    # 转义单引号和冒号，避免 ffmpeg 解析错误
+    escaped_text = text.replace("'", "\\'").replace(":", "\\:")
+
+    drawtext = (
+        f"drawtext=text='{escaped_text}':"
+        f"fontsize=24:"
+        f"fontcolor=white@{opacity}:"
+        f"bordercolor=black@{opacity}:"
+        f"borderw=1:"
+        f"x=W-tw-20:"
+        f"y=H-th-20"
+    )
+
+    tmp_path = video_path + ".watermark.mp4"
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-threads", _FFMPEG_THREADS,
+        "-i", video_path,
+        "-vf", drawtext,
+        "-c:a", "copy",
+        tmp_path,
+    ]
+
+    print(f"[Step5] 叠加水印: \"{text}\" (opacity={opacity})")
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+
+    if r.returncode != 0:
+        print(f"[Step5] 水印叠加失败: {r.stderr.strip()[-500:]}")
+        # 清理失败的临时文件
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        return video_path  # 返回原文件
+
+    # 原子替换
+    try:
+        os.replace(tmp_path, video_path)
+    except OSError:
+        try:
+            os.remove(video_path)
+            os.rename(tmp_path, video_path)
+        except OSError:
+            print("[Step5] 水印文件替换失败，保留原文件")
+            return video_path
+
+    print(f"[Step5] 水印叠加完成")
+    return video_path
+
+
 # ============================================================
 # 逐句变速 filter graph 生成
 # ============================================================
@@ -643,7 +707,7 @@ def _assemble_video_blocks(
         size_mb = os.path.getsize(output_path) / (1024 * 1024)
         final_dur = _probe_video_duration(output_path)
         print(f"[Step5] 组装完成: {os.path.basename(output_path)} ({size_mb:.1f} MB, {final_dur:.2f}s)")
-        return output_path
+        return _apply_watermark(output_path)
     return ""
 
 
@@ -866,5 +930,5 @@ def assemble_video(
         size_mb = os.path.getsize(output_path) / (1024 * 1024)
         final_dur = _probe_video_duration(output_path)
         print(f"[Step5] 组装完成: {os.path.basename(output_path)} ({size_mb:.1f} MB, {final_dur:.2f}s)")
-        return output_path
+        return _apply_watermark(output_path)
     return ""

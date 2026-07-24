@@ -295,6 +295,16 @@ VIDEO_BLOCK_WORKERS = 2
 VIDEO_BLOCK_FFMPEG_THREADS = 2
 
 # ========================
+# 视频水印配置
+# ========================
+# 是否启用水印
+WATERMARK_ENABLED = True
+# 水印文字内容
+WATERMARK_TEXT = "BiliMix"
+# 水印透明度 (0.0 ~ 1.0)
+WATERMARK_OPACITY = 0.5
+
+# ========================
 # ASS 字幕样式配置
 # ========================
 # 默认视频高度（用于未探测到真实高度时的回退值）

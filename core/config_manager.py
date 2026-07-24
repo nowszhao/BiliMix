@@ -63,6 +63,10 @@ UPDATABLE_CONFIGS = {
     "transcribe_gap_voice_dbfs": ("TRANSCRIBE_GAP_VOICE_DBFS", float),
     # --- 视频组装 ---
     "ffmpeg_threads_cap": ("FFMPEG_THREADS_CAP", int),
+    # --- 水印 ---
+    "watermark_enabled": ("WATERMARK_ENABLED", bool),
+    "watermark_text": ("WATERMARK_TEXT", str),
+    "watermark_opacity": ("WATERMARK_OPACITY", float),
 }
 
 
@@ -133,6 +137,10 @@ def get_all_config() -> dict:
         "transcribe_gap_voice_dbfs": getattr(config, "TRANSCRIBE_GAP_VOICE_DBFS", -35.0),
         # 视频组装
         "ffmpeg_threads_cap": getattr(config, "FFMPEG_THREADS_CAP", 8),
+        # 水印
+        "watermark_enabled": getattr(config, "WATERMARK_ENABLED", True),
+        "watermark_text": getattr(config, "WATERMARK_TEXT", "BiliMix"),
+        "watermark_opacity": getattr(config, "WATERMARK_OPACITY", 0.5),
     }
 
 

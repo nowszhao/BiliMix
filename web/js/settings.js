@@ -1821,6 +1821,38 @@ function renderSettingsForm(cfg) {
                         value="${cfg.ffmpeg_threads_cap ?? 8}" min="0" max="64" step="1">
                 </div>
             </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">启用水印</span>
+                    <span class="settings-item-desc">在输出视频右下角叠加半透明文字水印</span>
+                </div>
+                <div class="settings-item-control">
+                    <label class="settings-toggle">
+                        <input type="checkbox" id="cfg-watermark_enabled" ${cfg.watermark_enabled ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">水印文字</span>
+                    <span class="settings-item-desc">水印显示的文字内容</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="text" class="settings-input" id="cfg-watermark_text"
+                        value="${cfg.watermark_text ?? 'BiliMix'}">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">水印透明度</span>
+                    <span class="settings-item-desc">0.0 完全透明 ~ 1.0 完全不透明</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-watermark_opacity"
+                        value="${cfg.watermark_opacity ?? 0.5}" min="0" max="1" step="0.1" required>
+                </div>
+            </div>
         </div>
         </div>
 
@@ -2088,6 +2120,9 @@ async function saveSettings() {
         whisperx_threads: getValue('cfg-whisperx_threads'),
         demucs_timeout: getValue('cfg-demucs_timeout'),
         ffmpeg_threads_cap: getValue('cfg-ffmpeg_threads_cap'),
+        watermark_enabled: getValue('cfg-watermark_enabled'),
+        watermark_text: getValue('cfg-watermark_text'),
+        watermark_opacity: getValue('cfg-watermark_opacity'),
         ollama_base_url: getValue('cfg-ollama_base_url'),
         ollama_model: getValue('cfg-ollama_model'),
         llm_batch_size: getValue('cfg-llm_batch_size'),
