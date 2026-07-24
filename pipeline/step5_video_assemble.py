@@ -169,7 +169,7 @@ def generate_bilingual_srt(
         font_size = max(getattr(config, "ASS_FONT_SIZE_USER_MIN", 14), font_size)
         font_size = min(font_size, getattr(config, "ASS_FONT_SIZE_USER_MAX", 120))
     else:
-        font_size = min(max(font_size_min, video_height // 28), font_size_max)
+        font_size = min(max(font_size_min, video_height // 22), font_size_max)
     margin_v_min = getattr(config, "ASS_MARGIN_V_MIN", 30)
     margin_v_ratio = getattr(config, "ASS_MARGIN_V_RATIO", 0.07)
     margin_v = max(margin_v_min, int(video_height * margin_v_ratio))
@@ -746,7 +746,7 @@ def _build_block_ass(tts_entries, time_offset, out_path, video_height=720,
         fs = max(getattr(config, "ASS_FONT_SIZE_USER_MIN", 14), fs)
         fs = min(fs, getattr(config, "ASS_FONT_SIZE_USER_MAX", 120))
     else:
-        fs = min(max(getattr(config, "ASS_FONT_SIZE_MIN", 28), video_height // 28),
+        fs = min(max(getattr(config, "ASS_FONT_SIZE_MIN", 28), video_height // 22),
                  getattr(config, "ASS_FONT_SIZE_MAX", 80))
     mv = max(getattr(config, "ASS_MARGIN_V_MIN", 30),
              int(video_height * getattr(config, "ASS_MARGIN_V_RATIO", 0.07)))

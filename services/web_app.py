@@ -947,6 +947,8 @@ def _run_video_post_process(task_id):
 
         mode = task.get("_subtitle_mode", "bilingual")
         sub_font_size = task.get("_subtitle_font_size", None)
+        if sub_font_size is not None and sub_font_size <= 0:
+            sub_font_size = None  # -1/0 表示自动计算
         basename = task.get("_basename", "")
         video_path = task.get("_video_path", "")
         mixed_audio = result.get("mixed_audio", "")
@@ -1064,7 +1066,7 @@ def submit_task():
             source = video_url
 
         subtitle_mode = data.get("subtitle_mode", "bilingual")
-        subtitle_font_size = data.get("subtitle_font_size", 20)
+        subtitle_font_size = data.get("subtitle_font_size", -1)
     else:
         # 音频任务（兼容旧版无 type 字段）
         if not local_path and not audio_url:
@@ -1822,6 +1824,8 @@ def _synthesis_resume(task_id):
         try:
             mode = task.get("_subtitle_mode", "bilingual")
             sub_font_size = task.get("_subtitle_font_size", None)
+            if sub_font_size is not None and sub_font_size <= 0:
+                sub_font_size = None  # -1/0 表示自动计算
             srt_path = os.path.join(result_dir, f"{basename}.ass")
             _, video_h = _probe_video_size(video_path)
 
@@ -1995,6 +1999,8 @@ def retry_sentence_synthesis(task_id):
         try:
             mode = task.get("_subtitle_mode", "bilingual")
             sub_font_size = task.get("_subtitle_font_size", None)
+            if sub_font_size is not None and sub_font_size <= 0:
+                sub_font_size = None  # -1/0 表示自动计算
             srt_path = os.path.join(result_dir, f"{basename}.ass")
             _, video_h = _probe_video_size(video_path)
 
