@@ -281,7 +281,7 @@ def _apply_watermark(video_path: str) -> str:
         f"drawtext=text='{escaped_text}':"
         f"fontsize=24:"
         f"fontcolor=white@{opacity}:"
-        f"bordercolor=black@{opacity}:"
+        f"bordercolor=black@0.5:"
         f"borderw=1:"
         f"x=W-tw-20:"
         f"y=H-th-20"
