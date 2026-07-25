@@ -327,21 +327,9 @@ def extract_ref_audio_speaker_global(audio_path: str, segments: list,
     # 为每个说话人选最优参考音频
     speaker_ref = {}  # {speaker_label: (best_seg_idx, ref_audio_path)}
     for spk, indices in speaker_segments.items():
-        best_idx = None
-        best_score = -1.0
-
-        for idx in indices:
-            seg = segments[idx]
-            dur = seg.get("end", 0) - seg.get("start", 0)
-            if dur >= min_ref:
-                rms = _measure_rms(audio_path, seg["start"], seg["end"])
-                if rms > best_score:
-                    best_score = rms
-                    best_idx = idx
-
-        # 无满足时长要求的 segment，选最长的
-        if best_idx is None:
-            best_idx = max(indices, key=lambda i: segments[i].get("end", 0) - segments[i].get("start", 0))
+        # 选该说话人最长的 segment 作为参考（最长段通常最中性稳定，
+        # 避免 RMS 选到高音兴奋段导致所有句子音调偏高）
+        best_idx = max(indices, key=lambda i: segments[i].get("end", 0) - segments[i].get("start", 0))
 
         # 提取参考音频
         seg = segments[best_idx]
@@ -351,7 +339,7 @@ def extract_ref_audio_speaker_global(audio_path: str, segments: list,
         _extract_audio_clip(audio_path, start_ms, end_ms, ref_path)
         speaker_ref[spk] = (best_idx, ref_path)
         print(f"  speaker_global: spk={spk} best_seg={best_idx} "
-              f"rms={best_score:.1f} dur={seg.get('end', 0) - seg.get('start', 0):.1f}s")
+              f"dur={seg.get('end', 0) - seg.get('start', 0):.1f}s")
 
     # 为每个 segment 分配参考音频
     for idx in seg_indices:
