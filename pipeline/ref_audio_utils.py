@@ -65,6 +65,30 @@ def _extract_audio_clip(audio_path: str, start_ms: int, end_ms: int,
     subprocess.run(cmd, capture_output=True, timeout=timeout, check=True)
 
 
+def _measure_rms(audio_path: str, start_s: float, end_s: float) -> float:
+    """Measure RMS volume of an audio segment.
+
+    Uses pydub to load only the clipped segment and compute RMS.
+    Falls back to 0.0 on any error.
+
+    Args:
+        audio_path: Path to source audio file
+        start_s: Start time in seconds
+        end_s: End time in seconds
+
+    Returns:
+        RMS value (float), higher = louder.
+    """
+    try:
+        from pydub import AudioSegment
+        start_ms = int(start_s * 1000)
+        end_ms = int(end_s * 1000)
+        clip = AudioSegment.from_file(audio_path)[start_ms:end_ms]
+        return clip.rms
+    except Exception:
+        return 0.0
+
+
 def _group_segments_into_turns(segments: list, same_speaker_gap: float = 0.3) -> list:
     """Group consecutive segments into speaker turns based on inter-segment gaps."""
     if not segments:
@@ -231,6 +255,103 @@ def _find_global_longest_segment(segments: list,
             best_dur = dur
             best_idx = idx
     return best_idx
+
+
+def extract_ref_audio_speaker_global(audio_path: str, segments: list,
+                                     replacements: list, output_dir: str) -> tuple:
+    """说话人全局参考音频提取：同一说话人所有句子共用最优参考音频。
+
+    策略：
+    - 按 speaker label 分组所有 segments。
+    - 对每个说话人，选取音量最大（RMS 最高）且时长 >= REF_MIN_DURATION 的 segment
+      作为该说话人的统一参考音频。如果都不满足时长要求，选最长的。
+    - 该说话人的所有句子使用同一份参考音频，音色完全一致。
+    - 无 speaker label 的 segment 回退到 speaker_local 逻辑。
+
+    Args:
+        audio_path: 原始音频文件路径
+        segments: WhisperX segments 列表
+        replacements: 替换列表，每项含 segment_index
+        output_dir: 参考音频输出目录
+
+    Returns:
+        tuple: (ref_map, ref_source_map, ref_text_map)
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    min_ref = getattr(config, "REF_MIN_DURATION", 2)
+    seg_indices = sorted(set(r["segment_index"] for r in replacements
+                             if r["segment_index"] < len(segments)))
+    if not seg_indices:
+        return {}, {}, {}
+
+    speaker_labels = _assign_speaker_labels(segments)
+
+    # 按 speaker 分组
+    speaker_segments = {}  # {speaker_label: [seg_idx, ...]}
+    unlabeled_indices = []
+    for idx in seg_indices:
+        spk = speaker_labels[idx]
+        if spk and not spk.startswith("spk_auto_"):
+            speaker_segments.setdefault(spk, []).append(idx)
+        else:
+            unlabeled_indices.append(idx)
+
+    ref_map = {}
+    ref_source_map = {}
+    ref_text_map = {}
+
+    # 为每个说话人选最优参考音频
+    speaker_ref = {}  # {speaker_label: (best_seg_idx, ref_audio_path)}
+    for spk, indices in speaker_segments.items():
+        best_idx = None
+        best_score = -1.0
+
+        for idx in indices:
+            seg = segments[idx]
+            dur = seg.get("end", 0) - seg.get("start", 0)
+            if dur >= min_ref:
+                rms = _measure_rms(audio_path, seg["start"], seg["end"])
+                if rms > best_score:
+                    best_score = rms
+                    best_idx = idx
+
+        # 无满足时长要求的 segment，选最长的
+        if best_idx is None:
+            best_idx = max(indices, key=lambda i: segments[i].get("end", 0) - segments[i].get("start", 0))
+
+        # 提取参考音频
+        seg = segments[best_idx]
+        start_ms = int(seg["start"] * 1000)
+        end_ms = int(seg["end"] * 1000)
+        ref_path = os.path.join(output_dir, f"ref_spk_{spk}_{best_idx}.wav")
+        _extract_audio_clip(audio_path, start_ms, end_ms, ref_path)
+        speaker_ref[spk] = (best_idx, ref_path)
+        print(f"  speaker_global: spk={spk} best_seg={best_idx} "
+              f"rms={best_score:.1f} dur={seg.get('end', 0) - seg.get('start', 0):.1f}s")
+
+    # 为每个 segment 分配参考音频
+    for idx in seg_indices:
+        spk = speaker_labels[idx]
+        if spk in speaker_ref:
+            best_idx, ref_path = speaker_ref[spk]
+            ref_map[idx] = ref_path
+            ref_source_map[idx] = best_idx
+            ref_text_map[idx] = segments[best_idx].get("text", "")
+        else:
+            # 无 speaker label → 回退到 speaker_local 逻辑
+            seg = segments[idx]
+            start_ms = int(seg["start"] * 1000)
+            end_ms = int(seg["end"] * 1000)
+            ref_path = os.path.join(output_dir, f"ref_fallback_{idx}.wav")
+            _extract_audio_clip(audio_path, start_ms, end_ms, ref_path)
+            ref_map[idx] = ref_path
+            ref_source_map[idx] = idx
+            ref_text_map[idx] = seg.get("text", "")
+
+    print(f"[speaker_global] 提取了 {len(ref_map)} 个参考音频 "
+          f"({len(speaker_ref)} 个说话人, {len(unlabeled_indices)} 个无标签回退)")
+    return ref_map, ref_source_map, ref_text_map
 
 
 def extract_ref_audio_speaker_local(audio_path: str, segments: list,

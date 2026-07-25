@@ -380,6 +380,10 @@ async function submitVideoTask(btn) {
             subtitle_font_size: parseInt(fontSize),
             keep_bgm: keepBgm,
         };
+        const refModeEl = document.getElementById('ref-select-mode');
+        if (refModeEl && refModeEl.value) {
+            body.ref_select_mode = refModeEl.value;
+        }
         if (localPath) {
             body.local_path = localPath;
         } else {

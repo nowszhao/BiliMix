@@ -674,8 +674,12 @@ def _build_confucius_ref_map(task_id: str, segments: list,
         for idx in translated_indices if idx < len(segments)
     ]
 
-    ref_mode = getattr(config, "REF_SELECT_MODE", "speaker_local")
-    if ref_mode == "speaker_local":
+    ref_mode = task.get("_ref_select_mode", "") or getattr(config, "REF_SELECT_MODE", "speaker_local")
+    if ref_mode == "speaker_global":
+        ref_map, _, _ = extract_ref_audio_speaker_global(
+            ref_audio_source, segments, pseudo_replacements,
+            confucius_ref_dir)
+    elif ref_mode == "speaker_local":
         ref_map, _, _ = extract_ref_audio_speaker_local(
             ref_audio_source, segments, pseudo_replacements,
             confucius_ref_dir)
@@ -755,15 +759,21 @@ def continue_after_sentence_confirmation(task_id: str):
             os.makedirs(confucius_ref_dir, exist_ok=True)
 
             from pipeline.ref_audio_utils import (
-                extract_ref_audio_for_segments, extract_ref_audio_speaker_local)
+                extract_ref_audio_for_segments, extract_ref_audio_speaker_local,
+                extract_ref_audio_speaker_global)
             pseudo_replacements = [
                 {"segment_index": idx}
                 for idx in translated_indices if idx < len(segments)
             ]
             confucius_ref_map = {}
             if voice_clone and pseudo_replacements:
-                ref_mode = getattr(config, "REF_SELECT_MODE", "speaker_local")
-                if ref_mode == "speaker_local":
+                ref_mode = task.get("_ref_select_mode", "") or getattr(config, "REF_SELECT_MODE", "speaker_local")
+                if ref_mode == "speaker_global":
+                    (confucius_ref_map, confucius_ref_source_map,
+                     _confucius_ref_text_map) = extract_ref_audio_speaker_global(
+                        ref_audio_source, segments, pseudo_replacements,
+                        confucius_ref_dir)
+                elif ref_mode == "speaker_local":
                     (confucius_ref_map, confucius_ref_source_map,
                      _confucius_ref_text_map) = extract_ref_audio_speaker_local(
                         ref_audio_source, segments, pseudo_replacements,
@@ -1137,6 +1147,7 @@ def submit_task():
             "_subtitle_mode": subtitle_mode,
             "_subtitle_font_size": subtitle_font_size,
             "keep_bgm": bool(data.get("keep_bgm", False)),
+            "_ref_select_mode": data.get("ref_select_mode", ""),
         }
 
     # 任务创建后立即持久化到 SQLite，避免进程中途退出后历史记录丢失

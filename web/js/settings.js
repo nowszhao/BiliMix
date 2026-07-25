@@ -1581,6 +1581,7 @@ function renderSettingsForm(cfg) {
                     <div class="settings-item-control">
                         <select class="settings-select" id="cfg-ref_select_mode">
                             <option value="speaker_local" ${cfg.ref_select_mode === 'speaker_local' ? 'selected' : ''}>speaker_local（推荐）</option>
+                            <option value="speaker_global" ${cfg.ref_select_mode === 'speaker_global' ? 'selected' : ''}>speaker_global</option>
                             <option value="segment" ${cfg.ref_select_mode === 'segment' ? 'selected' : ''}>segment</option>
                         </select>
                     </div>
