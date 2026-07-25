@@ -296,6 +296,10 @@ async function submitAudioTask(btn) {
             type: 'audio',
             keep_bgm: keepBgm,
         };
+        const refModeEl = document.getElementById('audio-ref-select-mode');
+        if (refModeEl && refModeEl.value) {
+            body.ref_select_mode = refModeEl.value;
+        }
         if (localPath) {
             body.local_path = localPath;
         } else {
