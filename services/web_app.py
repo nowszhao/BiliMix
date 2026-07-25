@@ -872,9 +872,14 @@ def continue_after_sentence_confirmation(task_id: str):
                 })
 
         mode = "sentence_translate"
+        is_video = task.get("type") == "video"
 
-        update_task(task_id, status="completed", step="done", progress=100,
-                    message="全部完成！", result=result_data,
+        update_task(task_id,
+                    status="processing" if is_video else "completed",
+                    step="assemble" if is_video else "done",
+                    progress=95 if is_video else 100,
+                    message="音频合成完成，正在组装视频..." if is_video else "全部完成！",
+                    result=result_data,
                     sentence_pairs=sentence_pairs,
                     time_mapping=mix_result["time_mapping"],
                     segments_mixed=segments_mixed)
@@ -942,10 +947,12 @@ def _run_video_post_process(task_id):
     try:
         task = get_task(task_id)
         if not task:
+            update_task(task_id, status="error", message="任务不存在，视频后处理失败")
             return False
         result = (task.get("result") or {})
         if not result:
             print(f"[Video] 无混音结果，跳过后处理")
+            update_task(task_id, status="error", message="无混音结果，视频后处理失败")
             return False
 
         mode = task.get("_subtitle_mode", "bilingual")
@@ -959,9 +966,11 @@ def _run_video_post_process(task_id):
 
         if not video_path or not os.path.isfile(video_path):
             print(f"[Video] 视频文件缺失: {video_path}")
+            update_task(task_id, status="error", message=f"视频文件缺失")
             return False
         if not mixed_audio or not os.path.isfile(mixed_audio):
             print(f"[Video] 混音文件缺失: {mixed_audio}")
+            update_task(task_id, status="error", message=f"混音文件缺失")
             return False
 
         # Step 5a: 生成双语 ASS 字幕
@@ -978,6 +987,7 @@ def _run_video_post_process(task_id):
             subtitle_font_size=sub_font_size)
         if not srt_result:
             print(f"[Video] 字幕生成失败")
+            update_task(task_id, status="error", message="字幕生成失败")
             return False
 
         # Step 5b: 组装视频
