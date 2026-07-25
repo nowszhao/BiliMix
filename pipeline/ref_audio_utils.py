@@ -69,7 +69,8 @@ def _measure_rms(audio_path: str, start_s: float, end_s: float) -> float:
     """Measure RMS volume of an audio segment.
 
     Uses pydub to load only the clipped segment and compute RMS.
-    Falls back to 0.0 on any error.
+    Falls back to ffmpeg volumedetect filter if pydub fails.
+    Returns 0.0 if all methods fail.
 
     Args:
         audio_path: Path to source audio file
@@ -86,7 +87,29 @@ def _measure_rms(audio_path: str, start_s: float, end_s: float) -> float:
         clip = AudioSegment.from_file(audio_path)[start_ms:end_ms]
         return clip.rms
     except Exception:
-        return 0.0
+        pass
+
+    # Fallback: use ffmpeg volumedetect
+    try:
+        duration = end_s - start_s
+        result = subprocess.run([
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-ss", str(start_s), "-i", audio_path,
+            "-t", str(duration),
+            "-af", "volumedetect",
+            "-f", "null", "-",
+        ], capture_output=True, text=True, timeout=30)
+        for line in result.stderr.split("\n"):
+            if "mean_volume" in line:
+                # mean_volume is in dB, convert to approximate linear RMS
+                db_str = line.split("mean_volume:")[-1].strip().split()[0]
+                db_val = float(db_str)
+                # dB to linear: 10^(dB/20), then scale to pydub-like range
+                return 10 ** (db_val / 20) * 32768
+    except Exception:
+        pass
+
+    return 0.0
 
 
 def _group_segments_into_turns(segments: list, same_speaker_gap: float = 0.3) -> list:

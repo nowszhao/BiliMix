@@ -66,11 +66,23 @@ from pipeline.step4b_sentence_mixer import mix_sentence_audio, build_segments_wi
 from pipeline.step_vocal_separation import separate_vocals
 from pipeline.step0_video_prepare import prepare_video
 from pipeline.step5_video_assemble import generate_bilingual_srt, assemble_video, _probe_video_size
+from pipeline.ref_audio_utils import (
+    extract_ref_audio_for_segments,
+    extract_ref_audio_speaker_local,
+    extract_ref_audio_speaker_global,
+)
 
 # Flask 静态文件目录使用绝对路径（web_app.py 已移至 services/ 子目录）
 _web_dir = os.path.join(config.BASE_DIR, "web")
 app = Flask(__name__, static_folder=_web_dir, static_url_path="")
 app.secret_key = getattr(config, "SECRET_KEY", "bilimix-secret-key-change-me")
+
+# 参考音频提取策略 dispatch map
+_REF_EXTRACTORS = {
+    "speaker_global": extract_ref_audio_speaker_global,
+    "speaker_local": extract_ref_audio_speaker_local,
+    "segment": extract_ref_audio_for_segments,
+}
 
 # ── Register extracted Blueprints ──
 app.register_blueprint(auth_bp)
@@ -675,18 +687,11 @@ def _build_confucius_ref_map(task_id: str, segments: list,
     ]
 
     ref_mode = task.get("_ref_select_mode", "") or getattr(config, "REF_SELECT_MODE", "speaker_local")
-    if ref_mode == "speaker_global":
-        ref_map, _, _ = extract_ref_audio_speaker_global(
-            ref_audio_source, segments, pseudo_replacements,
-            confucius_ref_dir)
-    elif ref_mode == "speaker_local":
-        ref_map, _, _ = extract_ref_audio_speaker_local(
-            ref_audio_source, segments, pseudo_replacements,
-            confucius_ref_dir)
-    else:
-        ref_map, _ = extract_ref_audio_for_segments(
-            ref_audio_source, segments, pseudo_replacements,
-            confucius_ref_dir)
+    extractor = _REF_EXTRACTORS.get(ref_mode, extract_ref_audio_for_segments)
+    ref_map, _, _ = extractor(
+        ref_audio_source, segments, pseudo_replacements,
+        confucius_ref_dir)
+
 
     print(f"[Confucius] 提取了 {len(ref_map)} 个参考音频 (mode={ref_mode})")
     return ref_map
@@ -758,9 +763,6 @@ def continue_after_sentence_confirmation(task_id: str):
             confucius_ref_dir = os.path.join(confucius_cache_dir, "ref_audio")
             os.makedirs(confucius_ref_dir, exist_ok=True)
 
-            from pipeline.ref_audio_utils import (
-                extract_ref_audio_for_segments, extract_ref_audio_speaker_local,
-                extract_ref_audio_speaker_global)
             pseudo_replacements = [
                 {"segment_index": idx}
                 for idx in translated_indices if idx < len(segments)
@@ -768,19 +770,10 @@ def continue_after_sentence_confirmation(task_id: str):
             confucius_ref_map = {}
             if voice_clone and pseudo_replacements:
                 ref_mode = task.get("_ref_select_mode", "") or getattr(config, "REF_SELECT_MODE", "speaker_local")
-                if ref_mode == "speaker_global":
-                    (confucius_ref_map, confucius_ref_source_map,
-                     _confucius_ref_text_map) = extract_ref_audio_speaker_global(
-                        ref_audio_source, segments, pseudo_replacements,
-                        confucius_ref_dir)
-                elif ref_mode == "speaker_local":
-                    (confucius_ref_map, confucius_ref_source_map,
-                     _confucius_ref_text_map) = extract_ref_audio_speaker_local(
-                        ref_audio_source, segments, pseudo_replacements,
-                        confucius_ref_dir)
-                else:
-                    confucius_ref_map, confucius_ref_source_map = extract_ref_audio_for_segments(
-                        ref_audio_source, segments, pseudo_replacements, confucius_ref_dir)
+                extractor = _REF_EXTRACTORS.get(ref_mode, extract_ref_audio_for_segments)
+                confucius_ref_map, confucius_ref_source_map, _confucius_ref_text_map = extractor(
+                    ref_audio_source, segments, pseudo_replacements,
+                    confucius_ref_dir)
                 print(f"[Confucius] 提取了 {len(confucius_ref_map)} 个参考音频 (mode={ref_mode})")
 
             def _confucius_progress(current, total):
