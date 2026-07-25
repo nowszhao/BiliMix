@@ -979,6 +979,7 @@ function _renderCompletedTaskDetail(task) {
     const pairs = task.sentence_pairs || [];
     const mixedDur = formatTime(task.mixed_duration || 0);
     const dlMedia = task.resolved_mixed_url || '';
+    const safeTitle = _safeFilename(task.title || '配音');
 
     let html = '';
 
@@ -1010,12 +1011,17 @@ function _renderCompletedTaskDetail(task) {
         html += `</div>`;
     }
 
-    // 字幕下载
+    // 下载按钮
     html += `<div class="task-detail-dl-actions">`;
-    if (dlMedia) {
-        html += `<a class="task-detail-dl-btn" href="${escapeAttr(dlMedia)}" download>📥 下载音频</a>`;
+    if (isVideo && task.video_result && task.video_result.video_url) {
+        const videoDl = task.video_result.video_url + '?download=1&name=' + encodeURIComponent(safeTitle + '.mp4');
+        html += `<a class="task-detail-dl-btn" href="${escapeAttr(videoDl)}">📥 下载配音视频</a>`;
+    } else if (!isVideo && mixedAudio) {
+        const audioDl = _resolveAudioUrl(mixedAudio) + '?download=1&name=' + encodeURIComponent(safeTitle + '.mp3');
+        html += `<a class="task-detail-dl-btn" href="${escapeAttr(audioDl)}">📥 下载配音音频</a>`;
     }
-    html += `<a class="task-detail-dl-btn" href="/api/audio/${encodePath(basename)}/${encodePath(basename)}.srt" download>📄 字幕</a>`;
+    const srtDl = `/api/download/${encodePath(basename)}/${encodePath(basename)}.srt?name=${encodeURIComponent(safeTitle + '.srt')}`;
+    html += `<a class="task-detail-dl-btn" href="${escapeAttr(srtDl)}">📄 字幕</a>`;
     html += `</div></div>`;
 
     // 字幕列
@@ -2567,4 +2573,15 @@ function copyTaskId(e, taskId) {
         copyViaTextarea(taskId);
         showToast('✅ 已复制 Task ID');
     }
+}
+
+// ── 工具函数 ──
+
+function _safeFilename(name) {
+    if (!name) return 'untitled';
+    return name
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')  // Windows/macOS illegal chars
+        .replace(/\.+$/, '')                       // trailing dots
+        .replace(/^\s+|\s+$/g, '')                 // leading/trailing spaces
+        .substring(0, 200);                        // length limit
 }

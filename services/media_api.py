@@ -93,6 +93,47 @@ def serve_audio(filename):
     return jsonify({"error": "File not found"}), 404
 
 
+def _sanitize_filename(name: str) -> str:
+    """Sanitize filename for cross-platform safety (Windows + macOS + Linux)."""
+    import re
+    # Remove or replace characters illegal on Windows: <>:"/\|?*
+    # Also strip control characters and leading/trailing spaces/dots
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name)
+    name = re.sub(r'\.+$', '', name)
+    name = name.strip()
+    return name[:200] if len(name) > 200 else name
+
+
+@media_bp.route("/api/download/<path:filename>")
+def download_file(filename):
+    """Download file as attachment with custom filename.
+
+    Query params:
+        name: desired download filename (will be sanitized)
+    """
+    safe = os.path.normpath(filename)
+    if safe.startswith("..") or os.path.isabs(safe):
+        return jsonify({"error": "Invalid path"}), 400
+
+    result_path = os.path.join(config.RESULT_DIR, safe)
+    if not os.path.isfile(result_path):
+        download_path = os.path.join(config.DOWNLOAD_DIR, safe)
+        if os.path.isfile(download_path):
+            result_path = download_path
+        else:
+            return jsonify({"error": "File not found"}), 404
+
+    download_name = request.args.get("name", "")
+    if download_name:
+        download_name = _sanitize_filename(download_name)
+    if not download_name:
+        download_name = os.path.basename(safe)
+
+    mime = _guess_mime(safe)
+    return send_file(result_path, mimetype=mime, as_attachment=True,
+                     download_name=download_name)
+
+
 def _guess_mime(filename: str) -> str:
     ext = os.path.splitext(filename)[1].lower()
     return {
