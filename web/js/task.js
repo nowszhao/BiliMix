@@ -668,12 +668,16 @@ async function handleSubtitleFile(input) {
     const file = input.files[0];
     if (!file) return;
 
+    // 判断是视频面板还是音频面板触发的
+    const isAudio = input.id === 'audio-subtitle-file-input';
+    const prefix = isAudio ? 'audio-' : '';
+
     const formData = new FormData();
     formData.append('file', file);
 
-    const nameEl = document.getElementById('subtitle-file-name');
-    const resultEl = document.getElementById('subtitle-parse-result');
-    const clearBtn = document.getElementById('subtitle-clear-btn');
+    const nameEl = document.getElementById(prefix + 'subtitle-file-name');
+    const resultEl = document.getElementById(prefix + 'subtitle-parse-result');
+    const clearBtn = document.getElementById(prefix + 'subtitle-clear-btn');
 
     nameEl.textContent = '上传中...';
     resultEl.textContent = '';
@@ -713,8 +717,14 @@ async function handleSubtitleFile(input) {
 
 function clearSubtitleFile() {
     currentSubtitlePath = '';
-    document.getElementById('subtitle-file-input').value = '';
-    document.getElementById('subtitle-file-name').textContent = '';
-    document.getElementById('subtitle-parse-result').textContent = '';
-    document.getElementById('subtitle-clear-btn').style.display = 'none';
+    for (const prefix of ['', 'audio-']) {
+        const input = document.getElementById(prefix + 'subtitle-file-input');
+        const name = document.getElementById(prefix + 'subtitle-file-name');
+        const result = document.getElementById(prefix + 'subtitle-parse-result');
+        const clearBtn = document.getElementById(prefix + 'subtitle-clear-btn');
+        if (input) input.value = '';
+        if (name) name.textContent = '';
+        if (result) result.textContent = '';
+        if (clearBtn) clearBtn.style.display = 'none';
+    }
 }
