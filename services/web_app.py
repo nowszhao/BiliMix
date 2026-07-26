@@ -469,98 +469,142 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
         else:
             print(f"[VocalSep] 分离失败，转录使用原始音频: {sep_result.get('error')}")
 
-        # ---- Step 1: 转录 ----
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-        update_task(task_id, status="processing", step="transcribe",
-                    progress=5, message="Step 1/4: 正在转录音频...")
-
-        transcription = transcribe(transcribe_audio_path, output_dir=result_dir)
-        full_text = extract_full_text(transcription)
-        segments = transcription.get("segments", [])
-
+        # ---- Step 1 & 2: 转录 + 翻译（可被外部字幕跳过） ----
         if is_cancelled(task_id):
             raise InterruptedError("任务已被用户终止")
 
-        serialized_segments = [{"text": s.get("text", "").strip(),
-                                "start": s.get("start", 0),
-                                "end": s.get("end", 0),
-                                "speaker": s.get("speaker", "")} for s in segments]
-        update_task(task_id, progress=20,
-                    message=f"转录完成: {len(segments)} 个句子",
-                    transcription_text=full_text, segments=serialized_segments)
+        # 检查是否有外部字幕文件
+        subtitle_path = task_pre.get("_subtitle_path", "")
+        external_subtitle_used = False
 
-        # ---- Step 2: 选择并翻译句子 ----
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-        update_task(task_id, step="translate", progress=25,
-                    message="Step 2/4: 正在翻译句子...")
+        if subtitle_path and os.path.isfile(subtitle_path):
+            print(f"[Subtitle] 检测到外部字幕文件: {subtitle_path}")
+            from pipeline.subtitle_parser import parse_ass_subtitle
+            parsed_segments, parsed_translations, parsed_indices = (
+                parse_ass_subtitle(subtitle_path))
 
-        ratio = getattr(config, "SENTENCE_CN_RATIO", 1.0)
-        translated_indices = select_sentences_to_translate(serialized_segments, ratio)
+            if parsed_segments and parsed_translations:
+                print(f"[Subtitle] 解析成功: {len(parsed_segments)} 段, "
+                      f"{len(parsed_indices)} 条双语，跳过转录和翻译")
+                segments = parsed_segments
+                translations = parsed_translations
+                translated_indices = parsed_indices
+                full_text = " ".join(s["text"] for s in segments)
+                external_subtitle_used = True
+                serialized_segments = [{"text": s.get("text", "").strip(),
+                                        "start": s.get("start", 0),
+                                        "end": s.get("end", 0),
+                                        "speaker": s.get("speaker", "")} for s in segments]
+                update_task(task_id, status="processing", step="synthesize",
+                            progress=30,
+                            message="Step 3/4: 使用外部字幕，跳过转录和翻译...",
+                            segments=serialized_segments,
+                            translations=translations,
+                            translated_indices=translated_indices,
+                            transcription_text=full_text)
+                save_task_result_to_disk(result_dir, {
+                    "task_id": task_id, "status": "processing",
+                    "process_mode": "sentence_translate",
+                    "transcription_text": full_text,
+                    "segments": serialized_segments,
+                    "translations": translations,
+                    "translated_indices": translated_indices,
+                })
+            else:
+                print(f"[Subtitle] 外部字幕解析失败，回退到正常转录流程")
 
-        if not translated_indices:
-            update_task(task_id, status="completed", progress=100,
-                        step="done", message="没有需要翻译的句子。")
-            return
+        if not external_subtitle_used:
+            # ---- Step 1: 转录 ----
+            update_task(task_id, status="processing", step="transcribe",
+                        progress=5, message="Step 1/4: 正在转录音频...")
 
-        update_task(task_id, progress=30,
-                    message=f"将翻译 {len(translated_indices)}/{len(segments)} 个句子 "
-                            f"(比例: {ratio*100:.0f}%)")
+            transcription = transcribe(transcribe_audio_path, output_dir=result_dir)
+            full_text = extract_full_text(transcription)
+            segments = transcription.get("segments", [])
 
-        def _translate_progress(batch_idx, total_batches):
-            task_cur = get_task(task_id)
-            if task_cur and task_cur.get("step") != "translate":
+        if not external_subtitle_used:
+            if is_cancelled(task_id):
+                raise InterruptedError("任务已被用户终止")
+
+            serialized_segments = [{"text": s.get("text", "").strip(),
+                                    "start": s.get("start", 0),
+                                    "end": s.get("end", 0),
+                                    "speaker": s.get("speaker", "")} for s in segments]
+            update_task(task_id, progress=20,
+                        message=f"转录完成: {len(segments)} 个句子",
+                        transcription_text=full_text, segments=serialized_segments)
+
+            # ---- Step 2: 选择并翻译句子 ----
+            if is_cancelled(task_id):
+                raise InterruptedError("任务已被用户终止")
+            update_task(task_id, step="translate", progress=25,
+                        message="Step 2/4: 正在翻译句子...")
+
+            ratio = getattr(config, "SENTENCE_CN_RATIO", 1.0)
+            translated_indices = select_sentences_to_translate(serialized_segments, ratio)
+
+            if not translated_indices:
+                update_task(task_id, status="completed", progress=100,
+                            step="done", message="没有需要翻译的句子。")
                 return
-            pct = 30 + int((batch_idx / max(total_batches, 1)) * 25)
-            update_task(task_id, step="translate", progress=pct,
-                        message=f"Step 2/4: 翻译批次 ({batch_idx+1}/{total_batches})")
 
-        def _cancel_check():
-            return is_cancelled(task_id)
+            update_task(task_id, progress=30,
+                        message=f"将翻译 {len(translated_indices)}/{len(segments)} 个句子 "
+                                f"(比例: {ratio*100:.0f}%)")
 
-        def _translate_checkpoint(batch_idx, trans):
-            """每批翻译完成后更新内存断点 + 落盘到 task_result.json"""
-            update_task(task_id, _checkpoint_translate_batch=batch_idx,
-                        _checkpoint_translations=trans)
+            def _translate_progress(batch_idx, total_batches):
+                task_cur = get_task(task_id)
+                if task_cur and task_cur.get("step") != "translate":
+                    return
+                pct = 30 + int((batch_idx / max(total_batches, 1)) * 25)
+                update_task(task_id, step="translate", progress=pct,
+                            message=f"Step 2/4: 翻译批次 ({batch_idx+1}/{total_batches})")
+
+            def _cancel_check():
+                return is_cancelled(task_id)
+
+            def _translate_checkpoint(batch_idx, trans):
+                """每批翻译完成后更新内存断点 + 落盘到 task_result.json"""
+                update_task(task_id, _checkpoint_translate_batch=batch_idx,
+                            _checkpoint_translations=trans)
+                save_task_result_to_disk(result_dir, {
+                    "task_id": task_id, "status": "processing",
+                    "process_mode": "sentence_translate",
+                    "_checkpoint_translate_batch": batch_idx,
+                    "_checkpoint_translations": trans,
+                })
+
+            _task = get_task(task_id)
+            resume_tl_batch = int(_task.get("_checkpoint_translate_batch", 0))
+            resume_tl_trans = _task.get("_checkpoint_translations", None)
+            if resume_tl_trans:
+                resume_tl_trans = {int(k): v for k, v in resume_tl_trans.items()}
+
+            translations = _run_with_retry(
+                translate_sentences,
+                serialized_segments, translated_indices,
+                cancel_check=_cancel_check, progress_cb=_translate_progress,
+                resume_batch=resume_tl_batch,
+                existing_translations=resume_tl_trans,
+                checkpoint_cb=_translate_checkpoint,
+                name="句子翻译")
+
+            update_task(task_id, _checkpoint_translate_batch=0, _checkpoint_translations=None)
+
+            if is_cancelled(task_id):
+                raise InterruptedError("任务已被用户终止")
+            update_task(task_id, progress=55,
+                        message=f"翻译完成: {len(translations)}/{len(translated_indices)} 个句子")
+
+            # 翻译结果立刻落盘，kill 后断点续传能跳过翻译步骤
             save_task_result_to_disk(result_dir, {
                 "task_id": task_id, "status": "processing",
                 "process_mode": "sentence_translate",
-                "_checkpoint_translate_batch": batch_idx,
-                "_checkpoint_translations": trans,
+                "transcription_text": full_text,
+                "segments": serialized_segments,
+                "translations": translations,
+                "translated_indices": translated_indices,
             })
-
-        _task = get_task(task_id)
-        resume_tl_batch = int(_task.get("_checkpoint_translate_batch", 0))
-        resume_tl_trans = _task.get("_checkpoint_translations", None)
-        if resume_tl_trans:
-            resume_tl_trans = {int(k): v for k, v in resume_tl_trans.items()}
-
-        translations = _run_with_retry(
-            translate_sentences,
-            serialized_segments, translated_indices,
-            cancel_check=_cancel_check, progress_cb=_translate_progress,
-            resume_batch=resume_tl_batch,
-            existing_translations=resume_tl_trans,
-            checkpoint_cb=_translate_checkpoint,
-            name="句子翻译")
-
-        update_task(task_id, _checkpoint_translate_batch=0, _checkpoint_translations=None)
-
-        if is_cancelled(task_id):
-            raise InterruptedError("任务已被用户终止")
-        update_task(task_id, progress=55,
-                    message=f"翻译完成: {len(translations)}/{len(translated_indices)} 个句子")
-
-        # 翻译结果立刻落盘，kill 后断点续传能跳过翻译步骤
-        save_task_result_to_disk(result_dir, {
-            "task_id": task_id, "status": "processing",
-            "process_mode": "sentence_translate",
-            "transcription_text": full_text,
-            "segments": serialized_segments,
-            "translations": translations,
-            "translated_indices": translated_indices,
-        })
 
         # ---- 确认翻译环节 ----
         task = get_task(task_id)
@@ -1054,6 +1098,29 @@ def _run_video_post_process(task_id):
         return False
 
 
+@app.route("/api/parse-subtitle", methods=["POST"])
+def parse_subtitle():
+    """解析上传的双语字幕文件（ASS 格式，|| 分隔英文和中文）"""
+    data = request.get_json() or {}
+    subtitle_path = data.get("subtitle_path", "").strip()
+    if not subtitle_path or not os.path.isfile(subtitle_path):
+        return jsonify({"ok": False, "error": "文件不存在"}), 400
+
+    from pipeline.subtitle_parser import parse_ass_subtitle
+    segments, translations, translated_indices = parse_ass_subtitle(subtitle_path)
+
+    bilingual_count = len(translated_indices)
+    if not segments:
+        return jsonify({"ok": False, "error": "未能解析出任何字幕内容"})
+
+    return jsonify({
+        "ok": True,
+        "count": len(segments),
+        "bilingual_count": bilingual_count,
+        "segments": segments[:5],
+    })
+
+
 @app.route("/api/submit", methods=["POST"])
 def submit_task():
     """提交音频/视频处理任务"""
@@ -1152,6 +1219,7 @@ def submit_task():
             "_subtitle_font_size": subtitle_font_size,
             "keep_bgm": bool(data.get("keep_bgm", False)),
             "_ref_select_mode": data.get("ref_select_mode", ""),
+            "_subtitle_path": data.get("subtitle_path", ""),
         }
 
     # 任务创建后立即持久化到 SQLite，避免进程中途退出后历史记录丢失

@@ -46,7 +46,8 @@ def upload_audio():
 
     ext = os.path.splitext(f.filename)[1].lower()
     allowed = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac",
-               ".mp4", ".mkv", ".mov", ".avi", ".webm"}
+               ".mp4", ".mkv", ".mov", ".avi", ".webm",
+               ".ass", ".srt", ".vtt"}
     if ext not in allowed:
         return jsonify({"error": f"不支持的文件格式: {ext}，支持 {', '.join(sorted(allowed))}"}), 400
 

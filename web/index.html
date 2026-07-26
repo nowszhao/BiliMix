@@ -587,6 +587,26 @@
                             <div class="option-row">
                                 <div class="option-row-left">
                                     <span class="option-row-icon">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                    </span>
+                                    <div class="option-row-text">
+                                        <span class="option-row-title">外部字幕（可选）</span>
+                                        <span class="option-row-desc">上传双语 ASS 字幕文件，跳过转录和翻译</span>
+                                    </div>
+                                </div>
+                                <div class="file-upload-wrapper" style="flex:1;max-width:200px;">
+                                    <input type="file" id="subtitle-file-input" accept=".ass,.srt" onchange="handleSubtitleFile(this)" style="display:none;">
+                                    <button class="file-upload-btn" onclick="document.getElementById('subtitle-file-input').click(); return false;">选择文件</button>
+                                    <span id="subtitle-file-name" style="margin-left:8px;font-size:12px;color:var(--text-secondary);"></span>
+                                    <span id="subtitle-parse-result" style="margin-left:8px;font-size:12px;"></span>
+                                    <button id="subtitle-clear-btn" class="file-upload-clear" onclick="clearSubtitleFile()" title="移除字幕" style="display:none;">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="option-row">
+                                <div class="option-row-left">
+                                    <span class="option-row-icon">
                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
                                     </span>
                                     <div class="option-row-text">

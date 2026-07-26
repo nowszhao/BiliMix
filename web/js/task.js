@@ -300,6 +300,9 @@ async function submitAudioTask(btn) {
         if (refModeEl && refModeEl.value) {
             body.ref_select_mode = refModeEl.value;
         }
+        if (currentSubtitlePath) {
+            body.subtitle_path = currentSubtitlePath;
+        }
         if (localPath) {
             body.local_path = localPath;
         } else {
@@ -387,6 +390,9 @@ async function submitVideoTask(btn) {
         const refModeEl = document.getElementById('ref-select-mode');
         if (refModeEl && refModeEl.value) {
             body.ref_select_mode = refModeEl.value;
+        }
+        if (currentSubtitlePath) {
+            body.subtitle_path = currentSubtitlePath;
         }
         if (localPath) {
             body.local_path = localPath;
@@ -650,4 +656,65 @@ function onModeChange() {
         difficultyGroup.style.opacity = '1';
         difficultyGroup.style.pointerEvents = '';
     }
+}
+
+// ============================================================
+// External Subtitle File Handling
+// ============================================================
+
+let currentSubtitlePath = '';
+
+async function handleSubtitleFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const nameEl = document.getElementById('subtitle-file-name');
+    const resultEl = document.getElementById('subtitle-parse-result');
+    const clearBtn = document.getElementById('subtitle-clear-btn');
+
+    nameEl.textContent = '上传中...';
+    resultEl.textContent = '';
+
+    try {
+        const uploadResp = await fetch('/api/upload', { method: 'POST', body: formData });
+        const uploadData = await uploadResp.json();
+        if (!uploadResp.ok || uploadData.error) {
+            nameEl.textContent = '❌ 上传失败';
+            return;
+        }
+
+        const subtitlePath = uploadData.local_path;
+        nameEl.textContent = file.name;
+        clearBtn.style.display = '';
+
+        const parseResp = await fetch('/api/parse-subtitle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subtitle_path: subtitlePath }),
+        });
+        const parseData = await parseResp.json();
+
+        if (parseData.ok && parseData.bilingual_count > 0) {
+            currentSubtitlePath = subtitlePath;
+            resultEl.textContent = `✅ ${parseData.count} 条字幕，${parseData.bilingual_count} 条双语（将跳过转录和翻译）`;
+            resultEl.style.color = 'var(--success-color, #22c55e)';
+        } else {
+            currentSubtitlePath = '';
+            resultEl.textContent = `⚠️ ${parseData.error || '未识别到双语字幕，将走正常流程'}`;
+            resultEl.style.color = 'var(--warning-color, #f59e0b)';
+        }
+    } catch (e) {
+        nameEl.textContent = '❌ 网络错误';
+    }
+}
+
+function clearSubtitleFile() {
+    currentSubtitlePath = '';
+    document.getElementById('subtitle-file-input').value = '';
+    document.getElementById('subtitle-file-name').textContent = '';
+    document.getElementById('subtitle-parse-result').textContent = '';
+    document.getElementById('subtitle-clear-btn').style.display = 'none';
 }
