@@ -1117,7 +1117,7 @@ def parse_subtitle():
         "ok": True,
         "count": len(segments),
         "bilingual_count": bilingual_count,
-        "segments": segments[:5],
+        "segments_preview": segments[:5],
     })
 
 
