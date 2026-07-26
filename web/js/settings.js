@@ -673,7 +673,7 @@ function _renderTaskDetailPanel(task) {
     const cAt = (task.created_at || '').substring(0, 16);
     const trCount = (task.translated_indices || []).length;
 
-    // 步骤耗时
+    // 步骤耗时（也用于计算总耗时）
     const stepTiming = task._step_timing || [];
 
     let html = '';
@@ -698,10 +698,14 @@ function _renderTaskDetailPanel(task) {
     if (trCount > 0) metaParts.push(`${trCount} 句翻译`);
     const bgmLabel = task.keep_bgm ? '🎵 BGM 保留' : '🔇 无 BGM';
     metaParts.push(bgmLabel);
-    if (task.created_at) {
-        const created = new Date(task.created_at);
-        const now = new Date();
-        const elapsedSec = Math.floor((now - created) / 1000);
+    // 已耗时 = 步骤耗时之和（从 processing 开始到当前/结束，不含排队）
+    if (stepTiming.length > 0) {
+        const nowTs = Date.now() / 1000;
+        const totalElapsed = stepTiming.reduce((sum, st) => {
+            const end = st.end > 0 ? st.end : nowTs;
+            return sum + Math.max(0, end - st.start);
+        }, 0);
+        const elapsedSec = Math.floor(totalElapsed);
         if (elapsedSec > 0) {
             const isDone = (status === 'completed' || status === 'error' || status === 'cancelled');
             if (isDone) {
