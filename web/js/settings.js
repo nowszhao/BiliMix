@@ -580,6 +580,10 @@ function _renderTaskCard(t) {
 
     // 操作按钮
     html += `<div class="task-card-actions" onclick="event.stopPropagation()">`;
+    if (t.status === 'queued') {
+        html += `<button class="task-card-action queue-btn" title="上移" onclick="event.stopPropagation(); moveQueue('${t.task_id}', 'up')">▲</button>`;
+        html += `<button class="task-card-action queue-btn" title="下移" onclick="event.stopPropagation(); moveQueue('${t.task_id}', 'down')">▼</button>`;
+    }
     if (t.status === 'completed') {
         html += `<button class="task-card-action primary" onclick="event.stopPropagation(); toggleTaskDetail('${t.task_id}', '${escapeAttr(t.url)}')">查看详情</button>`;
     }
@@ -2588,4 +2592,24 @@ function _safeFilename(name) {
         .replace(/\.+$/, '')                       // trailing dots
         .replace(/^\s+|\s+$/g, '')                 // leading/trailing spaces
         .substring(0, 200);                        // length limit
+}
+
+// ── 队列顺序���整 ──
+
+async function moveQueue(taskId, direction) {
+    try {
+        const resp = await fetch(`/api/task/${taskId}/reorder`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ direction }),
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            refreshTasks();
+        } else {
+            showToast('⚠️ ' + (data.error || '操作失败'));
+        }
+    } catch (e) {
+        showToast('⚠️ 网络错误');
+    }
 }

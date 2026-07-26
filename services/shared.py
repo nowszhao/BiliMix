@@ -27,7 +27,15 @@ _queue_condition = threading.Condition()
 _queue_waiters = _collections.deque()
 
 
-# ── Generic Retry Wrapper ───────────────────────────────────
+def _get_queue_position(task_id: str) -> int:
+    """Return the index of a task in the queue, or -1 if not found."""
+    try:
+        return _queue_waiters.index(task_id)
+    except ValueError:
+        return -1
+
+
+# ── Generic Retry Wrapper ─��─────────────────────────────────
 
 def _run_with_retry(fn, *args, max_retries=None, cancel_check=None,
                     progress_cb=None, resume_batch=0,

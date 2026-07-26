@@ -45,6 +45,7 @@ from services.shared import (
     _probe_audio_duration, download_audio, generate_task_id,
     _try_resolve_local_url, _make_audio_url,
     _load_step_timing_from_disk, _load_video_result_from_disk,
+    _get_queue_position,
 )
 
 # ── Blueprint imports (extracted modules) ──
@@ -1364,6 +1365,58 @@ def cancel_task(task_id):
         _queue_condition.notify_all()
 
     return jsonify({"message": "任务终止请求已发送"})
+
+
+@app.route("/api/task/<task_id>/reorder", methods=["POST"])
+def reorder_queue(task_id):
+    """调整排队中任务在队列中的顺序（上移/下移）"""
+    data = request.get_json() or {}
+    direction = data.get("direction", "up")
+
+    with _queue_condition:
+        try:
+            idx = _queue_waiters.index(task_id)
+        except ValueError:
+            return jsonify({"error": "任务不在队列中"}), 400
+
+        if direction == "up" and idx > 0:
+            _queue_waiters[idx], _queue_waiters[idx - 1] = (
+                _queue_waiters[idx - 1], _queue_waiters[idx]
+            )
+        elif direction == "down" and idx < len(_queue_waiters) - 1:
+            _queue_waiters[idx], _queue_waiters[idx + 1] = (
+                _queue_waiters[idx + 1], _queue_waiters[idx]
+            )
+        else:
+            return jsonify({"ok": True, "message": "已在边界"})
+
+        _queue_condition.notify_all()
+
+    # 持久化队��顺序
+    try:
+        for i, tid in enumerate(_queue_waiters):
+            with tasks_lock:
+                task = tasks.get(tid)
+            if task:
+                save_task_to_index(tid, {
+                    "task_id": tid,
+                    "url": task.get("url", ""),
+                    "title": task.get("title", ""),
+                    "process_mode": task.get("process_mode", "sentence_translate"),
+                    "type": task.get("type", "audio"),
+                    "step": task.get("step", ""),
+                    "status": task.get("status", ""),
+                    "progress": task.get("progress", 0),
+                    "message": task.get("message", ""),
+                    "created_at": task.get("created_at", ""),
+                    "basename": ((task.get("result") or {}).get("basename", "")
+                                 if task.get("result") else task.get("_basename", "")),
+                    "queue_order": i,
+                })
+    except Exception:
+        pass  # 持久化失败不影响核心功能
+
+    return jsonify({"ok": True})
 
 
 @app.route("/api/task/<task_id>/confirm_sentences", methods=["POST"])

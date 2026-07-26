@@ -162,8 +162,15 @@ def _persist_task(task_id: str):
             "original_duration": orig_dur,
             "mixed_duration": ((task.get("result") or {}).get("mixed_duration", 0)
                                if task.get("result") else 0),
+            "queue_order": _get_queue_position(task_id),
         }
     save_task_to_index(task_id, summary)
+
+
+# 延迟导入避免循环引用
+def _get_queue_position(task_id: str) -> int:
+    from services.shared import _get_queue_position as _qpos
+    return _qpos(task_id)
 
 
 def get_task(task_id: str) -> dict:
