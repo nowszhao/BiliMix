@@ -186,8 +186,8 @@ WrapStyle: 2
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: English,Noto Sans CJK SC,{font_size},{_ASS_COLOR_ENGLISH},&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,{getattr(config, "ASS_OUTLINE", 2.5)},{getattr(config, "ASS_SHADOW", 0)},2,20,20,{margin_en},1
-Style: Chinese,Noto Sans CJK SC,{font_size},{_ASS_COLOR_CHINESE},&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,{getattr(config, "ASS_OUTLINE", 2.5)},{getattr(config, "ASS_SHADOW", 0)},2,20,20,{margin_cn},1
+Style: English,Noto Sans CJK SC,{font_size},{_ASS_COLOR_ENGLISH},&H000000FF&,&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,{getattr(config, "ASS_OUTLINE", 2.5)},{getattr(config, "ASS_SHADOW", 0)},2,20,20,{margin_en},1
+Style: Chinese,Noto Sans CJK SC,{font_size},{_ASS_COLOR_CHINESE},&H000000FF&,&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,{getattr(config, "ASS_OUTLINE", 2.5)},{getattr(config, "ASS_SHADOW", 0)},2,20,20,{margin_cn},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -202,9 +202,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if subtitle_mode == "bilingual":
             if eng_text and chn_text:
                 # 英文在上/中文在下，顺序固定
-                # 英文: q0=按词换行  中文: q1=按字符换行（中文无空格需q1才能换行）
-                lines.append(f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{{\\q0}}{eng_text}")
+                # Chinese 先写入，English 后写入 — libass 后写在上层
+                # 中文: q1=按字符换行  英文: q0=按词换行
                 lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{{\\q1}}{chn_text}")
+                lines.append(f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{{\\q0}}{eng_text}")
             else:
                 text = chn_text or eng_text
                 style = "Chinese" if chn_text else "English"
@@ -755,9 +756,9 @@ def _build_block_ass(tts_entries, time_offset, out_path, video_height=720,
     sh = getattr(config, "ASS_SHADOW", 0)
     use_bilingual = subtitle_mode == "bilingual"
 
-    styles = f"Style: Chinese,Noto Sans CJK SC,{fs},&H0000D7FF&,&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,{ol},{sh},2,20,20,{mv},1\n"
+    styles = f"Style: Chinese,Noto Sans CJK SC,{fs},&H0000D7FF&,&H000000FF&,&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,{ol},{sh},2,20,20,{mv},1\n"
     if use_bilingual:
-        styles += f"Style: English,Noto Sans CJK SC,{fs},&H00E6E6E6&,&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,{ol},{sh},2,20,20,{m_en},1\n"
+        styles += f"Style: English,Noto Sans CJK SC,{fs},&H00E6E6E6&,&H000000FF&,&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,{ol},{sh},2,20,20,{m_en},1\n"
 
     hdr = f"""[Script Info]
 ScriptType: v4.00+
@@ -781,8 +782,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if use_bilingual and eng and chn:
             eng_safe = eng.replace("\n", "\\N")
             chn_safe = chn.replace("\n", "\\N")
-            lines.append(fr"Dialogue: 0,{ts},{te},English,,0,0,0,,{{\q0}}{eng_safe}")
             lines.append(fr"Dialogue: 0,{ts},{te},Chinese,,0,0,0,,{{\q1}}{chn_safe}")
+            lines.append(fr"Dialogue: 0,{ts},{te},English,,0,0,0,,{{\q0}}{eng_safe}")
         else:
             text = chn or eng
             style = "Chinese" if chn else "English"
