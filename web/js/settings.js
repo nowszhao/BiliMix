@@ -486,6 +486,18 @@ function renderTaskTable() {
         groups[groupKey].push(t);
     });
 
+    // 排队任务在「处理中」分组内按 queue_order 排列
+    if (groups['__processing']) {
+        groups['__processing'].sort((a, b) => {
+            const aq = a.status === 'queued';
+            const bq = b.status === 'queued';
+            if (aq && bq) return (a.queue_order || 0) - (b.queue_order || 0);
+            if (aq) return 1;   // queued 排 processing/downloading 之后
+            if (bq) return -1;
+            return 0;  // processing/downloading 保持原序
+        });
+    }
+
     const groupLabels = {
         '__processing': { label: '⏳ 处理中', cls: 'processing' },
         'completed': { label: '✅ 已完成', cls: 'completed' },
@@ -500,7 +512,16 @@ function renderTaskTable() {
         const info = groupLabels[key] || { label: key, cls: '' };
         html += `<div class="task-card-group-label" onclick="this.classList.toggle('collapsed');_hideCardsAfter(this)">${info.label}<span class="count">${groups[key].length}</span><svg class="task-card-group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></div>`;
 
-        groups[key].forEach(t => {
+        // 标记最后一个排队任务（用于禁用下移按钮）
+        let lastQueuedIdx = -1;
+        for (let i = groups[key].length - 1; i >= 0; i--) {
+            if (groups[key][i].status === 'queued') {
+                lastQueuedIdx = i;
+                break;
+            }
+        }
+        groups[key].forEach((t, i) => {
+            t._is_last_queued = (t.status === 'queued' && i === lastQueuedIdx);
             html += _renderTaskCard(t);
         });
     }
@@ -581,8 +602,10 @@ function _renderTaskCard(t) {
     // 操作按钮
     html += `<div class="task-card-actions" onclick="event.stopPropagation()">`;
     if (t.status === 'queued') {
-        html += `<button class="task-card-action queue-btn" title="上移" onclick="event.stopPropagation(); moveQueue('${t.task_id}', 'up')">▲</button>`;
-        html += `<button class="task-card-action queue-btn" title="下移" onclick="event.stopPropagation(); moveQueue('${t.task_id}', 'down')">▼</button>`;
+        const isFirst = t.queue_order === 0;
+        const isLast = t._is_last_queued === true;
+        html += `<button class="task-card-action queue-btn" title="上移" ${isFirst ? 'disabled style="opacity:0.3;cursor:default"' : ''} onclick="event.stopPropagation(); ${isFirst ? '' : `moveQueue('${t.task_id}', 'up')`}">▲</button>`;
+        html += `<button class="task-card-action queue-btn" title="下移" ${isLast ? 'disabled style="opacity:0.3;cursor:default"' : ''} onclick="event.stopPropagation(); ${isLast ? '' : `moveQueue('${t.task_id}', 'down')`}">▼</button>`;
     }
     if (t.status === 'completed') {
         html += `<button class="task-card-action primary" onclick="event.stopPropagation(); toggleTaskDetail('${t.task_id}', '${escapeAttr(t.url)}')">查看详情</button>`;

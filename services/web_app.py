@@ -35,7 +35,7 @@ from core.task_manager import (
 )
 from core.database import (
     setup_database, delete_task_from_index, save_task_to_index,
-    load_tasks_index,
+    load_tasks_index, get_db,
     update_episode_status_by_task,
     get_subscriptions, add_subscription, remove_subscription,  # still used by refresh in pipeline
 )
@@ -1392,27 +1392,14 @@ def reorder_queue(task_id):
 
         _queue_condition.notify_all()
 
-    # 持久化队��顺序
+    # 持久化队列顺序
     try:
-        for i, tid in enumerate(_queue_waiters):
-            with tasks_lock:
-                task = tasks.get(tid)
-            if task:
-                save_task_to_index(tid, {
-                    "task_id": tid,
-                    "url": task.get("url", ""),
-                    "title": task.get("title", ""),
-                    "process_mode": task.get("process_mode", "sentence_translate"),
-                    "type": task.get("type", "audio"),
-                    "step": task.get("step", ""),
-                    "status": task.get("status", ""),
-                    "progress": task.get("progress", 0),
-                    "message": task.get("message", ""),
-                    "created_at": task.get("created_at", ""),
-                    "basename": ((task.get("result") or {}).get("basename", "")
-                                 if task.get("result") else task.get("_basename", "")),
-                    "queue_order": i,
-                })
+        with get_db() as conn:
+            for i, tid in enumerate(_queue_waiters):
+                conn.execute(
+                    "UPDATE tasks SET queue_order = ? WHERE task_id = ?",
+                    (i, tid),
+                )
     except Exception:
         pass  # 持久化失败不影响核心功能
 
