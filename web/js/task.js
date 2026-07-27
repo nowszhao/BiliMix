@@ -323,6 +323,7 @@ async function submitAudioTask(btn) {
         }
         currentTaskId = data.task_id;
         if (currentInputMode === 'file') clearUploadedFile();
+        clearSubtitleFile();
         closeNewTaskModal();
         showToast('✅ 任务已提交');
         if (typeof loadHistory === 'function') loadHistory();
@@ -414,6 +415,7 @@ async function submitVideoTask(btn) {
         }
         currentTaskId = data.task_id;
         if (currentVideoMode === 'local') clearVideoUpload();
+        clearSubtitleFile();
         closeNewTaskModal();
         showToast('✅ 视频任务已提交');
         if (typeof loadHistory === 'function') loadHistory();
