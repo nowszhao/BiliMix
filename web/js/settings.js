@@ -2651,7 +2651,7 @@ function _safeFilename(name) {
         .substring(0, 200);                        // length limit
 }
 
-// ── 队列顺序���整 ──
+// ── 队列顺序调整 ──
 
 async function moveQueue(taskId, direction) {
     try {
@@ -2662,11 +2662,11 @@ async function moveQueue(taskId, direction) {
         });
         const data = await resp.json();
         if (resp.ok) {
-            refreshTasks();
+            loadHistory();
         } else {
             showToast('⚠️ ' + (data.error || '操作失败'));
         }
     } catch (e) {
-        showToast('⚠️ 网络错误');
+        showToast('⚠️ 队列调整失败: ' + (e.message || '未知错误'));
     }
 }
