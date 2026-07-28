@@ -725,6 +725,19 @@ function _renderTaskDetailPanel(task) {
     if (trCount > 0) metaParts.push(`${trCount} 句翻译`);
     const bgmLabel = task.keep_bgm ? '🎵 BGM 保留' : '🔇 无 BGM';
     metaParts.push(bgmLabel);
+
+    // ── 任务配置项 ──
+    const subMode = task._subtitle_mode || '';
+    if (subMode === 'bilingual') metaParts.push('中英双语');
+    else if (subMode === 'chinese_only') metaParts.push('仅中文');
+    const fontSize = task._subtitle_font_size;
+    if (fontSize != null && fontSize !== -1) metaParts.push(`字号 ${fontSize}px`);
+    const refMode = task._ref_select_mode || '';
+    if (refMode === 'speaker_local') metaParts.push('每段独立克隆');
+    else if (refMode === 'speaker_global') metaParts.push('每人最优克隆');
+    if (task._subtitle_path) metaParts.push('使用外部字幕');
+    if (task.skip_confirmation === false) metaParts.push('需确认翻译');
+
     // 已耗时 = 步骤耗时之和（从 processing 开始到当前/结束，不含排队）
     if (stepTiming.length > 0) {
         const nowTs = Date.now() / 1000;
@@ -977,6 +990,27 @@ function renderTaskDetailPage(data) {
     document.getElementById('meta-mdur').textContent = typeof formatTime==='function'?formatTime(mixedDur):mixedDur+'s';
     document.getElementById('meta-tr').textContent = trCount + ' 句';
     document.getElementById('meta-bgm').textContent = data.keep_bgm ? '保留' : '不保留';
+
+    // ── 任务配置项 ──
+    const configParts = [];
+    const subMode = data._subtitle_mode || '';
+    if (subMode === 'bilingual') configParts.push('中英双语');
+    else if (subMode === 'chinese_only') configParts.push('仅中文');
+    const fontSize = data._subtitle_font_size;
+    if (fontSize != null && fontSize !== -1) configParts.push('字号 ' + fontSize + 'px');
+    const refMode = data._ref_select_mode || '';
+    if (refMode === 'speaker_local') configParts.push('每段独立克隆');
+    else if (refMode === 'speaker_global') configParts.push('每人最优克隆');
+    if (data._subtitle_path) configParts.push('使用外部字幕');
+    if (data.skip_confirmation === false) configParts.push('需确认翻译');
+    const configEl = document.getElementById('meta-config');
+    const configValEl = document.getElementById('meta-config-value');
+    if (configParts.length > 0) {
+        configEl.style.display = '';
+        configValEl.textContent = configParts.join(' · ');
+    } else {
+        configEl.style.display = 'none';
+    }
 
     const vw = document.getElementById('detail-video-wrapper');
     const aw = document.getElementById('detail-audio-inline');
