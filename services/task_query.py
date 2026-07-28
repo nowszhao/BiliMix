@@ -60,6 +60,8 @@ def list_tasks():
                 "mixed_duration": ((task.get("result") or {}).get("mixed_duration", 0)
                                    if task.get("result") else 0),
                 "keep_bgm": task.get("keep_bgm", False),
+                "queue_order": task.get("queue_order",
+                                        sqlite_summary.get("queue_order", 0)),
             }
 
     sorted_tasks = sorted(result.values(), key=lambda t: t.get("created_at", ""), reverse=True)
