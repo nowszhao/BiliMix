@@ -199,4 +199,11 @@ def get_task_result(task_id):
         "mixed_duration": result.get("mixed_duration", 0),
         "_step_timing": step_timing,
         "_video_path": task.get("_video_path", ""),
+        "_subtitle_mode": task.get("_subtitle_mode", ""),
+        "_subtitle_font_size": task.get("_subtitle_font_size", -1),
+        "_ref_select_mode": task.get("_ref_select_mode", ""),
+        "_subtitle_path": task.get("_subtitle_path", ""),
+        "skip_confirmation": task.get("skip_confirmation", True),
+        "keep_bgm": task.get("keep_bgm", False),
+        "type": task.get("type", "audio"),
     })
