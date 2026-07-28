@@ -1229,6 +1229,7 @@ def submit_task():
             "url": source,
             "title": title,
             "process_mode": process_mode,
+            "type": task_type,
             "status": "downloading",
             "progress": 0,
             "message": "任务已创建",

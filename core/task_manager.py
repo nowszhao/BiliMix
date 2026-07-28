@@ -65,6 +65,11 @@ def save_task_result_to_disk(result_dir: str, data: dict):
                     getattr(config, "SKIP_CONFIRMATION", True))
             else:
                 data["skip_confirmation"] = getattr(config, "SKIP_CONFIRMATION", True)
+        # 自动注入 type，确保 redo 恢复时不会丢失视频/音频类型
+        if "type" not in data:
+            task_id = data.get("task_id", "")
+            if task_id and task_id in tasks:
+                data["type"] = tasks[task_id].get("type", "audio")
         # 确保 key 字段存在
         pass
 
