@@ -69,7 +69,9 @@ def save_task_result_to_disk(result_dir: str, data: dict):
         if "type" not in data:
             task_id = data.get("task_id", "")
             if task_id and task_id in tasks:
-                data["type"] = tasks[task_id].get("type", "audio")
+                mem_type = tasks[task_id].get("type", "")
+                if mem_type:
+                    data["type"] = mem_type
         # 确保 key 字段存在
         pass
 
