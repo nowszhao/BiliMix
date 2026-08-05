@@ -81,6 +81,10 @@ def delete_task(task_id):
     if not task and task_id not in index:
         return jsonify({"error": "任务不存在"}), 404
 
+    # 任务不在内存时（如服务重启后），从磁盘恢复以获得文件路径
+    if not task:
+        task = restore_task_from_disk(task_id)
+
     # Terminate if running
     if task and task.get("status") in ("downloading", "processing", "queued"):
         event = cancel_flags.get(task_id)
@@ -90,15 +94,45 @@ def delete_task(task_id):
 
     basename = ""
     audio_path = ""
+    video_path = ""
+    subtitle_path = ""
     if task:
         basename = task.get("_basename", "")
         audio_path = task.get("_audio_path", "")
+        video_path = task.get("_video_path", "")
+        subtitle_path = task.get("_subtitle_path", "")
         if not basename and task.get("result"):
             basename = task["result"].get("basename", "")
+        # 本地 file:// 源可直接从 url 恢复视频/音频路径
+        if not video_path:
+            src = task.get("url", "")
+            if src.startswith("file://"):
+                candidate = src[len("file://"):]
+                if os.path.isfile(candidate):
+                    video_path = candidate
     if not basename and task_id in index:
         basename = index[task_id].get("basename", "")
 
     cleaned = []
+
+    def _remove_downloads_file(path):
+        """删除 data/downloads 下的关联文件（防止误删用户任意路径的文件）。
+
+        返回是否实际删除了文件。
+        """
+        if not path:
+            return False
+        norm = os.path.normpath(path)
+        dl_root = os.path.normpath(config.DOWNLOAD_DIR)
+        if not (norm.startswith(dl_root + os.sep) or norm == dl_root):
+            print(f"[Delete] 跳过删除（不在 downloads 目录）: {path}")
+            return False
+        if os.path.isfile(norm):
+            os.remove(norm)
+            cleaned.append(f"data/downloads/{os.path.relpath(norm, dl_root)}")
+            return True
+        return False
+
     if basename:
         result_dir = os.path.join(config.RESULT_DIR, basename)
         if os.path.isdir(result_dir):
@@ -111,14 +145,42 @@ def delete_task(task_id):
             cleaned.append(f"data/transcripts/{basename}.json")
 
         if audio_path and os.path.exists(audio_path):
-            os.remove(audio_path)
-            cleaned.append(os.path.basename(audio_path))
+            _remove_downloads_file(audio_path)
         else:
             for ext in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"):
                 p = os.path.join(config.DOWNLOAD_DIR, f"{basename}{ext}")
                 if os.path.exists(p):
                     os.remove(p)
                     cleaned.append(f"data/downloads/{basename}{ext}")
+            # 视频任务：basename 带 taskid 后缀，提取的音频位于
+            # video_cache/audio_<md5>.wav，去掉后缀后按前缀匹配清理
+            # 仅限视频任务，避免音频任务（如 audio_xxx.mp3）误删缓存
+            if task and task.get("type") == "video":
+                base_no_taskid = basename.rsplit("_", 1)[0]
+                if base_no_taskid != basename:
+                    vc_dir = os.path.join(config.DOWNLOAD_DIR, "video_cache")
+                    if os.path.isdir(vc_dir):
+                        for name in os.listdir(vc_dir):
+                            if name.startswith(base_no_taskid):
+                                p = os.path.join(vc_dir, name)
+                                if os.path.isfile(p):
+                                    os.remove(p)
+                                    cleaned.append(f"data/downloads/video_cache/{name}")
+
+    # 删除源视频文件（本地上传或 yt-dlp 下载，均位于 downloads 目录）
+    if video_path:
+        removed = _remove_downloads_file(video_path)
+        if removed:
+            # yt-dlp 会额外生成 <视频>.info.json 元数据
+            info_path = video_path.rsplit(".", 1)[0] + ".info.json"
+            if os.path.isfile(info_path):
+                os.remove(info_path)
+                rel = os.path.relpath(info_path, config.DOWNLOAD_DIR)
+                cleaned.append(f"data/downloads/{rel}")
+
+    # 删除用户上传的字幕文件（.ass / .srt）
+    if subtitle_path:
+        _remove_downloads_file(subtitle_path)
 
     # Remove from queue if waiting
     with _queue_condition:

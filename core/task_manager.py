@@ -72,8 +72,13 @@ def save_task_result_to_disk(result_dir: str, data: dict):
                 mem_type = tasks[task_id].get("type", "")
                 if mem_type:
                     data["type"] = mem_type
-        # 确保 key 字段存在
-        pass
+        # 自动注入 _subtitle_path，删除任务时能找回并清理用户上传的字幕文件
+        if "_subtitle_path" not in data:
+            task_id = data.get("task_id", "")
+            if task_id and task_id in tasks:
+                sub_path = tasks[task_id].get("_subtitle_path", "")
+                if sub_path:
+                    data["_subtitle_path"] = sub_path
 
         path = os.path.join(result_dir, "task_result.json")
         with open(path, "w", encoding="utf-8") as f:
@@ -285,6 +290,7 @@ def restore_task_from_disk(task_id: str) -> dict:
                 "keep_bgm": saved.get("keep_bgm", summary.get("keep_bgm", False)),
                 "_subtitle_mode": saved.get("_subtitle_mode", "bilingual"),
                 "_subtitle_font_size": saved.get("_subtitle_font_size"),
+                "_subtitle_path": saved.get("_subtitle_path", ""),
             }
             # 恢复翻译/识词批次的断点数据
             if saved.get("_checkpoint_translate_batch"):
@@ -338,6 +344,7 @@ def restore_task_from_disk(task_id: str) -> dict:
         "time_mapping": [],
         "_basename": basename,
         "_audio_path": "",
+        "_subtitle_path": "",
         "keep_bgm": summary.get("keep_bgm", False),
     }
 
