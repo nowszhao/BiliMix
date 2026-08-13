@@ -153,11 +153,13 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
         ref_duration: 参考音频最大时长上限（秒），默认用 config 配置
 
     Returns:
-        tuple: (ref_map, ref_source_map)
+        tuple: (ref_map, ref_source_map, ref_text_map)
             ref_map: {segment_index: ref_audio_path}
             ref_source_map: {segment_index: source_segment_index}
                 告诉调用方每个 segment 实际使用了哪个 segment 的参考音频
                 （同轮次共享时 source 可能不同于 segment_index）
+            ref_text_map: {segment_index: 参考音频对应的英文转录}
+                每段用自己的原声，因此直接取该 segment 的英文文本
     """
     if ref_duration is None:
         ref_duration = getattr(config, "REF_MAX_DURATION", 15)
@@ -180,6 +182,7 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
     # ---- 为每个 segment 用自己的原声做参考音频 ----
     ref_map = {}
     ref_source_map = {}
+    ref_text_map = {}
     for seg_idx in seg_indices:
         seg = segments[seg_idx]
         seg_start = seg.get("start", 0)
@@ -208,6 +211,7 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
 
         ref_map[seg_idx] = ref_path
         ref_source_map[seg_idx] = seg_idx
+        ref_text_map[seg_idx] = seg.get("text", "")
         clip_dur = (clip_end - clip_start) / 1000.0
         print(f"  seg[{seg_idx}] ({seg_start:.1f}s-{seg_end:.1f}s, "
               f"{seg_dur:.1f}s) -> {ref_filename} "
@@ -217,7 +221,7 @@ def extract_ref_audio_for_segments(audio_path: str, segments: list,
     print(f"[Step3-Qwen] 共 {len(ref_map)} 个独立参考音频 "
           f"(每个 segment 用自己的原声)")
 
-    return ref_map, ref_source_map
+    return ref_map, ref_source_map, ref_text_map
 
 
 def _assign_speaker_labels(segments: list) -> list:
