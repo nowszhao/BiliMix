@@ -213,6 +213,9 @@ class BiliMixClient:
     def delete_json(self, path, body=None, **kw):
         return self.request("DELETE", path, json=body or {}, **kw)
 
+    def patch_json(self, path, body=None, **kw):
+        return self.request("PATCH", path, json=body or {}, **kw)
+
     def get_raw(self, path, params=None, stream=False, **kw):
         """获取原始 Response（用于流式下载二进制文件）"""
         url = path if path.startswith("http") else f"{self.server}{path}"
@@ -338,6 +341,15 @@ def cmd_task_submit(args, client):
     if args.title:
         body["title"] = args.title
 
+    # subtitle_path: 外部双语字幕文件（ASS，|| 分隔英文和中文）。
+    # 提供后跳过转录和翻译，直接用字幕生成配音音频/视频。
+    if getattr(args, 'subtitle_path', None):
+        body["subtitle_path"] = args.subtitle_path
+
+    # ref_select_mode: 参考音频选取模式（声音克隆）
+    if getattr(args, 'ref_select_mode', None):
+        body["ref_select_mode"] = args.ref_select_mode
+
     # keep_bgm: 保留原音频背景音乐
     if getattr(args, 'keep_bgm', False):
         body["keep_bgm"] = True
@@ -450,16 +462,6 @@ def _load_json_arg(value, file_path, name):
     raise CLIError(f"必须提供 --{name} 或 --{name}-file")
 
 
-def cmd_task_confirm(args, client):
-    words = _load_json_arg(args.words, args.words_file, "words")
-    body = {"difficult_words": words}
-    result = client.post_json(f"/api/task/{args.task_id}/confirm", body)
-    if args.wait:
-        return _wait_task(client, args.task_id, args, until_terminal=True)
-    emit(result, pretty=args.pretty, field=args.field)
-    return EXIT_OK
-
-
 def cmd_task_confirm_sentences(args, client):
     translations = _load_json_arg(args.translations,
                                   args.translations_file, "translations")
@@ -488,6 +490,13 @@ def cmd_task_retry_synthesis(args, client):
     result = client.post_json(f"/api/task/{args.task_id}/retry-synthesis")
     if args.wait:
         return _wait_task(client, args.task_id, args, until_terminal=True)
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_task_reorder(args, client):
+    result = client.post_json(f"/api/task/{args.task_id}/reorder",
+                              {"direction": args.direction})
     emit(result, pretty=args.pretty, field=args.field)
     return EXIT_OK
 
@@ -543,9 +552,9 @@ def cmd_audio_upload(args, client):
     return EXIT_OK
 
 
-def _download_file(client, path, output, label, quiet):
+def _download_file(client, path, output, label, quiet, params=None):
     """流式下载文件并显示进度，返回下载字节数"""
-    resp = client.get_raw(path, stream=True)
+    resp = client.get_raw(path, params=params, stream=True)
     total = int(resp.headers.get("Content-Length", 0))
     downloaded = 0
     with open(output, "wb") as f:
@@ -641,6 +650,38 @@ def cmd_video_download_srt(args, client):
 
     output = args.output or os.path.basename(path) or "subtitle.ass"
     downloaded = _download_file(client, path, output, label="srt", quiet=args.quiet)
+    emit({"ok": True, "path": output, "size_bytes": downloaded},
+         pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+# ============================================================
+# subtitle 命令
+# ============================================================
+
+def cmd_subtitle_parse(args, client):
+    """解析/校验服务端双语字幕文件（ASS 格式，|| 分隔英文和中文）"""
+    result = client.post_json("/api/parse-subtitle",
+                              {"subtitle_path": args.path})
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+# ============================================================
+# file 命令
+# ============================================================
+
+def cmd_file_download(args, client):
+    """通过 /api/download 以附件形式下载文件（支持自定义文件名）"""
+    raw = args.path.lstrip("/")
+    for prefix in ("api/download/", "api/audio/"):
+        if raw.startswith(prefix):
+            raw = raw[len(prefix):]
+            break
+    params = {"name": args.name} if args.name else None
+    output = args.output or os.path.basename(raw) or "download.bin"
+    downloaded = _download_file(client, f"/api/download/{raw}", output,
+                                label="download", quiet=args.quiet, params=params)
     emit({"ok": True, "path": output, "size_bytes": downloaded},
          pretty=args.pretty, field=args.field)
     return EXIT_OK
@@ -747,6 +788,12 @@ def cmd_subscriptions_add(args, client):
 
 def cmd_subscriptions_remove(args, client):
     result = client.delete_json("/api/subscriptions", {"rss_url": args.rss_url})
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_subscriptions_refresh(args, client):
+    result = client.post_json("/api/subscriptions/refresh")
     emit(result, pretty=args.pretty, field=args.field)
     return EXIT_OK
 
@@ -956,6 +1003,12 @@ def build_parser():
     p.add_argument("--title", help="任务标题")
     p.add_argument("--keep-bgm", action="store_true", help="保留原音频/视频背景音乐")
     p.add_argument("--duration", help="预知时长 (如 01:23:45 或 142)")
+    p.add_argument("--subtitle-path",
+                   help="服务端外部双语字幕文件路径 (.ass, || 分隔英文和中文)，"
+                        "提供后跳过转录和翻译，直接用字幕生成配音")
+    p.add_argument("--ref-select-mode",
+                   choices=["speaker_global", "speaker_local", "segment"],
+                   help="参考音频选取模式 (声音克隆, 默认服务端配置)")
     p.add_argument("--wait", action="store_true", help="提交后阻塞等待完成")
     p.add_argument("--poll-interval", type=float, default=2.0,
                    help="轮询间隔秒数 (默认 2.0)")
@@ -976,15 +1029,6 @@ def build_parser():
     p = add_cmd(task_sub, "cancel", help="终止任务")
     p.add_argument("task_id")
     p.set_defaults(func=cmd_task_cancel)
-
-    p = add_cmd(task_sub, "confirm", help="确认生词并继续处理")
-    p.add_argument("task_id")
-    g = p.add_mutually_exclusive_group(required=True)
-    g.add_argument("--words", help="生词列表 JSON 字符串")
-    g.add_argument("--words-file", help="生词列表 JSON 文件")
-    p.add_argument("--wait", action="store_true", help="确认后等待完成")
-    p.add_argument("--poll-interval", type=float, default=2.0)
-    p.set_defaults(func=cmd_task_confirm)
 
     p = add_cmd(task_sub, "confirm-sentences", help="确认句子翻译并继续")
     p.add_argument("task_id")
@@ -1008,6 +1052,12 @@ def build_parser():
     p.add_argument("--poll-interval", type=float, default=2.0)
     p.set_defaults(func=cmd_task_retry_synthesis)
 
+    p = add_cmd(task_sub, "reorder", help="调整排队中任务的顺序")
+    p.add_argument("task_id")
+    p.add_argument("--direction", choices=["up", "down"], required=True,
+                   help="上移/下移")
+    p.set_defaults(func=cmd_task_reorder)
+
     p = add_cmd(task_sub, "delete", help="删除任务及其文件")
     p.add_argument("task_id")
     p.set_defaults(func=cmd_task_delete)
@@ -1029,8 +1079,8 @@ def build_parser():
     p_audio = add_cmd(sub, "audio", help="音频文件")
     audio_sub = p_audio.add_subparsers(dest="subcommand", required=True)
 
-    p = add_cmd(audio_sub, "upload", help="上传本地音频/视频")
-    p.add_argument("file", help="本地音频/视频文件路径")
+    p = add_cmd(audio_sub, "upload", help="上传本地音频/视频/字幕文件")
+    p.add_argument("file", help="本地音频/视频/字幕文件路径 (.ass/.srt)")
     p.set_defaults(func=cmd_audio_upload)
 
     p = add_cmd(audio_sub, "download", help="下载音频")
@@ -1067,6 +1117,24 @@ def build_parser():
     g.add_argument("--path", help="直接指定 SRT URL 路径")
     p.add_argument("-o", "--output", help="输出文件名")
     p.set_defaults(func=cmd_video_download_srt)
+
+    # ---- subtitle ----
+    p_sub = add_cmd(sub, "subtitle", help="字幕文件")
+    sub_sub = p_sub.add_subparsers(dest="subcommand", required=True)
+
+    p = add_cmd(sub_sub, "parse", help="解析/校验服务端双语字幕文件 (ASS)")
+    p.add_argument("path", help="服务端字幕文件路径 (upload 后返回的 local_path)")
+    p.set_defaults(func=cmd_subtitle_parse)
+
+    # ---- file ----
+    p_file = add_cmd(sub, "file", help="通用文件下载")
+    file_sub = p_file.add_subparsers(dest="subcommand", required=True)
+
+    p = add_cmd(file_sub, "download", help="以附件形式下载结果/下载目录中的文件")
+    p.add_argument("path", help="文件路径 (如 basename/basename_dubbed.mp4)")
+    p.add_argument("-o", "--output", help="输出文件名")
+    p.add_argument("--name", help="服务端下载文件名 (Content-Disposition)")
+    p.set_defaults(func=cmd_file_download)
 
     # ---- translate ----
     p_tr = add_cmd(sub, "translate", help="翻译工具")
@@ -1134,6 +1202,9 @@ def build_parser():
     p = add_cmd(s_sub, "remove", help="移除订阅")
     p.add_argument("--rss-url", required=True)
     p.set_defaults(func=cmd_subscriptions_remove)
+
+    p = add_cmd(s_sub, "refresh", help="手动刷新所有订阅")
+    p.set_defaults(func=cmd_subscriptions_refresh)
 
     # ---- episodes ----
     p_ep = add_cmd(sub, "episodes", help="订阅单集")

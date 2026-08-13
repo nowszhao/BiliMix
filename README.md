@@ -306,9 +306,11 @@ pip install -e sdk/
 bmx task submit --url https://example.com/episode.mp3 --wait
 bmx task list
 bmx task result <task_id>
-bmx video submit --url https://www.youtube.com/watch?v=xxx
-bmx download <task_id>
+bmx task submit --type video --video-url https://www.youtube.com/watch?v=xxx --wait
+bmx video download --task-id <task_id> -o dubbed.mp4
 ```
+
+完整命令参考见 `sdk/README.md` 与 `sdk/docs/cli.md`。
 
 ## License
 

@@ -76,15 +76,16 @@ bmx auth login --username admin --password bilimix2024
 | `bmx task submit --url <URL> [--wait]` | 提交音频配音 |
 | `bmx task submit --url <URL> --type video [--subtitle-mode bilingual]` | 提交视频配音 |
 | `bmx task submit --local-path <FILE> [--keep-bgm]` | 提交本地文件，可选保留背景音 |
+| `bmx task submit ... [--subtitle-path <ASS>] [--ref-select-mode MODE]` | 提交任务，可指定外部字幕 / 参考音频模式 |
 | `bmx task list [--limit N]` | 任务列表（可限制返回条数） |
 | `bmx task status <id>` | 查询状态 |
 | `bmx task result <id>` | 获取完整结果 |
 | `bmx task cancel <id>` | 终止任务 |
 | `bmx task retry <id>` | 断点续传 |
 | `bmx task redo <id> [--wait]` | 完整重做（清除产物，从头执行） |
+| `bmx task reorder <id> --direction up\|down` | 调整排队顺序 |
 | `bmx task delete <id>` | 删除任务及文件 |
 | `bmx task wait <id> [--until STATUS]` | 阻塞等待 |
-| `bmx task confirm <id> --words <JSON>` | 确认生词替换 |
 | `bmx task confirm-sentences <id> --translations <JSON>` | 确认句子翻译 |
 | `bmx task retry-synthesis <id>` | 仅重试 TTS 合成 |
 
@@ -94,18 +95,20 @@ bmx auth login --username admin --password bilimix2024
 |------|------|
 | `bmx podcast search <q>` | 搜索播客 |
 | `bmx podcast rss <url>` | 解析 RSS Feed |
-| `bmx subscriptions list / add / remove` | RSS 订阅管理 |
+| `bmx subscriptions list / add / remove / refresh` | RSS 订阅管理 |
 | `bmx favorites list / add / remove / check` | 播客收藏管理 |
 
 ### 音频 / 视频
 
 | 命令 | 说明 |
 |------|------|
-| `bmx audio upload <file>` | 上传音频/视频文件 |
+| `bmx audio upload <file>` | 上传音频/视频/字幕文件 |
 | `bmx audio download [--task-id\|--path] [--type mixed\|original] [-o FILE]` | 下载配音/原始音频 |
 | `bmx audio url [--task-id\|--path]` | 获取音频下载 URL |
 | `bmx video download [--task-id\|--path] [-o FILE]` | 下载配音视频 |
 | `bmx video download-srt [--task-id\|--path] [-o FILE]` | 下载字幕文件 (ASS) |
+| `bmx subtitle parse <local_path>` | 解析/校验服务端双语字幕文件 |
+| `bmx file download <path> [-o FILE] [--name NAME]` | 通用附件下载（支持自定义文件名） |
 
 ### 翻译 & 工具
 
@@ -149,6 +152,11 @@ bmx episodes list --time-range today
 
 # 查看所有未读
 bmx episodes stats --time-range all
+
+# 用外部双语字幕直接生成配音视频（跳过转录/翻译）
+bmx audio upload ./subtitle.ass
+bmx task submit --type video --video-url "https://youtu.be/xxx" \
+    --subtitle-path "<local_path>" --wait
 ```
 
 ---

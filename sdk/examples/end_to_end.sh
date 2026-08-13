@@ -7,8 +7,7 @@ URL="${1:?用法: $0 <audio_url> [output.mp3]}"
 OUTPUT="${2:-mixed_$(date +%s).mp3}"
 
 echo "==> 提交任务: $URL"
-TID=$(bmx task submit --url "$URL" --mode smart_translate --wait \
-      --field task_id)
+TID=$(bmx task submit --url "$URL" --wait --field task_id)
 echo "==> 任务完成: $TID"
 
 echo "==> 下载混合音频 → $OUTPUT"
