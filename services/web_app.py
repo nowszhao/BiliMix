@@ -1025,10 +1025,10 @@ def _run_video_post_process(task_id):
         translations = task.get("translations", {})
         time_mapping = task.get("time_mapping", [])
         srt_path = os.path.join(result_dir, f"{basename}.ass")
-        _, video_h = _probe_video_size(video_path)
+        video_w, video_h = _probe_video_size(video_path)
         srt_result = generate_bilingual_srt(
             segments, translations, time_mapping, srt_path,
-            subtitle_mode=mode, video_height=video_h,
+            subtitle_mode=mode, video_height=video_h, video_width=video_w,
             subtitle_font_size=sub_font_size)
         if not srt_result:
             print(f"[Video] 字幕生成失败")
@@ -1048,7 +1048,8 @@ def _run_video_post_process(task_id):
             video_path, mixed_audio, srt_path, output_video,
             time_mapping=time_mapping, segments=segments,
             translations=translations, subtitle_mode=mode,
-            subtitle_font_size=sub_font_size)
+            subtitle_font_size=sub_font_size,
+            video_width=video_w, video_height=video_h)
 
         if not assembled or not os.path.exists(assembled):
             update_task(task_id, status="error",
@@ -1950,13 +1951,13 @@ def _synthesis_resume(task_id):
             if sub_font_size is not None and sub_font_size <= 0:
                 sub_font_size = None  # -1/0 表示自动计算
             srt_path = os.path.join(result_dir, f"{basename}.ass")
-            _, video_h = _probe_video_size(video_path)
+            video_w, video_h = _probe_video_size(video_path)
 
             update_task(task_id, step="subtitle", progress=93,
                         message="断点续传: 正在生成字幕...")
             srt_result = generate_bilingual_srt(
                 segments, translations, time_mapping, srt_path,
-                subtitle_mode=mode, video_height=video_h,
+                subtitle_mode=mode, video_height=video_h, video_width=video_w,
                 subtitle_font_size=sub_font_size)
             if srt_result:
                 update_task(task_id, step="assemble", progress=96,
@@ -1971,7 +1972,8 @@ def _synthesis_resume(task_id):
                     video_path, output_path, srt_path, output_video,
                     time_mapping=time_mapping, segments=segments,
                     translations=translations, subtitle_mode=mode,
-                    subtitle_font_size=sub_font_size)
+                    subtitle_font_size=sub_font_size,
+                    video_width=video_w, video_height=video_h)
                 if assembled and os.path.exists(assembled):
                     video_result_data = {
                         "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",
@@ -2125,13 +2127,13 @@ def retry_sentence_synthesis(task_id):
             if sub_font_size is not None and sub_font_size <= 0:
                 sub_font_size = None  # -1/0 表示自动计算
             srt_path = os.path.join(result_dir, f"{basename}.ass")
-            _, video_h = _probe_video_size(video_path)
+            video_w, video_h = _probe_video_size(video_path)
 
             update_task(task_id, step="subtitle", progress=93,
                         message="重试: 正在生成字幕...")
             srt_result = generate_bilingual_srt(
                 segments, translations, time_mapping, srt_path,
-                subtitle_mode=mode, video_height=video_h,
+                subtitle_mode=mode, video_height=video_h, video_width=video_w,
                 subtitle_font_size=sub_font_size)
             if srt_result:
                 update_task(task_id, step="assemble", progress=96,
@@ -2146,7 +2148,8 @@ def retry_sentence_synthesis(task_id):
                     video_path, output_audio_path, srt_path, output_video,
                     time_mapping=time_mapping, segments=segments,
                     translations=translations, subtitle_mode=mode,
-                    subtitle_font_size=sub_font_size)
+                    subtitle_font_size=sub_font_size,
+                    video_width=video_w, video_height=video_h)
                 if assembled and os.path.exists(assembled):
                     video_result_data = {
                         "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",

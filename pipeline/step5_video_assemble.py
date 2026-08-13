@@ -73,6 +73,61 @@ def _detect_encoders() -> dict:
 # 字幕渲染
 # ============================================================
 
+# CJK 文本按宽度预换行的辅助断点（标点优先处断行，避免硬切破坏语义）
+_CJK_BREAK_CHARS = set("，。！？；：、 ,.!?;:")
+
+
+def _wrap_cjk_to_width(text: str, font_size: int, max_width_px: int) -> str:
+    """按宽度对 CJK 文本预换行，返回带 ``\\N`` 的 ASS 文本。
+
+    字符宽度近似（CJK 统一表意及之后 = 1 em、ASCII ≈ 0.55 em、空格 ≈ 0.3 em）。
+    优先在标点处断行；无标点时强制按宽度断行。配合 ``\\q2`` 使用，
+    让手动换行绝对生效，避免 libass 对超长 CJK 的 smart wrap 不可靠问题。
+    """
+    if not text or max_width_px <= 0 or font_size <= 0:
+        return text
+
+    def char_w(ch: str) -> float:
+        if ord(ch) > 0x2E80:  # CJK 统一表意符号及之后（含全角标点）
+            return font_size
+        if ch == " ":
+            return font_size * 0.3
+        return font_size * 0.55
+
+    lines: list[str] = []
+    line = ""
+    line_w = 0.0
+    last_break_idx = -1  # 当前行最后一个可断行字符的位置
+
+    for ch in text:
+        w = char_w(ch)
+        if line_w + w > max_width_px and line:
+            # 需要换行
+            if last_break_idx >= 0:
+                head = line[:last_break_idx + 1].rstrip()
+                tail = line[last_break_idx + 1:]
+                lines.append(head)
+                line = tail + ch
+                line_w = sum(char_w(c) for c in line)
+                last_break_idx = -1
+                for i, c in enumerate(line):
+                    if c in _CJK_BREAK_CHARS:
+                        last_break_idx = i
+            else:
+                lines.append(line)
+                line = ch
+                line_w = w
+                last_break_idx = 0 if ch in _CJK_BREAK_CHARS else -1
+        else:
+            line += ch
+            line_w += w
+            if ch in _CJK_BREAK_CHARS:
+                last_break_idx = len(line) - 1
+
+    if line:
+        lines.append(line)
+    return "\\N".join(lines)
+
 def _parse_ass_dialogue_count(ass_path: str) -> int:
     """统计 ASS 字幕文件中的 Dialogue 条目数量（用于判断是否存在有效字幕）。"""
     if not os.path.isfile(ass_path):
@@ -109,6 +164,7 @@ def generate_bilingual_srt(
     output_path: str,
     subtitle_mode: str = "bilingual",
     video_height: Optional[int] = None,
+    video_width: int | None = None,
     time_offset: float = 0.0,
     subtitle_font_size: Optional[int] = None,
 ) -> str:
@@ -120,10 +176,16 @@ def generate_bilingual_srt(
     字幕固定底部居中对齐（Alignment=2），边距按视频高度百分比计算，
     避免不同分辨率下字幕位置视觉不一致。
 
+    PlayResX/PlayResY 使用视频真实宽高，确保 libass 坐标系统与实际视频
+    1:1 匹配，避免硬编码宽度导致的非等比缩放与换行宽度失衡。
+
     time_offset: 用于分块模式，所有时间戳减去该偏移量（块内音频从 0 开始）。
     """
     if video_height is None:
         video_height = getattr(config, "ASS_DEFAULT_VIDEO_HEIGHT", 720)
+    if video_width is None:
+        # 默认按 16:9 从高度推导，避免坐标系统与实际视频宽高比脱节
+        video_width = int(video_height * 16 / 9)
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     tts_time_map = {}
     for entry in time_mapping:
@@ -169,7 +231,9 @@ def generate_bilingual_srt(
         font_size = max(getattr(config, "ASS_FONT_SIZE_USER_MIN", 14), font_size)
         font_size = min(font_size, getattr(config, "ASS_FONT_SIZE_USER_MAX", 120))
     else:
-        font_size = min(max(font_size_min, video_height // 22), font_size_max)
+        # 字号同时参考宽高（横屏取高度、竖屏取宽度），与换行宽度基准联动
+        font_size = min(max(font_size_min, min(video_width, video_height) // 22),
+                        font_size_max)
     margin_v_min = getattr(config, "ASS_MARGIN_V_MIN", 30)
     margin_v_ratio = getattr(config, "ASS_MARGIN_V_RATIO", 0.07)
     margin_v = max(margin_v_min, int(video_height * margin_v_ratio))
@@ -179,10 +243,10 @@ def generate_bilingual_srt(
 
     header = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: 1920
-PlayResY: {video_height if video_height >= 1080 else 1080}
+PlayResX: {video_width}
+PlayResY: {video_height}
 ScaledBorderAndShadow: yes
-WrapStyle: 2
+WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
@@ -193,26 +257,34 @@ Style: Chinese,Noto Sans CJK SC,{font_size},{_ASS_COLOR_CHINESE},&H000000FF&,&H0
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
+    # 中文按宽度预换行（libass 对超长 CJK 的 smart wrap 不可靠，必须手动 \N）。
+    # 留 10% 余量，避免手动换行后仍略微超出被 \q2 裁切。
+    max_text_width = int((video_width - 40) * 0.9)
     lines = [header]
     for e in entries:
         start_ts = _seconds_to_ass_time(e["start"])
         end_ts = _seconds_to_ass_time(e["end"])
         eng_text = e["english"].replace("\n", "\\N") if e["english"] else ""
         chn_text = e["chinese"].replace("\n", "\\N") if e["chinese"] else ""
+        if chn_text:
+            chn_text = _wrap_cjk_to_width(chn_text, font_size, max_text_width)
         if subtitle_mode == "bilingual":
             if eng_text and chn_text:
                 # 英文在上/中文在下，顺序固定
                 # Chinese 先写入，English 后写入 — libass 后写在上层
-                # 中文: q1=按字符换行  英文: q0=按词换行
-                lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{{\\q1}}{chn_text}")
+                # 中文 q2: 仅尊重手动 \N，禁用 smart wrap（避免超长 CJK 单行溢出）
+                # 英文 q0: smart wrap 按词换行，已验证铺满宽度
+                lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{{\\q2}}{chn_text}")
                 lines.append(f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{{\\q0}}{eng_text}")
             else:
                 text = chn_text or eng_text
                 style = "Chinese" if chn_text else "English"
-                lines.append(f"Dialogue: 0,{start_ts},{end_ts},{style},,0,0,0,,{{\\q0}}{text}")
+                # 仅中文用 q2；纯英文行保留 q0 smart wrap
+                qtag = "\\q2" if (style == "Chinese") else "\\q0"
+                lines.append(f"Dialogue: 0,{start_ts},{end_ts},{style},,0,0,0,,{{{qtag}}}{text}")
         elif subtitle_mode == "chinese_only":
             text = chn_text or eng_text
-            lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{{\\q0}}{text}")
+            lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{{\\q2}}{text}")
         else:
             if eng_text:
                 lines.append(f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{{\\q0}}{eng_text}")
@@ -542,12 +614,21 @@ def _assemble_video_blocks(
     translations: Optional[dict] = None,
     subtitle_mode: str = "chinese_only",
     subtitle_font_size: Optional[int] = None,
+    video_width: int | None = None,
+    video_height: int | None = None,
 ) -> str:
     """分块并行视频组装：将长视频按句子数切块，逐块变速拼接后合并。
 
     当 time_mapping 句子数超过 VIDEO_MAX_CONCAT_SEGMENTS 时自动启用。
     每块 ~50 句，filter chain ~100 条，ffmpeg concat 稳定运行。
     """
+    # 未显式传入尺寸时，探测视频真实宽高，保证分块字幕坐标系统与视频 1:1 匹配
+    if video_width is None or video_height is None:
+        _w, _h = _probe_video_size(video_path)
+        if video_width is None:
+            video_width = _w
+        if video_height is None:
+            video_height = _h
     block_size = getattr(config, "VIDEO_BLOCK_SIZE", 50)
     block_threads = getattr(config, "VIDEO_BLOCK_FFMPEG_THREADS", 2)
     block_workers = getattr(config, "VIDEO_BLOCK_WORKERS", 2)
@@ -649,6 +730,7 @@ def _assemble_video_blocks(
         if blk["sub_entries"]:
             asp = os.path.join(bd, "subs.ass")
             _build_block_ass(blk["sub_entries"], blk["audio_start"], asp,
+                             video_height=video_height, video_width=video_width,
                              subtitle_mode=subtitle_mode, font_size=subtitle_font_size,
                              segments=segments, translations=translations)
 
@@ -713,13 +795,16 @@ def _assemble_video_blocks(
 
 
 def _build_block_ass(tts_entries, time_offset, out_path, video_height=720,
-                     subtitle_mode="chinese_only", font_size=None, segments=None, translations=None):
+                     video_width=None, subtitle_mode="chinese_only",
+                     font_size=None, segments=None, translations=None):
     """Build block-internal ASS subtitles from time_mapping entries.
 
     Supports both bilingual and chinese_only modes.
     In bilingual mode, English text is read from segments, Chinese from translations/time_mapping.
     font_size: user-specified size (None = auto-calculate from video_height).
     """
+    if video_width is None:
+        video_width = int(video_height * 16 / 9)
     entries = []
     for e in tts_entries:
         si = e.get("segment_index", -1)
@@ -747,7 +832,8 @@ def _build_block_ass(tts_entries, time_offset, out_path, video_height=720,
         fs = max(getattr(config, "ASS_FONT_SIZE_USER_MIN", 14), fs)
         fs = min(fs, getattr(config, "ASS_FONT_SIZE_USER_MAX", 120))
     else:
-        fs = min(max(getattr(config, "ASS_FONT_SIZE_MIN", 28), video_height // 22),
+        fs = min(max(getattr(config, "ASS_FONT_SIZE_MIN", 28),
+                     min(video_width, video_height) // 22),
                  getattr(config, "ASS_FONT_SIZE_MAX", 80))
     mv = max(getattr(config, "ASS_MARGIN_V_MIN", 30),
              int(video_height * getattr(config, "ASS_MARGIN_V_RATIO", 0.07)))
@@ -762,10 +848,10 @@ def _build_block_ass(tts_entries, time_offset, out_path, video_height=720,
 
     hdr = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: 1920
-PlayResY: {video_height if video_height >= 1080 else 1080}
+PlayResX: {video_width}
+PlayResY: {video_height}
 ScaledBorderAndShadow: yes
-WrapStyle: 2
+WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
@@ -773,6 +859,8 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
+    # 中文按宽度预换行（libass 对超长 CJK 的 smart wrap 不可靠，必须手动 \N）
+    max_text_width = int((video_width - 40) * 0.9)
     lines = [hdr]
     for ent in entries:
         ts = _seconds_to_ass_time(ent["start"])
@@ -781,15 +869,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         chn = ent["chinese"]
         if use_bilingual and eng and chn:
             eng_safe = eng.replace("\n", "\\N")
-            chn_safe = chn.replace("\n", "\\N")
-            lines.append(fr"Dialogue: 0,{ts},{te},Chinese,,0,0,0,,{{\q1}}{chn_safe}")
+            chn_safe = _wrap_cjk_to_width(chn.replace("\n", "\\N"), fs, max_text_width)
+            lines.append(fr"Dialogue: 0,{ts},{te},Chinese,,0,0,0,,{{\q2}}{chn_safe}")
             lines.append(fr"Dialogue: 0,{ts},{te},English,,0,0,0,,{{\q0}}{eng_safe}")
         else:
             text = chn or eng
             style = "Chinese" if chn else "English"
             text_safe = text.replace("\n", "\\N")
-            qmark = "q1" if (chn and not eng) else "q0"
-            lines.append(fr"Dialogue: 0,{ts},{te},{style},,0,0,0,,{{\{qmark}}}{text_safe}")
+            if style == "Chinese":
+                text_safe = _wrap_cjk_to_width(text_safe, fs, max_text_width)
+            qtag = "\\q2" if style == "Chinese" else "\\q0"
+            lines.append(fr"Dialogue: 0,{ts},{te},{style},,0,0,0,,{{{qtag}}}{text_safe}")
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -808,6 +898,8 @@ def assemble_video(
     translations: Optional[dict] = None,
     subtitle_mode: str = "chinese_only",
     subtitle_font_size: Optional[int] = None,
+    video_width: int | None = None,
+    video_height: int | None = None,
 ) -> str:
     """
     视频组装（单次 ffmpeg 调用）：
@@ -849,6 +941,7 @@ def assemble_video(
                 output_path, time_mapping, timeout,
                 segments=segments, translations=translations,
                 subtitle_mode=subtitle_mode, subtitle_font_size=subtitle_font_size,
+                video_width=video_width, video_height=video_height,
             )
         filter_graph_path = _build_filter_graph(time_mapping, srt_path)
 
