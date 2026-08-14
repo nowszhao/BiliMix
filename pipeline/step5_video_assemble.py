@@ -128,6 +128,48 @@ def _wrap_cjk_to_width(text: str, font_size: int, max_width_px: int) -> str:
         lines.append(line)
     return "\\N".join(lines)
 
+
+def _wrap_english_to_width(text: str, font_size: int, max_width_px: int) -> str:
+    """按词边界对英文文本预换行，返回带 ``\\N`` 的 ASS 文本。
+
+    英文按空格分词、贪心填行、不切断单词。字符宽度用保守估计
+    （CJK 字体渲染拉丁字形偏宽，字母按 0.55 em、空格按 0.3 em）。
+    配合 ``\\q2`` 使用，彻底不依赖 libass 的 smart wrap，
+    避免超长英文句的换行位置超出视频宽度。
+    """
+    if not text or max_width_px <= 0 or font_size <= 0:
+        return text
+
+    lines: list[str] = []
+    line = ""
+    line_w = 0.0
+    for word in text.split():
+        word_w = font_size * 0.55 * len(word)
+        gap_w = font_size * 0.3 if line else 0.0
+        if line and line_w + gap_w + word_w > max_width_px:
+            lines.append(line)
+            line = word
+            line_w = word_w
+        else:
+            line = line + " " + word if line else word
+            line_w += gap_w + word_w
+    if line:
+        lines.append(line)
+    return "\\N".join(lines)
+
+
+def _build_bilingual_ass_text(
+    chinese: str,
+    english: str,
+    wrap_tag: str,
+) -> str:
+    """将中英文合并为一个 ASS 事件，并用样式重置固定上下顺序。"""
+    return (
+        f"{{{wrap_tag}\\rChinese}}{chinese}"
+        f"\\N{{\\rEnglish}}{english}"
+    )
+
+
 def _parse_ass_dialogue_count(ass_path: str) -> int:
     """统计 ASS 字幕文件中的 Dialogue 条目数量（用于判断是否存在有效字幕）。"""
     if not os.path.isfile(ass_path):
@@ -237,9 +279,26 @@ def generate_bilingual_srt(
     margin_v_min = getattr(config, "ASS_MARGIN_V_MIN", 30)
     margin_v_ratio = getattr(config, "ASS_MARGIN_V_RATIO", 0.07)
     margin_v = max(margin_v_min, int(video_height * margin_v_ratio))
-    margin_en_ratio = getattr(config, "ASS_MARGIN_EN_RATIO", 1.4)
-    margin_en = margin_v + int(font_size * margin_en_ratio)
+    # 英文略小于中文（比例可配），视觉协调且不喧宾夺主
+    en_font_ratio = getattr(config, "ASS_EN_FONT_RATIO", 0.8)
+    en_font_size = max(1, int(font_size * en_font_ratio))
+    # 双语使用一个事件和显式换行，两个样式共享同一底部锚点。
+    margin_en = margin_v
     margin_cn = margin_v
+    # 字幕左右边距（居中留白，避免字幕贴边）
+    margin_lr = getattr(config, "ASS_MARGIN_LR", 30)
+    # ASS V4+ 的 Outline 字段要求整数；浮点值会导致 libass 样式解析异常。
+    outline = max(0, int(round(float(getattr(config, "ASS_OUTLINE", 2)))))
+    style_lines = (
+        f"Style: English,Noto Sans CJK SC,{en_font_size},{_ASS_COLOR_ENGLISH},"
+        f"&H000000FF&,&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,"
+        f"{outline},{getattr(config, 'ASS_SHADOW', 0)},"
+        f"2,{margin_lr},{margin_lr},{margin_en},1\n"
+        f"Style: Chinese,Noto Sans CJK SC,{font_size},{_ASS_COLOR_CHINESE},"
+        f"&H000000FF&,&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,"
+        f"{outline},{getattr(config, 'ASS_SHADOW', 0)},"
+        f"2,{margin_lr},{margin_lr},{margin_cn},1\n"
+    )
 
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -250,44 +309,39 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: English,Noto Sans CJK SC,{font_size},{_ASS_COLOR_ENGLISH},&H000000FF&,&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,{getattr(config, "ASS_OUTLINE", 2.5)},{getattr(config, "ASS_SHADOW", 0)},2,20,20,{margin_en},1
-Style: Chinese,Noto Sans CJK SC,{font_size},{_ASS_COLOR_CHINESE},&H000000FF&,&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,{getattr(config, "ASS_OUTLINE", 2.5)},{getattr(config, "ASS_SHADOW", 0)},2,20,20,{margin_cn},1
-
+{style_lines}
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
-    # 中文按宽度预换行（libass 对超长 CJK 的 smart wrap 不可靠，必须手动 \N）。
-    # 留 10% 余量，避免手动换行后仍略微超出被 \q2 裁切。
-    max_text_width = int((video_width - 40) * 0.9)
+    # 中英文优先保持单行，英文仅在字号超过阈值时才按词预换行。
+    max_text_width = max(1, video_width - 2 * margin_lr - 20)
+    # 字号较小时信任 libass 的 q0 smart wrap；字号过大时英文使用显式词边界换行。
+    en_manual_wrap = font_size > getattr(config, "ASS_EN_WRAP_THRESHOLD", 40)
+    en_qtag = "\\q2" if en_manual_wrap else "\\q0"
     lines = [header]
     for e in entries:
         start_ts = _seconds_to_ass_time(e["start"])
         end_ts = _seconds_to_ass_time(e["end"])
-        eng_text = e["english"].replace("\n", "\\N") if e["english"] else ""
-        chn_text = e["chinese"].replace("\n", "\\N") if e["chinese"] else ""
+        eng_text = e["english"].replace("\\N", " ").replace("\n", " ").strip()
+        chn_text = e["chinese"].replace("\\N", " ").replace("\n", " ").strip()
+        # 中文仅在实际超出可用宽度时按字符/标点换行，正常内容保持单行。
         if chn_text:
             chn_text = _wrap_cjk_to_width(chn_text, font_size, max_text_width)
-        if subtitle_mode == "bilingual":
-            if eng_text and chn_text:
-                # 英文在上/中文在下，顺序固定
-                # Chinese 先写入，English 后写入 — libass 后写在上层
-                # 中文 q2: 仅尊重手动 \N，禁用 smart wrap（避免超长 CJK 单行溢出）
-                # 英文 q0: smart wrap 按词换行，已验证铺满宽度
-                lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{{\\q2}}{chn_text}")
-                lines.append(f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{{\\q0}}{eng_text}")
-            else:
-                text = chn_text or eng_text
-                style = "Chinese" if chn_text else "English"
-                # 仅中文用 q2；纯英文行保留 q0 smart wrap
-                qtag = "\\q2" if (style == "Chinese") else "\\q0"
-                lines.append(f"Dialogue: 0,{start_ts},{end_ts},{style},,0,0,0,,{{{qtag}}}{text}")
-        elif subtitle_mode == "chinese_only":
-            text = chn_text or eng_text
-            lines.append(f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{{\\q2}}{text}")
-        else:
-            if eng_text:
-                lines.append(f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{{\\q0}}{eng_text}")
+        if eng_text and en_manual_wrap:
+            eng_text = _wrap_english_to_width(eng_text, en_font_size, max_text_width)
+        if subtitle_mode == "bilingual" and eng_text and chn_text:
+            # 合并为一个事件：ASS 会以整个文本块为锚点，确保中文永远在上、英文永远在下。
+            text = _build_bilingual_ass_text(chn_text, eng_text, en_qtag)
+            lines.append(
+                f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{text}")
+        elif subtitle_mode == "chinese_only" and chn_text:
+            lines.append(
+                f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{{\\q0}}{chn_text}")
+        elif eng_text:
+            lines.append(
+                f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,"
+                f"{{{en_qtag}}}{eng_text}")
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -837,14 +891,27 @@ def _build_block_ass(tts_entries, time_offset, out_path, video_height=720,
                  getattr(config, "ASS_FONT_SIZE_MAX", 80))
     mv = max(getattr(config, "ASS_MARGIN_V_MIN", 30),
              int(video_height * getattr(config, "ASS_MARGIN_V_RATIO", 0.07)))
-    m_en = mv + int(fs * getattr(config, "ASS_MARGIN_EN_RATIO", 1.4))
-    ol = getattr(config, "ASS_OUTLINE", 2.5)
     sh = getattr(config, "ASS_SHADOW", 0)
     use_bilingual = subtitle_mode == "bilingual"
+    # 字幕左右边距（居中留白，避免字幕贴边）
+    m_lr = getattr(config, "ASS_MARGIN_LR", 30)
+    # 英文略小于中文（比例可配）
+    en_fs = max(1, int(fs * getattr(config, "ASS_EN_FONT_RATIO", 0.8)))
+    # ASS V4+ 的 Outline 字段要求整数；浮点值会导致 libass 样式解析异常。
+    outline = max(0, int(round(float(getattr(config, "ASS_OUTLINE", 2)))))
+    # 双语使用一个事件和显式换行，两个样式共享同一底部锚点。
+    m_en = mv
+    m_cn = mv
 
-    styles = f"Style: Chinese,Noto Sans CJK SC,{fs},&H0000D7FF&,&H000000FF&,&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,{ol},{sh},2,20,20,{mv},1\n"
+    styles = (
+        f"Style: Chinese,Noto Sans CJK SC,{fs},&H0000D7FF&,&H000000FF&,&H00000000&,"
+        f"&H40000000&,0,0,0,0,100,100,0,0,3,{outline},{sh},2,{m_lr},{m_lr},{m_cn},1\n"
+    )
     if use_bilingual:
-        styles += f"Style: English,Noto Sans CJK SC,{fs},&H00E6E6E6&,&H000000FF&,&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,{ol},{sh},2,20,20,{m_en},1\n"
+        styles += (
+            f"Style: English,Noto Sans CJK SC,{en_fs},&H00E6E6E6&,&H000000FF&,"
+            f"&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,{outline},{sh},2,{m_lr},{m_lr},{m_en},1\n"
+        )
 
     hdr = f"""[Script Info]
 ScriptType: v4.00+
@@ -859,27 +926,29 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-    # 中文按宽度预换行（libass 对超长 CJK 的 smart wrap 不可靠，必须手动 \N）
-    max_text_width = int((video_width - 40) * 0.9)
+    # 中英文优先保持单行，英文仅在字号超过阈值时才按词预换行。
+    max_text_width = max(1, video_width - 2 * m_lr - 20)
+    en_manual_wrap = fs > getattr(config, "ASS_EN_WRAP_THRESHOLD", 40)
+    en_qtag = "\\q2" if en_manual_wrap else "\\q0"
     lines = [hdr]
     for ent in entries:
         ts = _seconds_to_ass_time(ent["start"])
         te = _seconds_to_ass_time(ent["end"])
-        eng = ent["english"]
-        chn = ent["chinese"]
+        eng = ent["english"].replace("\\N", " ").replace("\n", " ").strip()
+        chn = ent["chinese"].replace("\\N", " ").replace("\n", " ").strip()
+        # 中文仅在实际超出可用宽度时按字符/标点换行，正常内容保持单行。
+        if chn:
+            chn = _wrap_cjk_to_width(chn, fs, max_text_width)
+        if eng and en_manual_wrap:
+            eng = _wrap_english_to_width(eng, en_fs, max_text_width)
         if use_bilingual and eng and chn:
-            eng_safe = eng.replace("\n", "\\N")
-            chn_safe = _wrap_cjk_to_width(chn.replace("\n", "\\N"), fs, max_text_width)
-            lines.append(fr"Dialogue: 0,{ts},{te},Chinese,,0,0,0,,{{\q2}}{chn_safe}")
-            lines.append(fr"Dialogue: 0,{ts},{te},English,,0,0,0,,{{\q0}}{eng_safe}")
-        else:
-            text = chn or eng
-            style = "Chinese" if chn else "English"
-            text_safe = text.replace("\n", "\\N")
-            if style == "Chinese":
-                text_safe = _wrap_cjk_to_width(text_safe, fs, max_text_width)
-            qtag = "\\q2" if style == "Chinese" else "\\q0"
-            lines.append(fr"Dialogue: 0,{ts},{te},{style},,0,0,0,,{{{qtag}}}{text_safe}")
+            # 合并为一个事件：ASS 会以整个文本块为锚点，确保中文永远在上、英文永远在下。
+            text = _build_bilingual_ass_text(chn, eng, en_qtag)
+            lines.append(fr"Dialogue: 0,{ts},{te},Chinese,,0,0,0,,{text}")
+        elif chn:
+            lines.append(fr"Dialogue: 0,{ts},{te},Chinese,,0,0,0,,{{\q0}}{chn}")
+        elif eng:
+            lines.append(fr"Dialogue: 0,{ts},{te},English,,0,0,0,,{{{en_qtag}}}{eng}")
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))

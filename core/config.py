@@ -315,14 +315,20 @@ ASS_FONT_SIZE_MAX = 80
 # 用户可自定义的字号安全边界（防止极端值导致渲染异常）
 ASS_FONT_SIZE_USER_MIN = 14
 ASS_FONT_SIZE_USER_MAX = 120
-# 底部边距最小值
-ASS_MARGIN_V_MIN = 30
+# 底部边距最小值（字幕整体贴近底部，减少对画面的遮挡）
+ASS_MARGIN_V_MIN = 20
 # 底部边距比例（相对视频高度）
-ASS_MARGIN_V_RATIO = 0.07
-# 英文行 margin 增量比例（相对字号），双语模式下英文在上，需要更大的底部边距
-ASS_MARGIN_EN_RATIO = 1.4
-# 字幕描边宽度
-ASS_OUTLINE = 2.5
+ASS_MARGIN_V_RATIO = 0.03
+# 旧版英文 margin 配置，保留以兼容外部配置；双语位置由字号和底部边距动态计算
+# 字幕左右边距（像素，居中留白，避免字幕贴边铺满画面）
+ASS_MARGIN_LR = 30
+# 英文字号相对中文的比例（英文明显小于中文，40px 中文对应 30px 英文）
+ASS_EN_FONT_RATIO = 0.75
+# 英文换行阈值：字号超过该值时 libass 对 CJK 字体渲染英文测量易失准，
+# 改用手动预换行 + \q2；否则信任 libass \q0 自然换行（尽量单行铺满）
+ASS_EN_WRAP_THRESHOLD = 40
+# 字幕描边宽度（ASS 样式字段要求整数）
+ASS_OUTLINE = 2
 # 字幕阴影深度
 ASS_SHADOW = 0
 
