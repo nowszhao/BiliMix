@@ -81,7 +81,8 @@ def _synthesize_parallel(
             "config_path": config_path,
             "device": env.get("CONFUCIUS4_TTS_DEVICE", "cpu"),
             "jobs": [{"text": j["text"], "ref_audio": j["ref_audio"],
-                      "output_path": j["output_path"]} for j in chunk],
+                      "output_path": j["output_path"],
+                      "lang": j.get("lang", "zh")} for j in chunk],
             "temperature": getattr(config, "CONFUCIUS4_TTS_TEMPERATURE", 0.8),
             "top_p": getattr(config, "CONFUCIUS4_TTS_TOP_P", 0.8),
             "top_k": getattr(config, "CONFUCIUS4_TTS_TOP_K", 30),
@@ -228,6 +229,8 @@ def synthesize_sentences_with_confucius_tts(
     cancel_check=None,
     progress_cb=None,
     task_id: str = None,
+    lang: str = "zh",
+    seg_lang_map: dict = None,
 ) -> dict:
     """
     使用 Confucius4-TTS-CPU 为句子翻译模式合成中文 TTS 音频。
@@ -245,6 +248,9 @@ def synthesize_sentences_with_confucius_tts(
         cancel_check: 终止检查回调
         progress_cb: 进度回调 (current, total)
         task_id: 任务 ID（用于取消注册）
+        lang: 合成语种（默认 "zh"，可选 en/ja/ko）
+        seg_lang_map: {segment_index: lang} 逐句覆盖语种，用于中英混排按片段
+            指定发音语种（缺省则全部用 lang）
 
     Returns:
         dict: {segment_index: tts_wav_path} 映射
@@ -274,9 +280,12 @@ def synthesize_sentences_with_confucius_tts(
             print(f"  [跳过] seg[{seg_idx}] 缺少参考音频 ({ref_audio or '(空)'})")
             continue
 
-        # 缓存 key
+        # 该 segment 实际使用的语种（中英混排时按片段指定，见 mixed_lang.py）
+        eff_lang = (seg_lang_map or {}).get(seg_idx, lang)
+
+        # 缓存 key（含语种，避免切换 lang 时误命中旧缓存）
         cache_key = hashlib.md5(
-            f"conf_{chinese_text}|{ref_audio}".encode()
+            f"conf_{eff_lang}|{chinese_text}|{ref_audio}".encode()
         ).hexdigest()[:12]
         output_path = os.path.join(cache_dir, f"confucius_tts_{cache_key}.wav")
 
@@ -285,6 +294,7 @@ def synthesize_sentences_with_confucius_tts(
             "ref_audio": ref_audio,
             "output_path": output_path,
             "segment_index": seg_idx,
+            "lang": eff_lang,
         })
 
     if not jobs:
@@ -350,6 +360,7 @@ def synthesize_sentences_with_confucius_tts(
                 "text": j["text"],
                 "ref_audio": j["ref_audio"],
                 "output_path": j["output_path"],
+                "lang": j.get("lang", "zh"),
             }
             for j in pending_jobs
         ],

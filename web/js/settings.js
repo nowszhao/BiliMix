@@ -2334,6 +2334,22 @@ async function initPageConfig() {
         if (audioBgm && cfg.keep_bgm !== undefined) audioBgm.checked = cfg.keep_bgm;
         const videoBgm = document.getElementById('keep-bgm-checkbox');
         if (videoBgm && cfg.keep_bgm !== undefined) videoBgm.checked = cfg.keep_bgm;
+
+        // 应用参考音频策略默认值（新建任务弹窗预填全局设置值）
+        const audioRefMode = document.getElementById('audio-ref-select-mode');
+        if (audioRefMode && cfg.ref_select_mode !== undefined) {
+            audioRefMode.value = cfg.ref_select_mode;
+        }
+        const videoRefMode = document.getElementById('ref-select-mode');
+        if (videoRefMode && cfg.ref_select_mode !== undefined) {
+            videoRefMode.value = cfg.ref_select_mode;
+        }
+
+        // 应用字幕字号默认值（仅视频任务有该项；-1/0 由后端按视频高度自动计算）
+        const subFontSize = document.getElementById('sub-font-size');
+        if (subFontSize && cfg.sub_font_size_default !== undefined) {
+            subFontSize.value = cfg.sub_font_size_default;
+        }
     } catch (err) {
         console.warn('Failed to load config:', err);
     }

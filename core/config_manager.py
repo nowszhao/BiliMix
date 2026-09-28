@@ -63,10 +63,14 @@ UPDATABLE_CONFIGS = {
     "transcribe_gap_voice_dbfs": ("TRANSCRIBE_GAP_VOICE_DBFS", float),
     # --- 视频组装 ---
     "ffmpeg_threads_cap": ("FFMPEG_THREADS_CAP", int),
+    # 新建视频任务时字幕字号的默认值（-1/0 表示按视频高度自动）
+    "sub_font_size_default": ("ASS_FONT_SIZE_DEFAULT", int),
     # --- 水印 ---
     "watermark_enabled": ("WATERMARK_ENABLED", bool),
     "watermark_text": ("WATERMARK_TEXT", str),
     "watermark_opacity": ("WATERMARK_OPACITY", float),
+    # 水印字体文件（留空 = 自动探测中文字体）
+    "watermark_font": ("WATERMARK_FONT", str),
 }
 
 
@@ -137,10 +141,13 @@ def get_all_config() -> dict:
         "transcribe_gap_voice_dbfs": getattr(config, "TRANSCRIBE_GAP_VOICE_DBFS", -35.0),
         # 视频组装
         "ffmpeg_threads_cap": getattr(config, "FFMPEG_THREADS_CAP", 8),
+        # 新建视频任务时字幕字号的默认值（-1/0 表示按视频高度自动）
+        "sub_font_size_default": getattr(config, "ASS_FONT_SIZE_DEFAULT", 40),
         # 水印
         "watermark_enabled": getattr(config, "WATERMARK_ENABLED", True),
         "watermark_text": getattr(config, "WATERMARK_TEXT", "BiliMix"),
         "watermark_opacity": getattr(config, "WATERMARK_OPACITY", 0.5),
+        "watermark_font": getattr(config, "WATERMARK_FONT", ""),
     }
 
 

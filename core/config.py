@@ -18,12 +18,15 @@ OUTPUT_DIR = os.path.join(DATA_DIR, "transcripts")
 TTS_CACHE_DIR = os.path.join(DATA_DIR, "tts_cache")
 RESULT_DIR = os.path.join(DATA_DIR, "results")
 DOWNLOAD_DIR = os.path.join(DATA_DIR, "downloads")
+# 独立 TTS 合成任务（bmx tts）的产物目录。
+# 必须位于 RESULT_DIR 之下，这样 /api/audio/<路径> 才能直接提供下载。
+TTS_JOB_DIR = os.path.join(RESULT_DIR, "tts")
 
 # SQLite 数据库路径
 DB_PATH = os.path.join(DATA_DIR, "bilimix.db")
 
 # 自动确保数据目录存在
-for _d in (DATA_DIR, OUTPUT_DIR, TTS_CACHE_DIR, RESULT_DIR, DOWNLOAD_DIR):
+for _d in (DATA_DIR, OUTPUT_DIR, TTS_CACHE_DIR, RESULT_DIR, DOWNLOAD_DIR, TTS_JOB_DIR):
     os.makedirs(_d, exist_ok=True)
 
 # ========================
@@ -303,6 +306,9 @@ WATERMARK_ENABLED = True
 WATERMARK_TEXT = "BiliMix"
 # 水印透明度 (0.0 ~ 1.0)
 WATERMARK_OPACITY = 0.5
+# 水印字体文件路径（留空 = 自动探测系统中文字体）
+# drawtext 默认字体不含汉字字形，中文水印会渲染成空白，因此需要含 CJK 的字体
+WATERMARK_FONT = ""
 
 # ========================
 # ASS 字幕样式配置
@@ -315,6 +321,9 @@ ASS_FONT_SIZE_MAX = 80
 # 用户可自定义的字号安全边界（防止极端值导致渲染异常）
 ASS_FONT_SIZE_USER_MIN = 14
 ASS_FONT_SIZE_USER_MAX = 120
+# 新建视频任务时「字幕字号」的默认值（px）
+# 设为 -1 或 0 表示不指定，由视频高度自动计算
+ASS_FONT_SIZE_DEFAULT = 40
 # 底部边距最小值（字幕整体贴近底部，减少对画面的遮挡）
 ASS_MARGIN_V_MIN = 20
 # 底部边距比例（相对视频高度）

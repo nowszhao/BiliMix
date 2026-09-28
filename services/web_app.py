@@ -54,6 +54,7 @@ from services.podcast_api import podcast_bp
 from services.tools_api import tools_bp
 from services.media_api import media_bp
 from services.task_query import task_query_bp
+from services.tts_api import tts_bp
 
 from pipeline.step1_transcribe import transcribe, extract_full_text
 # step2_identify_difficult_words removed (word_replace mode deleted)
@@ -91,6 +92,7 @@ app.register_blueprint(podcast_bp)
 app.register_blueprint(tools_bp)
 app.register_blueprint(media_bp)
 app.register_blueprint(task_query_bp)
+app.register_blueprint(tts_bp)
 
 
 # ============================================================

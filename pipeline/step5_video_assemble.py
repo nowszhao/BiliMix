@@ -387,12 +387,59 @@ def _escape_path_for_filter(path: str) -> str:
     return path
 
 
+# 可渲染中文的水印字体候选路径，顺序即优先级。
+# drawtext 的默认字体（DejaVu 等）不含汉字字形，中文会渲染成空白，
+# 因此必须显式指定一个含 CJK 字形的字体文件。
+_WATERMARK_FONT_CANDIDATES = (
+    # Linux（Debian / Ubuntu / CentOS / TencentOS 常见路径）
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+    # macOS
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/Library/Fonts/Arial Unicode.ttf",
+    # Windows
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/simhei.ttf",
+)
+
+
+def _resolve_watermark_font() -> str:
+    """定位可渲染中文的水印字体文件。
+
+    优先级：config.WATERMARK_FONT > 常见中文字体路径 > 空字符串
+    （空字符串表示回落 drawtext 默认字体，此时中文会渲染为空白）。
+    """
+    configured = (getattr(config, "WATERMARK_FONT", "") or "").strip()
+    if configured:
+        if os.path.isfile(configured):
+            return configured
+        print(f"[Step5] 警告: 配置的水印字体不存在: {configured}，改用自动探测")
+
+    for path in _WATERMARK_FONT_CANDIDATES:
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
 def _apply_watermark(video_path: str) -> str:
     """对视频叠加半透明文字水印（drawtext 滤镜）。
 
     水印位置为右下角，带轻微描边以保证深浅背景均可读。
-    配置项: WATERMARK_ENABLED, WATERMARK_TEXT, WATERMARK_OPACITY
+    配置项: WATERMARK_ENABLED, WATERMARK_TEXT, WATERMARK_OPACITY, WATERMARK_FONT
     返回带水印的新文件路径，或原路径（水印禁用时）。
+
+    中文支持说明：
+      - 显式指定含 CJK 字形的字体（见 _resolve_watermark_font），
+        否则默认字体没有汉字字形，中文会渲染成空白；
+      - 文本经 textfile 传入并关闭 expansion，避免中文、引号、冒号、
+        百分号在 filter 表达式中的转义问题。
     """
     enabled = getattr(config, "WATERMARK_ENABLED", True)
     text = getattr(config, "WATERMARK_TEXT", "BiliMix")
@@ -401,51 +448,76 @@ def _apply_watermark(video_path: str) -> str:
     if not enabled or not text or not text.strip():
         return video_path
 
-    # 转义单引号和冒号，避免 ffmpeg 解析错误
-    escaped_text = text.replace("'", "\\'").replace(":", "\\:")
+    # 水印为单行：把换行/连续空白压成单个空格
+    text = " ".join(text.split())
+    if not text:
+        return video_path
 
-    drawtext = (
-        f"drawtext=text='{escaped_text}':"
-        f"fontsize=24:"
-        f"fontcolor=white@{opacity}:"
-        f"bordercolor=black@0.5:"
-        f"borderw=1:"
-        f"x=W-tw-20:"
-        f"y=H-th-20"
-    )
-
-    tmp_path = video_path + ".watermark.mp4"
-    cmd = [
-        "ffmpeg", "-y", "-loglevel", "error",
-        "-threads", _FFMPEG_THREADS,
-        "-i", video_path,
-        "-vf", drawtext,
-        "-c:a", "copy",
-        tmp_path,
-    ]
-
-    print(f"[Step5] 叠加水印: \"{text}\" (opacity={opacity})")
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
-
-    if r.returncode != 0:
-        print(f"[Step5] 水印叠加失败: {r.stderr.strip()[-500:]}")
-        # 清理失败的临时文件
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        return video_path  # 返回原文件
-
-    # 原子替换
+    font_path = _resolve_watermark_font()
+    text_file = None
     try:
-        os.replace(tmp_path, video_path)
-    except OSError:
+        # 文本走 textfile，规避 filter 表达式转义（中文/引号/冒号/百分号）
+        fd, text_file = tempfile.mkstemp(prefix="bilimix_watermark_",
+                                         suffix=".txt")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+
+        parts = [f"textfile='{_escape_path_for_filter(text_file)}'"]
+        if font_path:
+            parts.append(f"fontfile='{_escape_path_for_filter(font_path)}'")
+        else:
+            print("[Step5] 警告: 未找到中文字体，水印中的中文将无法显示；"
+                  "可通过配置项 WATERMARK_FONT 指定字体文件")
+        parts += [
+            "expansion=none",
+            "fontsize=24",
+            f"fontcolor=white@{opacity}",
+            "bordercolor=black@0.5",
+            "borderw=1",
+            "x=W-tw-20",
+            "y=H-th-20",
+        ]
+        drawtext = "drawtext=" + ":".join(parts)
+
+        tmp_path = video_path + ".watermark.mp4"
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-threads", _FFMPEG_THREADS,
+            "-i", video_path,
+            "-vf", drawtext,
+            "-c:a", "copy",
+            tmp_path,
+        ]
+
+        print(f"[Step5] 叠加水印: \"{text}\" (opacity={opacity}, "
+              f"font={os.path.basename(font_path) if font_path else '默认'})")
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+
+        if r.returncode != 0:
+            print(f"[Step5] 水印叠加失败: {r.stderr.strip()[-500:]}")
+            # 清理失败的临时文件
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            return video_path  # 返回原文件
+
+        # 原子替换
         try:
-            os.remove(video_path)
-            os.rename(tmp_path, video_path)
+            os.replace(tmp_path, video_path)
         except OSError:
-            print("[Step5] 水印文件替换失败，保留原文件")
-            return video_path
+            try:
+                os.remove(video_path)
+                os.rename(tmp_path, video_path)
+            except OSError:
+                print("[Step5] 水印文件替换失败，保留原文件")
+                return video_path
+    finally:
+        if text_file:
+            try:
+                os.remove(text_file)
+            except OSError:
+                pass
 
     print(f"[Step5] 水印叠加完成")
     return video_path

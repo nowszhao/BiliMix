@@ -153,6 +153,114 @@ bmx translate word-levels --words "hello,world"
 bmx translate word-levels --words-file words.json
 ```
 
+## 独立语音合成（TTS）
+
+与翻译流水线解耦的语音合成：**一段参考音频 + 文本 → 一条音频**。
+基于 Confucius4-TTS-CPU 的零样本声音克隆，不需要微调，同一段参考音频的音色
+可以复用到任意文本（参考音频可以是任意说话人，只决定音色与语速风格，
+**不需要**提供参考音频对应的文字）。
+
+### 提交合成
+
+```bash
+# 本地参考音频（自动上传到服务端）+ 一句话，等待并直接下载
+bmx tts synth --ref-audio ./ref.wav --text "要合成的话" --wait -o out.wav
+
+# 用服务端已有的参考音频，批量合成多段文本（文本文件每行一条）
+bmx tts synth --ref-path /root/BiliMix/data/downloads/ref.wav --text-file script.txt
+
+# 多段文本也可以直接写在命令行（--text 可重复）
+bmx tts synth --ref-audio ./ref.wav --text "第一句" --text "第二句" --wait
+
+# JSON 数组传文本，不等待
+bmx tts synth --ref-audio ./ref.wav --texts '["你好","世界"]' --title demo
+```
+
+| 参数 | 说明 |
+|------|------|
+| `--ref-audio FILE` | 本地参考音频/视频文件，CLI 自动上传（与 `--ref-path` 二选一） |
+| `--ref-path PATH` | 服务端已存在的参考音频路径，**必须位于服务端 `data/` 目录内** |
+| `--text TEXT` | 待合成文本，可重复指定多段 |
+| `--texts JSON` | 待合成文本的 JSON 数组 |
+| `--text-file FILE` | 文本文件，**每行一条**（空行忽略） |
+| `--lang` | `auto`(默认) / `zh` / `en` / `ja` / `ko`，见下 |
+| `--title` | 任务标题 |
+| `--wait` | 提交后阻塞等待完成 |
+| `-o, --output FILE` | 仅单条文本时可用：等待完成后直接下载到该文件 |
+
+### 合成语种 `--lang`
+
+| 值 | 行为 |
+|----|------|
+| `auto`（默认） | 把文本按语种切成同语种片段，**每段用对应语种分别合成**，再在服务端拼回一条音频。中英混排时中文咬字更清楚 |
+| `zh` / `en` / `ja` / `ko` | 整段共用一套发音规则，语流最连贯 |
+
+取舍：引擎是**单语种推理**（一次调用只带一个 language token），所以中英混排时
+两种语言必然共用一套发音规则。`auto` 让每个语种各自发音，代价是片段之间为
+拼接关系；`zh`/`en` 语流更连贯，代价是混排时中文会被英文腔带走。
+纯中文或纯英文文本两者结果一致。
+
+### 中英混排的可懂度优化（纯文本手段）
+
+除 `auto` 之外，还可以给中文片段两侧加**逗号**制造停顿，让中文更清楚：
+
+```
+I am very 荣幸 to be here.   ->   I am very, 荣幸, to be here.
+```
+
+注意：**引号类符号不是韵律标记**（会被文本规范化环节去掉，不产生停顿），
+必须用逗号这类真实标点。片段自身或相邻位置已有标点时不重复添加。
+该标注由 `pipeline/mixed_lang.py` 的 `annotate_language_runs()` 实现，
+可在本地生成文本时调用。
+
+### 查看 / 操作任务
+
+```bash
+bmx tts list [--limit N] [--status queued|processing|completed|error|cancelled]
+bmx tts status <job_id>
+bmx tts result <job_id>                  # 含每条产物的 audio_url / duration / size_bytes
+bmx tts download <job_id> [--index N] [-o FILE]
+bmx tts wait <job_id> [-o FILE]
+bmx tts cancel <job_id>
+bmx tts retry <job_id> [--wait]          # 复用已完成片段，只补缺失部分
+bmx tts delete <job_id>                  # 删除任务及其产物
+bmx tts languages                        # 支持的语种
+```
+
+任务状态流转：`queued` → `processing` → `completed` / `error` / `cancelled`。
+
+### 产物与 REST 接口
+
+产物写在服务端 `data/results/tts/<job_id>/`，可直接用
+`/api/audio/tts/<job_id>/<file>` 下载。
+
+| 接口 | 说明 |
+|------|------|
+| `POST /api/tts/synthesize` | 提交合成（body: `ref_audio`、`text`/`texts`、`lang`、`title`） |
+| `GET /api/tts/jobs` | 任务列表（`?limit=`、`?status=`） |
+| `GET /api/tts/<job_id>` | 任务状态 |
+| `GET /api/tts/<job_id>/result` | 任务结果（含音频下载地址） |
+| `POST /api/tts/<job_id>/cancel` | 终止（同时杀掉 worker 子进程） |
+| `POST /api/tts/<job_id>/retry` | 重新执行 |
+| `DELETE /api/tts/<job_id>` | 删除任务与产物 |
+| `GET /api/tts/languages` | 支持的语种 |
+
+### 注意
+
+- **参考音频必须位于服务端 `data/` 目录内**（`--ref-audio` 会自动上传）。
+  服务端不接受任意路径，也**不支持从 URL 拉取参考音频**（避免 SSRF）。
+- 参考音频建议 **2~15 秒**的连续干净语音；太短容易音色漂移，太长只增加预处理耗时。
+  合成语速会被引擎「跟随」参考音频，想要更快就换语速更快的参考音频。
+- **TTS 任务全局串行**：单个任务已按 `CONFUCIUS4_TTS_NUM_WORKERS` 拉起多个
+  worker 子进程（每个约 2~4GB 内存），因此同一时间只跑一个任务，其余保持
+  `queued`（排队期间可直接取消）。
+- 单次上限：**200 条文本、单条 5000 字符**。
+- 相同输入（参考音频 + 文本 + 语种）会命中同一 `job_id` 与磁盘缓存，重复提交
+  秒回 `reused: true`；失败后 `retry` 只补缺失片段，已合成的不会重算。
+- 服务重启会把处于 `queued` / `processing` 的任务标记为中断，需重新提交。
+- 每个任务首次运行需加载模型（约 20 秒起），**一次提交多条文本可摊薄该开销**。
+- 产物时长/大小可直接从 `bmx tts result` 读取。
+
 ## 播客 & 订阅
 
 ```bash
@@ -218,4 +326,7 @@ bmx video download-srt --task-id <id> -o subtitle.ass
 bmx audio upload ./subtitle.ass
 bmx task submit --type video --video-url "https://youtu.be/xxx" \
     --subtitle-path "<local_path>" --wait
+
+# 独立 TTS：本地参考音频 + 一句话，直接出音频
+bmx tts synth --ref-audio ./ref.wav --text "要合成的话" --wait -o out.wav
 ```

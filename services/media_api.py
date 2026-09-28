@@ -243,6 +243,49 @@ def api_index():
         "description": "仅重试 TTS 语音合成步骤",
     })
 
+    # 独立 TTS 合成
+    endpoints.append({
+        "path": "/api/tts/synthesize",
+        "method": "POST",
+        "description": "提交独立 TTS 合成任务（参考音频 + 文本）",
+        "params": {"ref_audio": "服务端参考音频路径（先经 /api/upload 上传）",
+                   "text": "单条待合成文本",
+                   "texts": "多条待合成文本数组",
+                   "lang": "合成语种，默认 zh",
+                   "title": "任务标题"},
+    })
+    endpoints.append({
+        "path": "/api/tts/jobs",
+        "method": "GET",
+        "description": "TTS 任务列表",
+        "params": {"limit": "最大条数", "status": "按状态过滤"},
+    })
+    endpoints.append({
+        "path": "/api/tts/<job_id>",
+        "methods": ["GET", "DELETE"],
+        "description": "查询/删除 TTS 任务",
+    })
+    endpoints.append({
+        "path": "/api/tts/<job_id>/result",
+        "method": "GET",
+        "description": "获取 TTS 任务结果（含音频下载地址）",
+    })
+    endpoints.append({
+        "path": "/api/tts/<job_id>/cancel",
+        "method": "POST",
+        "description": "终止 TTS 任务",
+    })
+    endpoints.append({
+        "path": "/api/tts/<job_id>/retry",
+        "method": "POST",
+        "description": "重试 TTS 任务",
+    })
+    endpoints.append({
+        "path": "/api/tts/languages",
+        "method": "GET",
+        "description": "支持的合成语种",
+    })
+
     # Podcast endpoints
     endpoints.append({
         "path": "/api/favorites",

@@ -23,6 +23,7 @@ BiliMix CLI — 面向 AI Agent 的命令行接口
   bmx task submit --url https://x.com/ep.mp3 --mode sentence_translate --wait
   bmx task result <task_id> --field result.mixed_audio
   bmx audio download --task-id <id> --type mixed -o out.mp3
+  bmx tts synth --ref-audio ref.mp3 --text "要合成的话" --wait -o out.wav
 """
 import argparse
 import json
@@ -62,6 +63,9 @@ TERMINAL_STATUSES = {
     "awaiting_confirmation",
     "awaiting_sentence_confirmation",
 }
+
+# 独立 TTS 任务的终态（无确认环节）
+TTS_TERMINAL_STATUSES = {"completed", "error", "cancelled"}
 
 
 # ============================================================
@@ -929,6 +933,220 @@ def cmd_api_index(args, client):
 
 
 # ============================================================
+# tts 命令（独立语音合成：参考音频 + 文本 → 音频）
+# ============================================================
+
+def _upload_ref_audio(client, path):
+    """上传本地参考音频到服务端，返回服务端路径"""
+    if not os.path.isfile(path):
+        raise CLIError(f"参考音频不存在: {path}")
+    with open(path, "rb") as f:
+        files = {"file": (os.path.basename(path), f)}
+        result = client.request("POST", "/api/upload", files=files)
+    local_path = (result or {}).get("local_path", "")
+    if not local_path:
+        raise CLIError("参考音频上传失败：服务端未返回 local_path", EXIT_API_ERROR)
+    return local_path
+
+
+def _collect_texts(args):
+    """收集待合成文本：--text(可重复) / --texts(JSON) / --text-file(每行一条)"""
+    texts = []
+    for t in (getattr(args, "text", None) or []):
+        if t and t.strip():
+            texts.append(t.strip())
+
+    raw_texts = getattr(args, "texts", None)
+    if raw_texts:
+        try:
+            parsed = json.loads(raw_texts)
+        except json.JSONDecodeError as e:
+            raise CLIError(f"无效的 --texts JSON: {e}")
+        if not isinstance(parsed, list):
+            parsed = [parsed]
+        texts.extend(str(t).strip() for t in parsed if str(t).strip())
+
+    text_file = getattr(args, "text_file", None)
+    if text_file:
+        if not os.path.isfile(text_file):
+            raise CLIError(f"文本文件不存在: {text_file}")
+        with open(text_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    texts.append(line)
+
+    if not texts:
+        raise CLIError("必须提供 --text、--texts 或 --text-file")
+    return texts
+
+
+def _resolve_ref_audio(args, client):
+    """解析参考音频：优先用服务端已有路径，否则上传本地文件"""
+    if getattr(args, "ref_path", None):
+        return args.ref_path
+    local = getattr(args, "ref_audio", None)
+    if not local:
+        raise CLIError("必须提供 --ref-audio（本地文件）或 --ref-path（服务端路径）")
+    if not args.quiet:
+        log_err(f"[tts] 上传参考音频: {local}")
+    return _upload_ref_audio(client, local)
+
+
+def _tts_download_output(client, result, output, quiet):
+    """从任务结果下载指定产物（默认第 0 条）"""
+    outputs = (result or {}).get("outputs") or []
+    if not outputs:
+        raise CLIError("任务结果中没有音频产物")
+    url = outputs[0].get("audio_url", "")
+    if not url:
+        raise CLIError("任务结果中缺少音频下载地址")
+    downloaded = _download_file(client, url, output, label="tts", quiet=quiet)
+    return downloaded
+
+
+def _wait_tts_job(client, job_id, args, output=None):
+    """轮询 TTS 任务直到终态；进度打 stderr，结果打 stdout"""
+    interval = getattr(args, "poll_interval", 2.0) or 2.0
+    last_progress = -1
+    while True:
+        try:
+            status = client.get(f"/api/tts/{job_id}")
+        except CLIError as e:
+            log_err(f"[poll] 查询失败: {e.message}")
+            time.sleep(interval)
+            continue
+
+        st = status.get("status", "")
+        prog = status.get("progress", 0)
+        msg = status.get("message", "")
+        if prog != last_progress and not args.quiet:
+            sys.stderr.write(f"\r[tts] {prog:3d}% {st} — {msg}" + " " * 10)
+            sys.stderr.flush()
+            last_progress = prog
+
+        if st in TTS_TERMINAL_STATUSES:
+            if not args.quiet:
+                sys.stderr.write("\n")
+            result = client.get(f"/api/tts/{job_id}/result")
+            if output:
+                downloaded = _tts_download_output(client, result, output, args.quiet)
+                emit({"ok": True, "job_id": job_id, "status": st,
+                      "path": output, "size_bytes": downloaded,
+                      "outputs": result.get("outputs", [])},
+                     pretty=args.pretty, field=args.field)
+            else:
+                emit(result, pretty=args.pretty, field=args.field)
+            if st == "completed":
+                return EXIT_OK
+            return EXIT_API_ERROR
+
+        time.sleep(interval)
+
+
+def cmd_tts_synth(args, client):
+    texts = _collect_texts(args)
+    if args.output and len(texts) > 1:
+        raise CLIError("-o/--output 仅在合成单条文本时可用，"
+                       f"当前 {len(texts)} 条，请改用 tts download --index")
+
+    ref_audio = _resolve_ref_audio(args, client)
+
+    body = {"ref_audio": ref_audio, "texts": texts}
+    if getattr(args, "lang", None):
+        body["lang"] = args.lang
+    if getattr(args, "title", None):
+        body["title"] = args.title
+
+    result = client.post_json("/api/tts/synthesize", body)
+    job_id = result.get("job_id")
+
+    if args.wait and job_id:
+        return _wait_tts_job(client, job_id, args, output=args.output)
+
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_tts_status(args, client):
+    result = client.get(f"/api/tts/{args.job_id}")
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_tts_wait(args, client):
+    return _wait_tts_job(client, args.job_id, args, output=args.output)
+
+
+def cmd_tts_result(args, client):
+    result = client.get(f"/api/tts/{args.job_id}/result")
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_tts_list(args, client):
+    params = {}
+    if getattr(args, "limit", None):
+        params["limit"] = args.limit
+    if getattr(args, "status", None):
+        params["status"] = args.status
+    result = client.get("/api/tts/jobs", params=params or None)
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_tts_cancel(args, client):
+    result = client.post_json(f"/api/tts/{args.job_id}/cancel")
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_tts_retry(args, client):
+    result = client.post_json(f"/api/tts/{args.job_id}/retry")
+    if args.wait:
+        return _wait_tts_job(client, args.job_id, args, output=args.output)
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_tts_download(args, client):
+    result = client.get(f"/api/tts/{args.job_id}/result")
+    outputs = result.get("outputs") or []
+    if not outputs:
+        raise CLIError(f"任务 {args.job_id} 没有可下载的音频 "
+                       f"(状态: {result.get('status')})")
+
+    index = args.index or 0
+    if index < 0 or index >= len(outputs):
+        raise CLIError(f"--index 超出范围: {index}（共 {len(outputs)} 条）")
+    item = outputs[index]
+
+    url = item.get("audio_url", "")
+    if not url:
+        raise CLIError("任务结果中缺少音频下载地址")
+
+    output = args.output or item.get("filename") or "tts.wav"
+    downloaded = _download_file(client, url, output, label="tts", quiet=args.quiet)
+    emit({"ok": True, "job_id": args.job_id, "index": index,
+          "path": output, "size_bytes": downloaded,
+          "text": item.get("text", ""), "duration": item.get("duration", 0)},
+         pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_tts_delete(args, client):
+    result = client.delete_json(f"/api/tts/{args.job_id}")
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+def cmd_tts_languages(args, client):
+    result = client.get("/api/tts/languages")
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
+# ============================================================
 # argparse 构建
 # ============================================================
 
@@ -1279,6 +1497,76 @@ def build_parser():
     p.add_argument("pairs", nargs="*", help="KEY=VALUE 对，可多个")
     p.add_argument("--file", help="从 JSON 文件批量读取")
     p.set_defaults(func=cmd_config_set)
+
+    # ---- tts ----
+    p_tts = add_cmd(sub, "tts", help="独立语音合成（参考音频 + 文本）")
+    tts_sub = p_tts.add_subparsers(dest="subcommand", required=True)
+
+    p = add_cmd(tts_sub, "synth", help="用参考音频合成文本（声音克隆）")
+    g_ref = p.add_mutually_exclusive_group(required=True)
+    g_ref.add_argument("--ref-audio", help="本地参考音频/视频文件（自动上传到服务端）")
+    g_ref.add_argument("--ref-path", help="服务端已存在的参考音频路径")
+    p.add_argument("--text", action="append",
+                   help="待合成文本，可重复指定多段")
+    p.add_argument("--texts", help="待合成文本 JSON 数组")
+    p.add_argument("--text-file", help="待合成文本文件（每行一条）")
+    p.add_argument("--lang", default="auto",
+                   choices=["auto", "zh", "en", "ja", "ko"],
+                   help="合成语种 (默认 auto: 按语种切分后分别合成，"
+                        "中英混排时中文咬字更清楚)")
+    p.add_argument("--title", help="任务标题")
+    p.add_argument("--wait", action="store_true", help="提交后阻塞等待完成")
+    p.add_argument("--poll-interval", type=float, default=2.0,
+                   help="轮询间隔秒数 (默认 2.0)")
+    p.add_argument("-o", "--output", help="合成单条文本时的输出文件名")
+    p.set_defaults(func=cmd_tts_synth)
+
+    p = add_cmd(tts_sub, "list", help="任务列表")
+    p.add_argument("--limit", type=int, help="最大返回条数")
+    p.add_argument("--status",
+                   choices=["queued", "processing", "completed", "error",
+                            "cancelled"],
+                   help="按状态过滤")
+    p.set_defaults(func=cmd_tts_list)
+
+    p = add_cmd(tts_sub, "status", help="任务状态")
+    p.add_argument("job_id")
+    p.set_defaults(func=cmd_tts_status)
+
+    p = add_cmd(tts_sub, "result", help="任务结果（含音频下载地址）")
+    p.add_argument("job_id")
+    p.set_defaults(func=cmd_tts_result)
+
+    p = add_cmd(tts_sub, "download", help="下载合成结果")
+    p.add_argument("job_id")
+    p.add_argument("--index", type=int, default=0,
+                   help="第几条产物，从 0 开始 (默认 0)")
+    p.add_argument("-o", "--output", help="输出文件名")
+    p.set_defaults(func=cmd_tts_download)
+
+    p = add_cmd(tts_sub, "wait", help="等待任务完成")
+    p.add_argument("job_id")
+    p.add_argument("--poll-interval", type=float, default=2.0)
+    p.add_argument("-o", "--output", help="完成后直接下载到指定文件")
+    p.set_defaults(func=cmd_tts_wait)
+
+    p = add_cmd(tts_sub, "cancel", help="终止任务")
+    p.add_argument("job_id")
+    p.set_defaults(func=cmd_tts_cancel)
+
+    p = add_cmd(tts_sub, "retry", help="重新执行任务")
+    p.add_argument("job_id")
+    p.add_argument("--wait", action="store_true", help="重试后等待完成")
+    p.add_argument("--poll-interval", type=float, default=2.0)
+    p.add_argument("-o", "--output", help="完成后直接下载到指定文件")
+    p.set_defaults(func=cmd_tts_retry)
+
+    p = add_cmd(tts_sub, "delete", help="删除任务及其产物")
+    p.add_argument("job_id")
+    p.set_defaults(func=cmd_tts_delete)
+
+    p = add_cmd(tts_sub, "languages", help="查看支持的合成语种")
+    p.set_defaults(func=cmd_tts_languages)
 
     # ---- api ----
     p = add_cmd(sub, "api", help="API 元信息")

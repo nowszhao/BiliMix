@@ -119,6 +119,26 @@ bmx auth login --username admin --password bilimix2024
 | `bmx config get / set` | 配置管理 |
 | `bmx api` | API 端点目录 |
 
+### 独立语音合成（TTS）
+
+参考音频 + 文本 → 音频，零样本声音克隆，与翻译流水线完全解耦。
+
+| 命令 | 说明 |
+|------|------|
+| `bmx tts synth --ref-audio <FILE> --text <TEXT> [--wait] [-o FILE]` | 本地参考音频（自动上传）+ 文本合成 |
+| `bmx tts synth --ref-path <PATH> --text-file <FILE> [--lang auto]` | 用服务端参考音频批量合成（文本文件每行一条） |
+| `bmx tts list [--limit N] [--status S]` | 任务列表 |
+| `bmx tts status <job_id>` | 任务状态 |
+| `bmx tts result <job_id>` | 任务结果（含音频下载地址） |
+| `bmx tts download <job_id> [--index N] [-o FILE]` | 下载合成结果 |
+| `bmx tts wait <job_id> [-o FILE]` | 等待任务完成 |
+| `bmx tts cancel / retry / delete <job_id>` | 终止 / 重试 / 删除任务 |
+| `bmx tts languages` | 支持的合成语种 |
+
+`--lang`：`auto`(默认，按语种切分分别合成，中英混排中文更清楚) /
+`zh` / `en` / `ja` / `ko`(整段一套发音规则，语流更连贯)。
+参考音频必须位于服务端 `data/` 目录内。详见 `docs/cli.md`。
+
 ### 全局选项
 
 - `--server URL` 服务地址

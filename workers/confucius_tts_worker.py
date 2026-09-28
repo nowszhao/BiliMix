@@ -107,6 +107,8 @@ def main():
             text = job.get("text", "")
             ref_audio = job.get("ref_audio", "")
             output_path = job.get("output_path", "")
+            # 合成语种，默认中文；调用方可按 job 覆盖
+            lang = job.get("lang") or "zh"
 
             if not text or not ref_audio or not output_path:
                 print(f"[ConfuciusWorker] [{i+1}/{total}] 跳过: 参数不完整", flush=True, file=sys.stderr)
@@ -140,7 +142,7 @@ def main():
             try:
                 audio = model.generate(
                     text=text,
-                    lang="zh",
+                    lang=lang,
                     prompt_wav=ref_audio,
                     **gen_kwargs,
                 )

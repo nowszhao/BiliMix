@@ -289,6 +289,27 @@ BiliMix/
 | /api/audio/<path> | GET | 提供音频文件流 |
 | /api | GET | API 元信息 |
 
+### 独立语音合成（TTS）
+
+参考音频 + 文本 → 音频，零样本声音克隆，与翻译流水线完全解耦
+（不经过下载 / 转录 / 翻译 / 混音）。产物位于 `data/results/tts/<job_id>/`，
+可经 `/api/audio/tts/<job_id>/<file>` 下载。
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| /api/tts/synthesize | POST | 提交合成（`ref_audio` + `text`/`texts` + `lang`） |
+| /api/tts/jobs | GET | 任务列表 |
+| /api/tts/<job_id> | GET | 查询任务状态与进度 |
+| /api/tts/<job_id>/result | GET | 获取任务结果（含音频下载地址） |
+| /api/tts/<job_id>/cancel | POST | 终止任务 |
+| /api/tts/<job_id>/retry | POST | 重新执行（复用已完成片段） |
+| /api/tts/<job_id> | DELETE | 删除任务及其产物 |
+| /api/tts/languages | GET | 支持的合成语种 |
+
+`lang` 取 `auto` 时按语种切分文本、分别合成后用服务端拼接成一条音频，
+用于改善中英混排时中文的可懂度；取 `zh`/`en`/`ja`/`ko` 时整段共用一套
+发音规则，语流更连贯。参考音频必须位于服务端 `data/` 目录内。
+
 ## 前置要求
 
 1. **Python 3.10+** + conda 环境
@@ -308,6 +329,7 @@ bmx task list
 bmx task result <task_id>
 bmx task submit --type video --video-url https://www.youtube.com/watch?v=xxx --wait
 bmx video download --task-id <task_id> -o dubbed.mp4
+bmx tts synth --ref-audio ./ref.wav --text "要合成的话" --wait -o out.wav
 ```
 
 完整命令参考见 `sdk/README.md` 与 `sdk/docs/cli.md`。
