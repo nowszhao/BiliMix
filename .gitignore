@@ -50,3 +50,4 @@ core/config_local.py
 .venv_whisperx
 scripts/whisperx_run.py
 .claude
+docs/*
