@@ -200,8 +200,8 @@
   <section class="hero">
     <div class="wrap hero-inner">
       <h1>BiliMix</h1>
-      <p class="lede">Translate English podcasts, audio, and videos sentence by sentence into Chinese, then read the translations aloud in the original speaker's voice.</p>
-      <p class="desc">By default every sentence is dubbed into Chinese with the original timbre; set <code style="color:#9FC6FF">sentence_cn_ratio</code> to 0.5 and the narration alternates English / Chinese. Video mode also burns in bilingual subtitles. Podcast subscriptions with update tracking, word lookup, and standalone TTS are built in — inference runs entirely on your machine.</p>
+      <p class="lede">Translate English audio and video sentence by sentence into Chinese and read it aloud in the original speaker's voice.</p>
+      <p class="desc">Audio comes out as a Chinese-dubbed MP3, video as a dubbed MP4 with bilingual subtitles — the original lines are replaced one by one, in the original speaker's voice. Transcription, translation, and synthesis run entirely on your machine.</p>
       <div class="cta">
         <a class="btn btn-primary" href="#start">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L19 7"/></svg>
@@ -255,41 +255,42 @@
     <div class="wrap">
       <div class="sec-head">
         <div class="eyebrow">Features</div>
-        <h2>Every stage exists so you actually understand it</h2>
-        <p>Sentence-aligned interleaving rather than swapping out the whole track; every stage can be tuned or re-run on its own.</p>
+        <h2>Original voice, line by line, tunable</h2>
+        <p>Audio and video share one pipeline. Chinese ratio, background music, subtitles, and the watermark are all tunable, and failures re-run from the breakpoint.</p>
       </div>
       <div class="grid">
         <div class="tile">
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg></div>
           <h3>Dubbing in the original voice</h3>
-          <p>Confucius4-TTS zero-shot clones the speaker's timbre to read the Chinese translation, replacing the original line by line.</p>
+          <p>Confucius4-TTS zero-shot clones the speaker&#39;s timbre to read the Chinese translation, replacing the original line by line.</p>
+        </div>
+        <div class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+          <h3>Audio dubbing</h3>
+          <p>English podcasts / audio, URL or local file → Chinese-dubbed MP3.</p>
+        </div>
+        <div class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg></div>
+          <h3>Video dubbing</h3>
+          <p>YouTube / local MP4 / server path → dubbed MP4 with bilingual or Chinese-only subtitles, plus an optional watermark.</p>
         </div>
         <div class="tile">
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6 3 12l5 6"/><path d="m16 6 5 6-5 6"/></svg></div>
           <h3>Tunable Chinese ratio</h3>
-          <p><code>sentence_cn_ratio</code>: 1.0 dubs every sentence, 0.5 alternates English and Chinese, 0 keeps the original audio; BGM can be kept.</p>
+          <p><code>sentence_cn_ratio</code>: 1.0 all Chinese, 0.5 alternating, 0 keeps the original audio; the original BGM can be kept.</p>
         </div>
         <div class="tile">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg></div>
-          <h3>Video dubbing and subtitles</h3>
-          <p>YouTube, local MP4, or a server path → dubbed MP4 with bilingual, Chinese-only, or no burned-in subtitles, plus an optional watermark.</p>
-        </div>
-        <div class="tile">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h8"/><path d="M8 17h5"/></svg></div>
-          <h3>Bring your own subtitles</h3>
-          <p>Upload a bilingual .ass / .srt file to skip transcription and translation and go straight to synthesis.</p>
-        </div>
-        <div class="tile">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg></div>
-          <h3>Podcast subscriptions</h3>
-          <p>iTunes search plus RSS subscriptions, scheduled update fetching, unread counts, favorites, and search history.</p>
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></div>
+          <h3>Built for long media</h3>
+          <p>Every step is persisted and failures retry from the breakpoint; long videos assemble in parallel blocks.</p>
         </div>
         <div class="tile">
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></div>
           <h3>CLI and API</h3>
-          <p>Every step is persisted and failures retry from the breakpoint; the <code>bmx</code> CLI and REST API cover the whole pipeline.</p>
+          <p>The <code>bmx</code> CLI and REST API cover the whole pipeline, plus a standalone TTS endpoint.</p>
         </div>
       </div>
+      <p class="note">Also included: podcast subscriptions with update tracking, dubbing straight from an existing bilingual .ass / .srt (skipping transcription and translation), and word lookup.</p>
     </div>
   </section>
 

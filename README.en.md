@@ -4,12 +4,9 @@
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 
-Translate English podcasts, audio, and videos sentence by sentence into Chinese, then read the
-translations aloud in the original speaker's voice — by default every sentence is dubbed into Chinese;
-set `sentence_cn_ratio` to `0.5` and the narration alternates English / Chinese. Video mode also burns
-bilingual subtitles into an MP4. On top of the dubbing pipeline: podcast subscriptions with update
-tracking, word lookup, and a standalone TTS endpoint. Transcription, translation, and synthesis all run
-locally; media never leaves your machine.
+Translate English audio and video sentence by sentence into Chinese and read it aloud in the original
+speaker's voice — audio comes out as a Chinese-dubbed MP3, video as a dubbed MP4 with bilingual
+subtitles. Transcription, translation, and synthesis all run locally; media never leaves your machine.
 
 [中文](README.md)
 
@@ -27,12 +24,14 @@ Click an image for the full video (`examples/test1.mp4`, `examples/test1_mixed.m
 
 ## Features
 
-- **Dubbing in the original voice**: Confucius4-TTS zero-shot clones the speaker's timbre to read the Chinese translation, replacing the original line by line
-- **Tunable Chinese ratio**: `sentence_cn_ratio` drives the mix — `1.0` dubs every sentence, `0.5` alternates English and Chinese, `0` keeps the original English
-- **Video dubbing and subtitles**: YouTube / local MP4 / server path → dubbed MP4 with bilingual, Chinese-only, or no burned-in subtitles, plus an optional configurable watermark
-- **Bring your own subtitles**: upload a bilingual `.ass` / `.srt` file to skip transcription and translation and go straight to synthesis
-- **Podcast subscriptions**: iTunes search + RSS subscriptions, scheduled update fetching, unread counts, favorites, and search history
-- **Scriptable**: every step is persisted, failures retry from the breakpoint, long videos assemble in parallel blocks; the `bmx` CLI and REST API cover the whole pipeline
+- **Audio dubbing**: English podcasts / audio (URL or local file) → Chinese-dubbed MP3, with the original audio replaced line by line
+- **Video dubbing**: YouTube / local MP4 / server path → dubbed MP4 with bilingual or Chinese-only subtitles, plus an optional configurable watermark
+- **Voice cloning**: Confucius4-TTS zero-shot clones the speaker's timbre to read the Chinese translation — not a robotic readout
+- **Tunable ratio and BGM**: `sentence_cn_ratio` sets the mix (`1.0` all Chinese / `0.5` alternating / `0` original audio), and the original BGM can be kept after demucs separation
+- **Built for long media**: every step is persisted, failures retry from the breakpoint, long videos assemble in parallel blocks
+- **Scriptable**: the `bmx` CLI and REST API cover the whole pipeline, plus a standalone TTS endpoint
+
+Also included: podcast subscriptions with update tracking, dubbing straight from an existing bilingual `.ass` / `.srt` (skipping transcription and translation), and word lookup.
 
 ```
 Audio/Video → WhisperX transcription → Ollama sentence translation → Confucius4-TTS voice cloning → Assembly (audio / video + subtitles)
@@ -86,7 +85,7 @@ Startup enforces a full dependency check (hardware, Python packages, ffmpeg / yt
 | Scenario | Input | Output |
 |----------|-------|--------|
 | Audio | Audio URL / local file | Chinese-dubbed MP3 (interleaved when `sentence_cn_ratio` < 1) |
-| Video | YouTube URL / local MP4 / server path | Dubbed MP4 + bilingual / Chinese-only SRT |
+| Video | YouTube URL / local MP4 / server path | Chinese-dubbed MP4 + bilingual / Chinese-only SRT |
 | Existing subtitles | Media + bilingual `.ass` / `.srt` | Dubbing without transcription or translation |
 
 ## CLI
@@ -106,15 +105,11 @@ bmx video download-srt --task-id <task_id> -o dubbed.srt
 # Standalone TTS: reference audio + text (zh / en / ja / ko)
 bmx tts synth --ref-audio ./ref.wav --text "Text to synthesize" --wait -o out.wav
 
-# Podcasts: search -> subscribe -> check updates
-bmx podcast search "All Ears English"
-bmx subscriptions add --rss-url https://example.com/feed.xml
-bmx episodes list --status unread
-
-# Word lookup and config
-bmx translate word "resilient" --context "She is resilient."
+# Tune the mix: 0.5 = English / Chinese alternating narration
 bmx config set sentence_cn_ratio=0.5
 ```
+
+Helper commands such as podcast subscriptions and word lookup are documented in `sdk/docs/cli.md`.
 
 Full command reference: `sdk/README.md` and `sdk/docs/cli.md`. The CLI targets `http://localhost:5000` by default; override with `BILIMIX_SERVER`.
 

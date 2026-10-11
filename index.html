@@ -200,8 +200,8 @@
   <section class="hero">
     <div class="wrap hero-inner">
       <h1>BiliMix</h1>
-      <p class="lede">把英文播客、音频和视频逐句译成中文，再用原说话人的音色读出来。</p>
-      <p class="desc">默认逐句替换为原音色的中文配音，把 <code style="color:#9FC6FF">sentence_cn_ratio</code> 调到 0.5 就是中英交替讲述；视频模式再烧录双语字幕。还内置播客订阅更新、查词与独立语音合成，全程本机推理。</p>
+      <p class="lede">把英文音频和视频逐句译成中文，用原说话人的音色读出来。</p>
+      <p class="desc">音频出中文配音 MP3，视频出带双语字幕的配音 MP4 —— 逐句替换原声，声音还是原说话人那一把。转录、翻译、合成全程在本机完成。</p>
       <div class="cta">
         <a class="btn btn-primary" href="#start">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L19 7"/></svg>
@@ -255,41 +255,42 @@
     <div class="wrap">
       <div class="sec-head">
         <div class="eyebrow">特性</div>
-        <h2>为“听得懂”而做的每一步</h2>
-        <p>逐句对齐的中英交替，而不是整段替换；每个环节都能单独调参或重跑。</p>
+        <h2>原音色、逐句、可调节</h2>
+        <p>音频与视频共用一条流水线；中英比例、背景音、字幕与水印都能单独调，失败可从断点重跑。</p>
       </div>
       <div class="grid">
         <div class="tile">
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg></div>
-          <h3>原音色配音</h3>
-          <p>Confucius4-TTS 零样本克隆说话人音色读中文译文，逐句替换原声。</p>
+          <h3>原音色中文配音</h3>
+          <p>Confucius4-TTS 零样本克隆说话人音色读中文译文，逐句替换原声，不是机械念稿。</p>
+        </div>
+        <div class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+          <h3>音频中文配音</h3>
+          <p>英文播客 / 音频，URL 或本地文件 → 中文配音 MP3。</p>
+        </div>
+        <div class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg></div>
+          <h3>视频中文配音</h3>
+          <p>YouTube / 本地 MP4 / 服务器路径 → 配音 MP4，双语或纯中文字幕，可加水印。</p>
         </div>
         <div class="tile">
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6 3 12l5 6"/><path d="m16 6 5 6-5 6"/></svg></div>
           <h3>中英比例可调</h3>
-          <p><code>sentence_cn_ratio</code>：1.0 逐句全中文，0.5 中英交替，0 保留原声；可选保留 BGM。</p>
+          <p><code>sentence_cn_ratio</code>：1.0 全中文，0.5 中英交替，0 保留原声；可保留原 BGM。</p>
         </div>
         <div class="tile">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg></div>
-          <h3>视频配音与字幕</h3>
-          <p>YouTube、本地 MP4、服务器路径 → 配音 MP4，字幕双语 / 纯中文 / 不烧录，可加水印。</p>
-        </div>
-        <div class="tile">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h8"/><path d="M8 17h5"/></svg></div>
-          <h3>已有字幕直接配音</h3>
-          <p>上传双语 .ass / .srt，跳过转录与翻译，直接进入语音合成。</p>
-        </div>
-        <div class="tile">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg></div>
-          <h3>播客订阅与更新</h3>
-          <p>iTunes 搜索 + RSS 订阅，定时抓取更新、未读统计、收藏与搜索历史。</p>
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></div>
+          <h3>长内容也跑得完</h3>
+          <p>任务按步骤落盘、失败从断点重试；长视频自动分块并行组装。</p>
         </div>
         <div class="tile">
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></div>
           <h3>命令行与 API</h3>
-          <p>任务按步骤落盘、失败从断点重试；<code>bmx</code> CLI 与 REST API 覆盖全流程。</p>
+          <p><code>bmx</code> CLI 与 REST API 覆盖全流程，另含独立语音合成接口。</p>
         </div>
       </div>
+      <p class="note">附带能力：播客订阅与更新聚合、已有双语 .ass / .srt 直接配音（跳过转录与翻译）、查词。</p>
     </div>
   </section>
 
