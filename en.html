@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BiliMix — Chinese-English Interleaved Podcast &amp; Video Dubbing</title>
+<meta name="description" content="Translate English podcasts, audio, and videos sentence by sentence into Chinese, then read the translations aloud in the original speaker's voice. Inference runs entirely on your machine; output interleaved Chinese-English audio or a dubbed video with subtitles.">
+<link rel="icon" href="web/favicon.svg">
+<style>
+  :root {
+    --font: "PingFang SC", -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --ink: #15181D;
+    --body: #5A5A5A;
+    --muted: #8C8C8C;
+    --line: #E8EAED;
+    --line-soft: #F0F1F3;
+    --accent: #2B7FFF;
+    --accent-deep: #1E5BD9;
+    --accent-soft: #E8F2FF;
+    --band: #F4F5F7;
+    --code-bg: #10161F;
+    --radius: 12px;
+    --max: 1080px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; -webkit-font-smoothing: antialiased; }
+  body { font-family: var(--font); color: var(--ink); background: #fff; line-height: 1.65; }
+  a { color: inherit; text-decoration: none; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+  section { scroll-margin-top: 64px; }
+
+  /* ---------- header ---------- */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(255,255,255,.86); backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav { display: flex; align-items: center; gap: 24px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 9px; font-size: 17px; font-weight: 650; letter-spacing: 0; }
+  .brand svg { width: 22px; height: 22px; color: var(--accent); }
+  .nav-links { display: flex; gap: 22px; margin-left: auto; font-size: 14.5px; color: var(--body); }
+  .nav-links a:hover { color: var(--accent); }
+  .btn-ghost {
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 34px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px;
+    font-size: 14px; font-weight: 550; transition: .18s;
+  }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .btn-ghost svg { width: 16px; height: 16px; }
+
+  /* ---------- hero ---------- */
+  .hero {
+    position: relative; isolation: isolate;
+    min-height: clamp(520px, 80vh, 720px);
+    display: flex; align-items: center;
+    background: #0B0F16 url("examples/screenshot_mixed.jpg") center/cover no-repeat;
+  }
+  .hero::before {
+    content: ""; position: absolute; inset: 0; z-index: -1;
+    background: linear-gradient(90deg, rgba(8,11,16,.92) 0%, rgba(8,11,16,.74) 42%, rgba(8,11,16,.42) 100%);
+  }
+  .hero-inner { padding: 72px 0; max-width: 640px; color: #fff; }
+  .hero h1 { font-size: clamp(40px, 6vw, 60px); line-height: 1.1; font-weight: 700; letter-spacing: 0; }
+  .hero .lede { margin-top: 16px; font-size: clamp(17px, 2.1vw, 20px); font-weight: 500; color: #F2F5FA; }
+  .hero .desc { margin-top: 12px; font-size: 15.5px; color: rgba(255,255,255,.74); max-width: 520px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 20px;
+    border-radius: 999px; font-size: 15px; font-weight: 600; transition: .18s;
+  }
+  .btn svg { width: 17px; height: 17px; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-deep); transform: translateY(-1px); }
+  .btn-outline { border: 1px solid rgba(255,255,255,.34); color: #fff; }
+  .btn-outline:hover { border-color: #fff; background: rgba(255,255,255,.1); }
+  .hero-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 26px; font-size: 13px; color: rgba(255,255,255,.66); }
+  .hero-meta span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+
+  /* ---------- section frame ---------- */
+  .band { background: var(--band); border-block: 1px solid var(--line); }
+  .sec { padding: 72px 0; }
+  .sec-head { max-width: 620px; margin-bottom: 32px; }
+  .eyebrow { font-size: 13px; font-weight: 650; letter-spacing: .04em; color: var(--accent); text-transform: uppercase; }
+  .sec-head h2 { margin-top: 6px; font-size: clamp(26px, 3.4vw, 34px); line-height: 1.25; font-weight: 680; }
+  .sec-head p { margin-top: 10px; color: var(--body); font-size: 15.5px; }
+
+  /* ---------- demo ---------- */
+  .demo { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  figure { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  figure img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+  figcaption {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 16px; border-top: 1px solid var(--line-soft); font-size: 14px;
+  }
+  figcaption b { font-weight: 600; }
+  figcaption a { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-size: 13.5px; }
+  figcaption a svg { width: 14px; height: 14px; }
+
+  /* ---------- features ---------- */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .tile { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; }
+  .tile .ico {
+    width: 38px; height: 38px; border-radius: 10px; background: var(--accent-soft);
+    display: grid; place-items: center; color: var(--accent); margin-bottom: 14px;
+  }
+  .tile .ico svg { width: 19px; height: 19px; }
+  .tile h3 { font-size: 16px; font-weight: 640; }
+  .tile p { margin-top: 6px; font-size: 14px; color: var(--body); }
+
+  /* ---------- pipeline ---------- */
+  .flow { display: flex; align-items: stretch; gap: 10px; flex-wrap: nowrap; }
+  .step { flex: 1; min-width: 0; background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+  .step .n {
+    width: 26px; height: 26px; border-radius: 50%; background: var(--ink); color: #fff;
+    display: grid; place-items: center; font-size: 13px; font-weight: 650; margin-bottom: 12px;
+  }
+  .step h4 { font-size: 15px; font-weight: 620; }
+  .step p { margin-top: 5px; font-size: 13.5px; color: var(--body); }
+  .step .tool { margin-top: 10px; font-size: 12px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  /* ---------- code ---------- */
+  .code {
+    background: var(--code-bg); color: #E6EDF6; border-radius: var(--radius);
+    padding: 18px 20px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13.5px; line-height: 1.85; overflow-x: auto;
+  }
+  .code .c { color: #7C8CA3; }
+  .code .k { color: #7FB4FF; }
+  .cmd { display: flex; align-items: center; gap: 12px; }
+  .cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; }
+  .copy {
+    flex: none; display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,.1); border: 0; border-radius: 8px; color: #CBD6E4;
+    font: inherit; font-size: 12.5px; padding: 5px 10px; cursor: pointer; transition: .18s;
+  }
+  .copy:hover { background: rgba(255,255,255,.2); color: #fff; }
+  .copy svg { width: 14px; height: 14px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  .two > div { min-width: 0; }
+  .block-label { font-size: 13px; font-weight: 620; color: var(--body); margin-bottom: 8px; }
+
+  /* ---------- table ---------- */
+  table { width: 100%; border-collapse: collapse; font-size: 14px; background: #fff; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line-soft); }
+  thead th { font-size: 13px; color: var(--muted); font-weight: 600; }
+  tbody th { font-weight: 620; width: 88px; }
+  .table-wrap { border: 1px solid var(--line); border-radius: var(--radius); overflow-x: auto; }
+  .note { margin-top: 14px; font-size: 13.5px; color: var(--body); }
+
+  /* ---------- footer ---------- */
+  footer { background: #0B0F16; color: #9AA7B8; padding: 48px 0 40px; font-size: 14px; }
+  .foot { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; justify-content: space-between; }
+  .foot h5 { color: #fff; font-size: 15px; font-weight: 620; margin-bottom: 10px; }
+  .foot ul { list-style: none; display: grid; gap: 7px; }
+  .foot a:hover { color: #fff; }
+  .foot-stack { max-width: 420px; font-size: 13.5px; line-height: 1.8; }
+  .legal { margin-top: 32px; padding-top: 18px; border-top: 1px solid #1C2430; display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; }
+
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr 1fr; }
+    .flow { flex-wrap: wrap; }
+    .step { flex: 1 1 46%; }
+  }
+  @media (max-width: 640px) {
+    .wrap { padding: 0 18px; }
+    .nav-links { display: none; }
+    .sec { padding: 52px 0; }
+    .demo, .grid, .two { grid-template-columns: 1fr; }
+    .step { flex: 1 1 100%; }
+    .hero-inner { padding: 56px 0; }
+    .foot { gap: 28px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>
+      BiliMix
+    </a>
+    <nav class="nav-links">
+      <a href="#demo">Demo</a>
+      <a href="#features">Features</a>
+      <a href="#how">Workflow</a>
+      <a href="#start">Quick Start</a>
+      <a href="#cli">CLI</a>
+    </nav>
+    <a class="btn-ghost" href="https://github.com/nowszhao/BiliMix">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+      GitHub
+    </a>
+    <a class="btn-ghost" href="index.html">中文</a>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="wrap hero-inner">
+      <h1>BiliMix</h1>
+      <p class="lede">Translate English podcasts, audio, and videos sentence by sentence into Chinese, then read the translations aloud in the original speaker's voice.</p>
+      <p class="desc">Get interleaved Chinese-English audio, or a dubbed video with bilingual subtitles. Transcription, translation, and synthesis all run locally — media never leaves your machine.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="#start">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L19 7"/></svg>
+          One-command install
+        </a>
+        <a class="btn btn-outline" href="https://github.com/nowszhao/BiliMix">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+          View source
+        </a>
+      </div>
+      <div class="hero-meta">
+        <span><i class="dot"></i>Fully local inference</span>
+        <span><i class="dot"></i>Python 3.10</span>
+        <span><i class="dot"></i>macOS / Linux</span>
+        <span><i class="dot"></i>MIT</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="demo">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Demo</div>
+        <h2>The same clip, before and after dubbing</h2>
+        <p>The English track stays; the Chinese translation is inserted in the original speaker's voice, with synchronized bilingual subtitles.</p>
+      </div>
+      <div class="demo">
+        <figure>
+          <img src="examples/screenshot_original.jpg" alt="Original English video frame">
+          <figcaption>
+            <b>Original</b>
+            <a href="examples/test1.mp4">Watch video
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            </a>
+          </figcaption>
+        </figure>
+        <figure>
+          <img src="examples/screenshot_mixed.jpg" alt="Dubbed frame with bilingual subtitles">
+          <figcaption>
+            <b>Dubbed (bilingual subtitles)</b>
+            <a href="examples/test1_mixed.mp4">Watch video
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            </a>
+          </figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="band sec" id="features">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Features</div>
+        <h2>Every stage exists so you actually understand it</h2>
+        <p>Sentence-aligned interleaving rather than swapping out the whole track; every stage can be tuned or re-run on its own.</p>
+      </div>
+      <div class="grid">
+        <div class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg></div>
+          <h3>Voice cloning</h3>
+          <p>Confucius4-TTS zero-shot clones the speaker's timbre to read the Chinese translation — not a robotic readout.</p>
+        </div>
+        <div class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6 3 12l5 6"/><path d="m16 6 5 6-5 6"/></svg></div>
+          <h3>Sentence-level alignment</h3>
+          <p>WhisperX word-level timestamps drive the interleaving, with adjustable gaps and translation ratio.</p>
+        </div>
+        <div class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg></div>
+          <h3>Video dubbing</h3>
+          <p>YouTube, local MP4, and server paths all work; outputs a dubbed MP4 plus SRT subtitles.</p>
+        </div>
+        <div class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+          <h3>Keep the background music</h3>
+          <p>demucs separates vocals from the score; optionally keep the original BGM so the dub never fights the background.</p>
+        </div>
+        <div class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></div>
+          <h3>Resume from breakpoint</h3>
+          <p>Each step is persisted, so failures retry from the breakpoint; long videos assemble in parallel blocks.</p>
+        </div>
+        <div class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></div>
+          <h3>CLI and API</h3>
+          <p>Web UI for progress and config; the <code>bmx</code> CLI is built for scripts and AI agents.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="how">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Workflow</div>
+        <h2>One pipeline, four local models</h2>
+        <p>Audio and video share the same chain; video mode adds one more step to burn in subtitles.</p>
+      </div>
+      <div class="flow">
+        <div class="step">
+          <div class="n">1</div>
+          <h4>Transcription</h4>
+          <p>Word-level timestamps split sentences; optional speaker diarization.</p>
+          <div class="tool">WhisperX</div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <h4>Translation</h4>
+          <p>A local LLM translates every sentence into Chinese, full coverage.</p>
+          <div class="tool">Ollama</div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <h4>Voice cloning</h4>
+          <p>Synthesize Chinese speech from the original voice reference.</p>
+          <div class="tool">Confucius4-TTS</div>
+        </div>
+        <div class="step">
+          <div class="n">4</div>
+          <h4>Assembly</h4>
+          <p>Interleaved Chinese-English audio; video mode burns in subtitles.</p>
+          <div class="tool">FFmpeg</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band sec" id="start">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Quick Start</div>
+        <h2>One command to install, two to run</h2>
+        <p>The install script is idempotent: completed steps are skipped, and a broken environment just needs another run.</p>
+      </div>
+      <div class="two">
+        <div>
+          <div class="block-label">Install</div>
+          <div class="code cmd">
+            <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/nowszhao/BiliMix/main/setup.sh | bash</code>
+            <button class="copy" data-copy="install-cmd">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              Copy
+            </button>
+          </div>
+          <p class="note">Already cloned the repo? Run <code>./setup.sh</code>. The script prepares the conda env <code>bilimix</code> (Python 3.10), FFmpeg and Ollama, the Python dependencies, and places Confucius4-TTS-CPU in the sibling directory.</p>
+        </div>
+        <div>
+          <div class="block-label">Launch</div>
+          <div class="code">
+<span class="c"># First run only: start Ollama and pull the translation model</span>
+ollama serve
+ollama pull translategemma:4b
+
+<span class="c"># Start the server; the port is optional (defaults to 5000)</span>
+conda activate bilimix
+python services/web_app.py 5555
+          </div>
+          <p class="note">Open http://localhost:5555 and you are ready. Startup enforces a hardware and dependency check, and exits with the fix command if anything is missing.</p>
+        </div>
+      </div>
+      <div class="table-wrap" style="margin-top:24px">
+        <table>
+          <thead><tr><th>Resource</th><th>Minimum</th><th>Recommended</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><th>CPU</th><td>4 cores</td><td>8+ cores</td><td>Transcription (8 threads) + TTS worker + FFmpeg encoding</td></tr>
+            <tr><th>Memory</th><td>8 GB</td><td>16 GB+</td><td>Ollama 3-4 GB + TTS 2-4 GB per worker (1 by default on CPU)</td></tr>
+            <tr><th>Disk</th><td>15 GB</td><td>50 GB+</td><td>Python env + ~10 GB of models + media caches</td></tr>
+            <tr><th>GPU</th><td>Not required</td><td>Optional 6 GB+</td><td>Greatly accelerates TTS and WhisperX</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Memory is the main bottleneck. On lower-spec machines: use <code>translategemma:4b</code>, drop TTS workers to 1, and use the <code>small</code> WhisperX model.</p>
+    </div>
+  </section>
+
+  <section class="sec" id="cli">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">CLI</div>
+        <h2>Hand the whole pipeline to your scripts</h2>
+        <p><code>bmx</code> wraps every REST API of the web service — built for batch jobs and AI agents.</p>
+      </div>
+      <div class="code">
+<span class="c"># Install</span>
+pip install -e sdk/
+
+<span class="c"># Audio: URL or local file → interleaved Chinese-English MP3</span>
+bmx task submit --url https://example.com/episode.mp3 --wait
+bmx audio download --task-id &lt;task_id&gt; -o mixed.mp3
+
+<span class="c"># Video: YouTube or server path → dubbed MP4 + subtitles</span>
+bmx task submit --type video --video-url <span class="k">"https://www.youtube.com/watch?v=xxx"</span> --wait
+bmx video download --task-id &lt;task_id&gt; -o dubbed.mp4
+
+<span class="c"># Standalone TTS: reference audio + text</span>
+bmx tts synth --ref-audio ./ref.wav --text <span class="k">"Text to synthesize"</span> --wait -o out.wav
+      </div>
+      <p class="note">Full command reference: <a href="https://github.com/nowszhao/BiliMix/blob/main/sdk/README.md" style="color:var(--accent)">sdk/README.md</a> and <a href="https://github.com/nowszhao/BiliMix/blob/main/sdk/docs/cli.md" style="color:var(--accent)">sdk/docs/cli.md</a>. The CLI targets <code>http://localhost:5000</code> by default; override with <code>BILIMIX_SERVER</code>.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div class="foot-stack">
+        <h5>BiliMix</h5>
+        <p>WhisperX · Ollama · Confucius4-TTS-CPU · FFmpeg · yt-dlp · demucs · Flask · SQLite</p>
+      </div>
+      <div>
+        <h5>Docs</h5>
+        <ul>
+          <li><a href="https://github.com/nowszhao/BiliMix/blob/main/README.en.md">README</a></li>
+          <li><a href="https://github.com/nowszhao/BiliMix#readme">中文 README</a></li>
+          <li><a href="https://github.com/nowszhao/BiliMix/blob/main/sdk/docs/cli.md">CLI reference</a></li>
+        </ul>
+      </div>
+      <div>
+        <h5>Project</h5>
+        <ul>
+          <li><a href="https://github.com/nowszhao/BiliMix">GitHub repository</a></li>
+          <li><a href="https://github.com/nowszhao/Confucius4-TTS-CPU">Confucius4-TTS-CPU</a></li>
+          <li><a href="https://github.com/nowszhao/BiliMix/blob/main/setup.sh">Install script</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="legal">
+      <span>MIT License</span>
+      <span>All audio and video processing runs on your machine</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var text = document.getElementById(btn.dataset.copy).textContent.trim();
+      var done = function () {
+        var label = btn.lastChild;
+        btn.lastChild.textContent = ' Copied';
+        setTimeout(function () { btn.lastChild.textContent = ' Copy'; }, 1600);
+      };
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(done);
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta); done();
+      }
+    });
+  });
+</script>
+</body>
+</html>
