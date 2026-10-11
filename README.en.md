@@ -5,9 +5,11 @@
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 
 Translate English podcasts, audio, and videos sentence by sentence into Chinese, then read the
-translations aloud in the original speaker's voice — producing **Chinese-English interleaved audio**
-or a **subtitled dubbed video**. Transcription, translation, and synthesis all run locally; media
-never leaves your machine.
+translations aloud in the original speaker's voice — by default every sentence is dubbed into Chinese;
+set `sentence_cn_ratio` to `0.5` and the narration alternates English / Chinese. Video mode also burns
+bilingual subtitles into an MP4. On top of the dubbing pipeline: podcast subscriptions with update
+tracking, word lookup, and a standalone TTS endpoint. Transcription, translation, and synthesis all run
+locally; media never leaves your machine.
 
 [中文](README.md)
 
@@ -25,12 +27,12 @@ Click an image for the full video (`examples/test1.mp4`, `examples/test1_mixed.m
 
 ## Features
 
-- **Voice cloning**: Confucius4-TTS zero-shot clones the original timbre to read the Chinese translation
-- **Sentence-level alignment**: WhisperX word-level timestamps drive the Chinese-English interleaving, with adjustable gaps and translation ratio
-- **Video dubbing**: YouTube / local MP4 / server path → dubbed MP4 + SRT subtitles, bilingual or Chinese-only
-- **Keep the background music**: optional BGM retention via demucs vocal separation
-- **Resumable**: each step is persisted; failures retry from the breakpoint, long videos assemble in parallel blocks
-- **Two front doors**: web UI for progress and config, `bmx` CLI for scripts and AI agents
+- **Dubbing in the original voice**: Confucius4-TTS zero-shot clones the speaker's timbre to read the Chinese translation, replacing the original line by line
+- **Tunable Chinese ratio**: `sentence_cn_ratio` drives the mix — `1.0` dubs every sentence, `0.5` alternates English and Chinese, `0` keeps the original English
+- **Video dubbing and subtitles**: YouTube / local MP4 / server path → dubbed MP4 with bilingual, Chinese-only, or no burned-in subtitles, plus an optional configurable watermark
+- **Bring your own subtitles**: upload a bilingual `.ass` / `.srt` file to skip transcription and translation and go straight to synthesis
+- **Podcast subscriptions**: iTunes search + RSS subscriptions, scheduled update fetching, unread counts, favorites, and search history
+- **Scriptable**: every step is persisted, failures retry from the breakpoint, long videos assemble in parallel blocks; the `bmx` CLI and REST API cover the whole pipeline
 
 ```
 Audio/Video → WhisperX transcription → Ollama sentence translation → Confucius4-TTS voice cloning → Assembly (audio / video + subtitles)
@@ -83,8 +85,9 @@ Startup enforces a full dependency check (hardware, Python packages, ffmpeg / yt
 
 | Scenario | Input | Output |
 |----------|-------|--------|
-| Audio | Audio URL / local file | Chinese-English interleaved MP3 |
-| Video | YouTube URL / local MP4 / server path | Dubbed MP4 + SRT subtitles |
+| Audio | Audio URL / local file | Chinese-dubbed MP3 (interleaved when `sentence_cn_ratio` < 1) |
+| Video | YouTube URL / local MP4 / server path | Dubbed MP4 + bilingual / Chinese-only SRT |
+| Existing subtitles | Media + bilingual `.ass` / `.srt` | Dubbing without transcription or translation |
 
 ## CLI
 
@@ -100,15 +103,24 @@ bmx task submit --type video --video-url "https://www.youtube.com/watch?v=xxx" -
 bmx video download --task-id <task_id> -o dubbed.mp4
 bmx video download-srt --task-id <task_id> -o dubbed.srt
 
-# Standalone TTS: reference audio + text
+# Standalone TTS: reference audio + text (zh / en / ja / ko)
 bmx tts synth --ref-audio ./ref.wav --text "Text to synthesize" --wait -o out.wav
+
+# Podcasts: search -> subscribe -> check updates
+bmx podcast search "All Ears English"
+bmx subscriptions add --rss-url https://example.com/feed.xml
+bmx episodes list --status unread
+
+# Word lookup and config
+bmx translate word "resilient" --context "She is resilient."
+bmx config set sentence_cn_ratio=0.5
 ```
 
 Full command reference: `sdk/README.md` and `sdk/docs/cli.md`. The CLI targets `http://localhost:5000` by default; override with `BILIMIX_SERVER`.
 
 ## Configuration
 
-Edit `core/config_local.py` (template: `core/config_local.example.py`) to change models, worker counts, subtitle defaults, and more. Most parameters can also be changed live from the web settings page — no restart needed.
+Edit `core/config_local.py` (template: `core/config_local.example.py`) to change models and defaults. Most parameters can also be changed live from the web settings page — no restart needed. Common ones: `sentence_cn_ratio` (Chinese ratio), `keep_bgm` (keep background music), `ref_select_mode` (reference-audio strategy), `whisperx_model`, TTS worker count, and the watermark toggle and text.
 
 ## Troubleshooting
 
@@ -124,7 +136,7 @@ Edit `core/config_local.py` (template: `core/config_local.example.py`) to change
 
 ## Tech Stack
 
-WhisperX (word-level timestamps + diarization) · Ollama (local translation) · Confucius4-TTS-CPU (zero-shot voice cloning) · FFmpeg · yt-dlp · demucs · Flask · SQLite
+WhisperX (word-level timestamps; diarization optional, needs HF_TOKEN) · Ollama (local translation) · Confucius4-TTS-CPU (zero-shot voice cloning) · FFmpeg · yt-dlp · demucs · Flask · SQLite
 
 ## License
 

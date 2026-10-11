@@ -4,8 +4,8 @@
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 
-把英文播客、音频、视频逐句译成中文，再用原说话人的音色把中文读出来，输出**中英交替音频**或**带字幕的配音视频**。
-转录、翻译、语音合成全部在本机完成，媒体文件不出本地。
+把英文播客、音频和视频逐句译成中文，再用原说话人的音色朗读出来 —— 默认得到原音色的中文配音，把 `sentence_cn_ratio` 调到 0.5 就是英文、中文交替讲述；视频模式再烧录双语字幕输出 MP4。
+除配音流水线外，还内置播客订阅更新、查词与独立语音合成。转录、翻译、合成全部在本机完成，媒体不出本地。
 
 [English](README.en.md)
 
@@ -23,12 +23,12 @@
 
 ## 特性
 
-- **声音克隆**：Confucius4-TTS 零样本克隆原音色朗读中文译文，不是机械念稿
-- **逐句对齐**：WhisperX 词级时间戳切句，中英交替播放，停顿与中文比例可调
-- **视频配音**：YouTube / 本地 MP4 / 服务器路径 → 配音 MP4 + SRT 字幕，支持双语或纯中文字幕
-- **保留背景音**：demucs 人声分离，可选保留原 BGM
-- **断点续跑**：任务按步骤落盘，失败可从断点重试，长视频自动分块并行组装
-- **两种入口**：Web 界面看进度、改配置；`bmx` 命令行面向脚本与 AI Agent
+- **原音色配音**：Confucius4-TTS 零样本克隆说话人音色朗读中文译文，逐句替换原声，不是机械念稿
+- **中英比例可调**：`sentence_cn_ratio` 控制替换比例 —— 1.0 逐句全中文，0.5 中英交替，0 保留纯英文原声
+- **视频配音与字幕**：YouTube / 本地 MP4 / 服务器路径 → 配音 MP4，字幕可选双语、纯中文或不烧录，可叠加可配置水印
+- **已有字幕直接配音**：上传双语 `.ass` / `.srt`，跳过转录与翻译，直接进入语音合成
+- **播客订阅与更新**：iTunes 搜索 + RSS 订阅，定时抓取更新、未读统计、收藏与搜索历史
+- **可脚本化**：任务按步骤落盘、失败从断点重试，长视频分块并行组装；`bmx` CLI 与 REST API 覆盖全流程
 
 ```
 音频/视频 → WhisperX 转录 → Ollama 逐句翻译 → Confucius4-TTS 音色克隆 → 组装（音频 / 视频 + 字幕）
@@ -81,8 +81,9 @@ python services/web_app.py 5555     # 端口可省略，默认 5000
 
 | 场景 | 输入 | 输出 |
 |------|------|------|
-| 音频 | 音频 URL / 本地文件 | 中英交替 MP3 |
-| 视频 | YouTube URL / 本地 MP4 / 服务器路径 | 配音 MP4 + SRT 字幕 |
+| 音频 | 音频 URL / 本地文件 | 中文配音 MP3（`sentence_cn_ratio` < 1 时为中英交替） |
+| 视频 | YouTube URL / 本地 MP4 / 服务器路径 | 配音 MP4 + 双语 / 纯中文 SRT 字幕 |
+| 已有字幕 | 音视频 + 双语 `.ass` / `.srt` | 跳过转录与翻译，直接生成配音 |
 
 ## 命令行
 
@@ -98,15 +99,24 @@ bmx task submit --type video --video-url "https://www.youtube.com/watch?v=xxx" -
 bmx video download --task-id <task_id> -o dubbed.mp4
 bmx video download-srt --task-id <task_id> -o dubbed.srt
 
-# 独立语音合成：给一段参考音频 + 文本
+# 独立语音合成：给一段参考音频 + 文本（支持 zh / en / ja / ko）
 bmx tts synth --ref-audio ./ref.wav --text "要合成的话" --wait -o out.wav
+
+# 播客：搜索 → 订阅 → 看更新
+bmx podcast search "All Ears English"
+bmx subscriptions add --rss-url https://example.com/feed.xml
+bmx episodes list --status unread
+
+# 查词与配置
+bmx translate word "resilient" --context "She is resilient."
+bmx config set sentence_cn_ratio=0.5
 ```
 
 完整命令见 `sdk/README.md` 与 `sdk/docs/cli.md`。服务地址默认 `http://localhost:5000`，可用 `BILIMIX_SERVER` 覆盖。
 
 ## 配置
 
-编辑 `core/config_local.py`（模板 `core/config_local.example.py`）调整模型、worker 数、字幕等默认值；多数参数可在 Web 设置页直接修改，无需重启服务。
+编辑 `core/config_local.py`（模板 `core/config_local.example.py`）调整模型与默认值；多数参数可在 Web 设置页直接修改，无需重启。常用项：`sentence_cn_ratio`（中英比例）、`keep_bgm`（保留背景音）、`ref_select_mode`（参考音频选取）、`whisperx_model`、TTS worker 数、水印开关与文案。
 
 ## 常见问题
 
@@ -122,7 +132,7 @@ bmx tts synth --ref-audio ./ref.wav --text "要合成的话" --wait -o out.wav
 
 ## 技术栈
 
-WhisperX（词级时间戳 + 说话人分离）· Ollama（本地翻译）· Confucius4-TTS-CPU（零样本声音克隆）· FFmpeg · yt-dlp · demucs · Flask · SQLite
+WhisperX（词级时间戳，说话人分离可选、需 HF_TOKEN）· Ollama（本地翻译）· Confucius4-TTS-CPU（零样本声音克隆）· FFmpeg · yt-dlp · demucs · Flask · SQLite
 
 ## License
 
