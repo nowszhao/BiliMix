@@ -80,6 +80,13 @@ def save_task_result_to_disk(result_dir: str, data: dict):
                 if sub_path:
                     data["_subtitle_path"] = sub_path
 
+        task_id = data.get("task_id", "")
+        current = tasks.get(task_id, {})
+        for key in ("_analysis_id", "_dub_manifest", "_speaker_analysis", "_reference_manifest",
+                    "_ref_select_mode", "_audio_path", "_video_path", "_raw_segments",
+                    "_subtitle_mode", "_subtitle_font_size"):
+            if key in current and key not in data:
+                data[key] = current[key]
         path = os.path.join(result_dir, "task_result.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -292,6 +299,10 @@ def restore_task_from_disk(task_id: str) -> dict:
                 "_subtitle_font_size": saved.get("_subtitle_font_size"),
                 "_subtitle_path": saved.get("_subtitle_path", ""),
             }
+            for key in ("_analysis_id", "_dub_manifest", "_speaker_analysis", "_reference_manifest",
+                        "_ref_select_mode", "_audio_path", "_raw_segments"):
+                if key in saved:
+                    task[key] = saved[key]
             # 恢复翻译/识词批次的断点数据
             if saved.get("_checkpoint_translate_batch"):
                 task["_checkpoint_translate_batch"] = saved["_checkpoint_translate_batch"]

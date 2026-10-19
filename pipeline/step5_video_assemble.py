@@ -9,6 +9,8 @@ Step 5: 视频组装模块
   3. 与混合音频合并，替换音轨
   4. 限制 ffmpeg 编码线程数，避免抢占全部 CPU 核心拖慢整机
 """
+from __future__ import annotations
+
 import os
 import re
 import subprocess
@@ -19,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, Dict
 
 from core import config
+from pipeline.timeline_plan import video_chains, caption_entries
 
 # 限制 ffmpeg 使用的线程数（避免抢占所有 CPU 核心导致系统卡顿）
 _FFMPEG_THREADS_CAP = getattr(config, "FFMPEG_THREADS_CAP", 4)
@@ -260,8 +263,7 @@ def generate_bilingual_srt(
             end = max(0, seg.get("end", 0) - time_offset)
         if end <= start:
             continue
-        entries.append({"index": len(entries) + 1, "start": start, "end": end,
-                        "english": eng, "chinese": chn})
+        entries.extend(caption_entries(seg, start, end, eng, chn))
 
     if not entries:
         return ""
@@ -321,6 +323,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     en_qtag = "\\q2" if en_manual_wrap else "\\q0"
     lines = [header]
     for e in entries:
+        speaker = str(e.get("speaker", "")).replace(",", "_").replace("\n", " ").replace("\r", " ")
         start_ts = _seconds_to_ass_time(e["start"])
         end_ts = _seconds_to_ass_time(e["end"])
         eng_text = e["english"].replace("\\N", " ").replace("\n", " ").strip()
@@ -334,13 +337,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             # 合并为一个事件：ASS 会以整个文本块为锚点，确保中文永远在上、英文永远在下。
             text = _build_bilingual_ass_text(chn_text, eng_text, en_qtag)
             lines.append(
-                f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,{text}")
-        elif subtitle_mode == "chinese_only" and chn_text:
+                f"Dialogue: 0,{start_ts},{end_ts},English,{speaker},0,0,0,,{text}")
+        elif chn_text:
             lines.append(
-                f"Dialogue: 0,{start_ts},{end_ts},Chinese,,0,0,0,,{{\\q0}}{chn_text}")
+                f"Dialogue: 0,{start_ts},{end_ts},Chinese,{speaker},0,0,0,,{{\\q0}}{chn_text}")
         elif eng_text:
             lines.append(
-                f"Dialogue: 0,{start_ts},{end_ts},English,,0,0,0,,"
+                f"Dialogue: 0,{start_ts},{end_ts},English,{speaker},0,0,0,,"
                 f"{{{en_qtag}}}{eng_text}")
 
     with open(output_path, "w", encoding="utf-8") as f:
@@ -376,6 +379,17 @@ def _probe_video_duration(video_path: str) -> float:
         return float(out)
     except Exception:
         return 0.0
+
+
+def _probe_video_fps(video_path):
+    try:
+        value = subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=avg_frame_rate", "-of", "default=nw=1:nk=1", video_path], text=True).strip()
+        numerator, denominator = value.split("/")
+        fps = float(numerator)/float(denominator)
+        return fps if 1 <= fps <= 240 else 25.0
+    except (ValueError, ZeroDivisionError, subprocess.SubprocessError):
+        return 25.0
 
 
 def _escape_path_for_filter(path: str) -> str:
@@ -530,6 +544,7 @@ def _apply_watermark(video_path: str) -> str:
 def _build_filter_graph(
     time_mapping: list,
     srt_path: str = None,
+    fps: float = 25,
 ) -> str:
     """
     从 time_mapping 生成逐句 trim + setpts + concat 的 filter graph。
@@ -558,49 +573,7 @@ def _build_filter_graph(
     if not tts_entries:
         return None
 
-    parts = []
-    part_idx = 0
-
-    for i, entry in enumerate(tts_entries):
-        orig_start = entry["orig_start"]
-        orig_end = entry["orig_end"]
-        mixed_start = entry["mixed_start"]
-        mixed_end = entry["mixed_end"]
-
-        orig_dur = orig_end - orig_start
-        mixed_dur = mixed_end - mixed_start
-        if orig_dur <= 0 or mixed_dur <= 0:
-            continue
-
-        speed_ratio = mixed_dur / orig_dur
-        parts.append(
-            f"[0:v]trim=start={orig_start:.3f}:duration={orig_dur:.3f},"
-            f"setpts=PTS-STARTPTS,"
-            f"setpts={speed_ratio:.6f}*PTS,"
-            f"format=yuv420p[v{part_idx}]"
-        )
-        part_idx += 1
-
-        # 句子间间隙：从原视频中取停顿画面，也做变速
-        # 这样 concat 后的视频时间轴与混音音频（含句间静音）一致
-        if i < len(tts_entries) - 1:
-            next_entry = tts_entries[i + 1]
-            gap_orig_start = orig_end
-            gap_orig_end = next_entry["orig_start"]
-            gap_mixed_start = mixed_end
-            gap_mixed_end = next_entry["mixed_start"]
-            gap_orig_dur = gap_orig_end - gap_orig_start
-            gap_mixed_dur = gap_mixed_end - gap_mixed_start
-
-            if gap_orig_dur > 0 and gap_mixed_dur > 0:
-                gap_ratio = gap_mixed_dur / gap_orig_dur
-                parts.append(
-                    f"[0:v]trim=start={gap_orig_start:.3f}:duration={gap_orig_dur:.3f},"
-                    f"setpts=PTS-STARTPTS,"
-                    f"setpts={gap_ratio:.6f}*PTS,"
-                    f"format=yuv420p[v{part_idx}]"
-                )
-                part_idx += 1
+    parts = video_chains(tts_entries, fps=fps)
 
     if not parts:
         return None
@@ -633,54 +606,14 @@ def _build_filter_graph(
 # 分块并行视频组装（用于长视频，避免 ffmpeg concat filter 卡死）
 # ============================================================
 
-def _build_block_filter_graph(tts_entries, ass_path=None, include_trailing_gap=True):
+def _build_block_filter_graph(tts_entries, ass_path=None, include_trailing_gap=True, fps=25):
     """为单块构建 filter graph。返回 (graph_path, chain_count)。
 
     每个 sentence 生成一个 trim+setpts+format 链，句间间隙也做变速。
     include_trailing_gap: 非末块为 True（包含到下一块的间隙），末块为 False。
     每块 ~50 句 → ~100 条 chain，避免 ffmpeg concat filter O(n²) 问题。
     """
-    parts = []
-    pidx = 0
-    if include_trailing_gap:
-        n_process = len(tts_entries) - 1  # 最后一条仅用于间隙计算
-    else:
-        n_process = len(tts_entries)
-
-    for i in range(n_process):
-        entry = tts_entries[i]
-        orig_start = entry["orig_start"]
-        orig_end = entry["orig_end"]
-        mixed_start = entry["mixed_start"]
-        mixed_end = entry["mixed_end"]
-        od = orig_end - orig_start
-        md = mixed_end - mixed_start
-        if od <= 0 or md <= 0:
-            continue
-
-        sr = md / od
-        parts.append(
-            f"[0:v]trim=start={orig_start:.3f}:duration={od:.3f},"
-            f"setpts=PTS-STARTPTS,"
-            f"setpts={sr:.6f}*PTS,"
-            f"format=yuv420p[v{pidx}]"
-        )
-        pidx += 1
-
-        if i + 1 < len(tts_entries):
-            ne = tts_entries[i + 1]
-            gos, goe = orig_end, ne["orig_start"]
-            gms, gme = mixed_end, ne["mixed_start"]
-            god, gmd = goe - gos, gme - gms
-            if god > 0 and gmd > 0:
-                gr = gmd / god
-                parts.append(
-                    f"[0:v]trim=start={gos:.3f}:duration={god:.3f},"
-                    f"setpts=PTS-STARTPTS,"
-                    f"setpts={gr:.6f}*PTS,"
-                    f"format=yuv420p[v{pidx}]"
-                )
-                pidx += 1
+    parts = video_chains(tts_entries, fps=fps, include_trailing_gap=include_trailing_gap)
 
     if not parts:
         return None, 0
@@ -701,25 +634,25 @@ def _build_block_filter_graph(tts_entries, ass_path=None, include_trailing_gap=T
 
 
 def _run_one_block(video_path, chunk_audio_path, filter_graph_path, out_path,
-                   block_threads, timeout):
+                   block_threads, timeout, fps=25, frames=None):
     """运行单个 ffmpeg 块。返回 out_path 或 raise。"""
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-threads", str(block_threads),
-        "-i", video_path, "-i", chunk_audio_path,
+        "-i", video_path,
         "-/filter_complex", filter_graph_path,
-        "-map", "[outv]", "-map", "1:a:0",
+        "-map", "[outv]", "-an",
         "-c:v", "libx264",
         "-b:v", getattr(config, "VIDEO_BITRATE", "1500k"),
         "-preset", getattr(config, "VIDEO_X264_PRESET", "veryfast"),
         "-profile:v", "high", "-level", "5.0",
         "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", getattr(config, "VIDEO_AUDIO_BITRATE", "128k"),
-        "-ar", str(getattr(config, "VIDEO_AUDIO_SAMPLE_RATE", 44100)),
-        "-ac", str(getattr(config, "VIDEO_AUDIO_CHANNELS", 2)),
-        "-movflags", "+faststart", out_path,
+        "-r", str(fps),
+        "-movflags", "+faststart",
     ]
+    if frames is not None:
+        cmd += ["-frames:v", str(frames)]
+    cmd += [out_path]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if r.returncode != 0:
         err = (r.stderr or "no output").strip()[-400:]
@@ -755,6 +688,7 @@ def _assemble_video_blocks(
             video_width = _w
         if video_height is None:
             video_height = _h
+    fps = _probe_video_fps(video_path)
     block_size = getattr(config, "VIDEO_BLOCK_SIZE", 50)
     block_threads = getattr(config, "VIDEO_BLOCK_FFMPEG_THREADS", 2)
     block_workers = getattr(config, "VIDEO_BLOCK_WORKERS", 2)
@@ -831,20 +765,13 @@ def _assemble_video_blocks(
         bd = os.path.join(base_dir, f"_block_{bi:03d}")
         os.makedirs(bd, exist_ok=True)
 
-        # 1. 提取音频
-        ap = os.path.join(bd, "audio.mp3")
-        subprocess.run([
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-ss", str(blk["audio_start"]),
-            "-i", mixed_audio_path,
-            "-t", str(blk["audio_dur"]),
-            "-c:a", "copy", ap,
-        ], check=True, capture_output=True, text=True, timeout=120)
-
+        # Render video only. The original continuous audio is encoded exactly
+        # once at final mux, avoiding MP3 cuts and per-block AAC priming.
+        ap = None
         # 2. 构建 filter graph（先不传字幕）
         fgp, nc = _build_block_filter_graph(
             blk["entries"], None,
-            include_trailing_gap=not blk["is_last"],
+            include_trailing_gap=not blk["is_last"], fps=fps,
         )
         if fgp is None:
             raise RuntimeError(f"Block {bi}: empty filter graph")
@@ -867,13 +794,14 @@ def _assemble_video_blocks(
                 pass
             fgp, nc = _build_block_filter_graph(
                 blk["entries"], asp,
-                include_trailing_gap=not blk["is_last"],
+                include_trailing_gap=not blk["is_last"], fps=fps,
             )
 
         op = os.path.join(bd, "output.mp4")
 
         # 4. 运行 ffmpeg
-        _run_one_block(video_path, ap, fgp, op, block_threads, block_timeout)
+        frames = round((blk["audio_start"] + blk["audio_dur"])*fps)-round(blk["audio_start"]*fps)
+        _run_one_block(video_path, ap, fgp, op, block_threads, block_timeout, fps, frames)
 
         # 清理
         try:
@@ -908,8 +836,10 @@ def _assemble_video_blocks(
     subprocess.run([
         "ffmpeg", "-y", "-loglevel", "error",
         "-f", "concat", "-safe", "0",
-        "-i", concat_list,
-        "-c", "copy", output_path,
+        "-i", concat_list, "-i", mixed_audio_path,
+        "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
+        "-b:a", getattr(config, "VIDEO_AUDIO_BITRATE", "128k"),
+        "-movflags", "+faststart", output_path,
     ], check=True, capture_output=True, text=True, timeout=600)
 
     if os.path.exists(output_path):
@@ -948,7 +878,8 @@ def _build_block_ass(tts_entries, time_offset, out_path, video_height=720,
             eng = segments[si].get("text", "").strip()
         if not chn and not eng:
             continue
-        entries.append({"start": ms, "end": me, "chinese": chn, "english": eng})
+        seg = segments[si] if segments and 0 <= si < len(segments) else {}
+        entries.extend(caption_entries(seg, ms, me, eng, chn))
 
     if not entries:
         return None
@@ -1004,6 +935,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     en_qtag = "\\q2" if en_manual_wrap else "\\q0"
     lines = [hdr]
     for ent in entries:
+        speaker = str(ent.get("speaker", "")).replace(",", "_").replace("\n", " ").replace("\r", " ")
         ts = _seconds_to_ass_time(ent["start"])
         te = _seconds_to_ass_time(ent["end"])
         eng = ent["english"].replace("\\N", " ").replace("\n", " ").strip()
@@ -1016,11 +948,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if use_bilingual and eng and chn:
             # 合并为一个事件：ASS 会以整个文本块为锚点，确保中文永远在上、英文永远在下。
             text = _build_bilingual_ass_text(chn, eng, en_qtag)
-            lines.append(fr"Dialogue: 0,{ts},{te},Chinese,,0,0,0,,{text}")
+            lines.append(fr"Dialogue: 0,{ts},{te},Chinese,{speaker},0,0,0,,{text}")
         elif chn:
-            lines.append(fr"Dialogue: 0,{ts},{te},Chinese,,0,0,0,,{{\q0}}{chn}")
+            lines.append(fr"Dialogue: 0,{ts},{te},Chinese,{speaker},0,0,0,,{{\q0}}{chn}")
         elif eng:
-            lines.append(fr"Dialogue: 0,{ts},{te},English,,0,0,0,,{{{en_qtag}}}{eng}")
+            lines.append(fr"Dialogue: 0,{ts},{te},English,{speaker},0,0,0,,{{{en_qtag}}}{eng}")
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -1084,7 +1016,7 @@ def assemble_video(
                 subtitle_mode=subtitle_mode, subtitle_font_size=subtitle_font_size,
                 video_width=video_width, video_height=video_height,
             )
-        filter_graph_path = _build_filter_graph(time_mapping, srt_path)
+        filter_graph_path = _build_filter_graph(time_mapping, srt_path, fps=_probe_video_fps(video_path))
 
     encoders = _detect_encoders()
     video_enc = encoders.get("video")
@@ -1111,6 +1043,8 @@ def assemble_video(
         print(f"[Step5] 逐句变速模式: {len([e for e in time_mapping if e.get('type') == 'tts_chinese'])} 个 TTS 句段")
         cmd += ["-/filter_complex", filter_graph_path]
         cmd += ["-map", "[outv]", "-map", "1:a:0"]
+        output_fps = _probe_video_fps(video_path)
+        cmd += ["-r", str(output_fps)]
     else:
         # 回退模式：简单 ass= 字幕烧录
         diff = video_duration - mixed_duration

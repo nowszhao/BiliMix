@@ -330,3 +330,10 @@ bmx task submit --type video --video-url "https://youtu.be/xxx" \
 # 独立 TTS：本地参考音频 + 一句话，直接出音频
 bmx tts synth --ref-audio ./ref.wav --text "要合成的话" --wait -o out.wav
 ```
+
+
+## 精翻音频优先协议 v1
+
+`bmx video analyze --server-path <uploaded MP4> --wait` 获取 `result.analysis`。
+精翻后用 `bmx task submit --type video --server-path <same MP4> --dub-manifest <local JSON> --analysis-id <analysis task id> --ref-select-mode speaker_global` 提交完整中文话语。
+`bmx api --field dubbing_protocol` 应返回1。manifest作为结构化JSON请求发送，显示字幕切分不会拆开合成。完整契约见 `docs/audio-first-dubbing.md`。

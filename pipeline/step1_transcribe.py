@@ -176,7 +176,7 @@ def _fill_transcription_gaps(transcription: dict, audio_path: str) -> dict:
     return transcription
 
 
-def transcribe(audio_path: str, output_dir: str = None) -> dict:
+def transcribe(audio_path: str, output_dir: str = None, diarize=None) -> dict:
     """
     使用 WhisperX 转录音频，返回词级别时间戳数据。
 
@@ -195,6 +195,11 @@ def transcribe(audio_path: str, output_dir: str = None) -> dict:
 
     os.makedirs(output_dir, exist_ok=True)
 
+    diarize = bool(getattr(config, "WHISPERX_DIARIZE", False)) if diarize is None else diarize
+    from pipeline.dubbing_plan import file_sha256, canonical_hash
+    source_fingerprint = canonical_hash({"audio": file_sha256(audio_path),
+        "model": config.WHISPERX_MODEL, "language": config.WHISPERX_LANGUAGE,
+        "diarize": diarize, "schema": 2})
     # 检查是否已有缓存的转录结果
     basename = os.path.splitext(os.path.basename(audio_path))[0]
     json_path = os.path.join(output_dir, f"{basename}.json")
@@ -203,8 +208,9 @@ def transcribe(audio_path: str, output_dir: str = None) -> dict:
         print(f"[Step1] 发现已有转录缓存: {json_path}")
         with open(json_path, "r", encoding="utf-8") as f:
             cached = json.load(f)
-        cached = _fill_transcription_gaps(cached, audio_path)
-        return cached
+        if cached.get("_source_fingerprint") == source_fingerprint:
+            cached = _fill_transcription_gaps(cached, audio_path)
+            return cached
 
     # 调用 WhisperX 进行转录
     # WHISPERX_BIN 支持 str（单二进制）或 list（如 [python, wrapper.py]）
@@ -227,7 +233,7 @@ def transcribe(audio_path: str, output_dir: str = None) -> dict:
         cmd += ["--threads", str(threads)]
 
     # 说话人分离（Diarization）
-    if getattr(config, "WHISPERX_DIARIZE", False):
+    if diarize:
         hf_token = getattr(config, "WHISPERX_HF_TOKEN", "")
         if hf_token:
             cmd += ["--diarize", "--hf_token", hf_token]
@@ -238,7 +244,8 @@ def transcribe(audio_path: str, output_dir: str = None) -> dict:
             if env_token:
                 cmd += ["--diarize", "--hf_token", env_token]
             else:
-                print("[Step1] ⚠️ 未设置 WHISPERX_HF_TOKEN，跳过说话人分离")
+                cmd += ["--diarize"]
+                print("[Step1] 使用已缓存人物模型（未提供新 token）")
 
         min_s = getattr(config, "WHISPERX_MIN_SPEAKERS", 0)
         max_s = getattr(config, "WHISPERX_MAX_SPEAKERS", 0)
@@ -247,7 +254,10 @@ def transcribe(audio_path: str, output_dir: str = None) -> dict:
         if max_s > 0:
             cmd += ["--max_speakers", str(max_s)]
 
-    print(f"[Step1] 执行命令: {' '.join(cmd)}")
+    safe_cmd = list(cmd)
+    if "--hf_token" in safe_cmd:
+        safe_cmd[safe_cmd.index("--hf_token")+1] = "<redacted>"
+    print(f"[Step1] 执行命令: {' '.join(safe_cmd)}")
 
     # 设置环境变量
     # - OMP_NUM_THREADS 等控制 PyTorch / CTranslate2 底层 OpenMP 线程
@@ -273,6 +283,7 @@ def transcribe(audio_path: str, output_dir: str = None) -> dict:
 
     # 检测并补录 VAD/对齐漏检的语音片段
     transcription = _fill_transcription_gaps(transcription, audio_path)
+    transcription["_source_fingerprint"] = source_fingerprint
     # 补录结果落盘，避免下次读缓存时重复补录
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(transcription, f, ensure_ascii=False, indent=2)

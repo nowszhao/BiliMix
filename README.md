@@ -135,3 +135,6 @@ WhisperX（词级时间戳，说话人分离可选、需 HF_TOKEN）· Ollama（
 ## License
 
 MIT
+
+
+精翻配音的完整人物绑定、自然话语与音频优先工作流见 [音频优先协议](docs/audio-first-dubbing.md)。

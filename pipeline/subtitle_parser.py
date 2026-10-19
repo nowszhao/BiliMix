@@ -51,13 +51,28 @@ def parse_ass_subtitle(ass_path: str) -> tuple:
     translations = {}
     translated_indices = []
 
-    with open(ass_path, "r", encoding="utf-8") as f:
+    event_format = None
+    in_events = False
+    with open(ass_path, "r", encoding="utf-8-sig") as f:
         for line in f:
-            m = _DIALOGUE_RE.match(line.strip())
-            if not m:
+            stripped = line.strip()
+            if stripped.startswith("["):
+                in_events = stripped.lower() == "[events]"
+            if in_events and stripped.lower().startswith("format:"):
+                event_format = [x.strip().lower() for x in stripped.split(":", 1)[1].split(",")]
+                if not event_format or event_format[-1] != "text":
+                    raise ValueError("ASS Events Format must end in Text")
                 continue
-
-            start_ts, end_ts, text = m.groups()
+            if not line.strip().startswith("Dialogue:"):
+                continue
+            fields = line.strip()[len("Dialogue:"):].lstrip().split(",", 9)
+            if len(fields) != 10:
+                raise ValueError("Invalid ASS Dialogue field count")
+            if event_format:
+                values = dict(zip(event_format, fields))
+                start_ts, end_ts, name, text = values["start"], values["end"], values.get("name", "").strip(), values["text"]
+            else:
+                start_ts, end_ts, name, text = fields[1], fields[2], fields[4].strip(), fields[9]
             start = _ass_time_to_seconds(start_ts)
             end = _ass_time_to_seconds(end_ts)
 
@@ -80,7 +95,7 @@ def parse_ass_subtitle(ass_path: str) -> tuple:
                 "text": eng,
                 "start": start,
                 "end": end,
-                "speaker": "",
+                "speaker": name,
             })
 
             if chn:

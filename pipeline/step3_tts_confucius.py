@@ -264,6 +264,14 @@ def synthesize_sentences_with_confucius_tts(
     total = len(translated_indices)
     print(f"[Step3-Confucius] 准备为 {total} 个句子合成中文 TTS")
 
+    from pipeline.tts_cache import synthesis_key, model_fingerprint
+    root = _get_confucius_root()
+    model_id = model_fingerprint(root, os.path.join(config.BASE_DIR, "workers", "confucius_tts_worker.py"),
+                                 os.path.join(root, "config", "inference_config.yaml"))
+    parameters = {name: getattr(config, "CONFUCIUS4_TTS_" + name.upper(), default)
+                  for name, default in (("temperature", .8), ("top_p", .8), ("top_k", 30),
+                      ("num_beams", 3), ("repetition_penalty", 10.), ("n_timesteps", 25),
+                      ("inference_cfg_rate", .7), ("device", "cpu"))}
     # 构建合成任务
     jobs = []
     for seg_idx in translated_indices:
@@ -278,15 +286,14 @@ def synthesize_sentences_with_confucius_tts(
 
         if not ref_audio or not os.path.isfile(ref_audio):
             print(f"  [跳过] seg[{seg_idx}] 缺少参考音频 ({ref_audio or '(空)'})")
-            continue
+            raise ValueError(f"Missing cloning reference for unit {seg_idx}")
 
         # 该 segment 实际使用的语种（中英混排时按片段指定，见 mixed_lang.py）
         eff_lang = (seg_lang_map or {}).get(seg_idx, lang)
 
         # 缓存 key（含语种，避免切换 lang 时误命中旧缓存）
-        cache_key = hashlib.md5(
-            f"conf_{eff_lang}|{chinese_text}|{ref_audio}".encode()
-        ).hexdigest()[:12]
+        speaker = segments[seg_idx].get("speaker", "") if isinstance(segments, list) and seg_idx < len(segments) else ""
+        cache_key = synthesis_key(chinese_text, eff_lang, ref_audio, model_id, parameters, speaker)
         output_path = os.path.join(cache_dir, f"confucius_tts_{cache_key}.wav")
 
         jobs.append({

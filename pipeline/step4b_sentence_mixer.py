@@ -143,7 +143,9 @@ def _compute_dynamic_gap_ms(segments: list, seg_idx: int,
     raw_gap_s = next_start - current_end
 
     # 异常 gap（负数或过大）→ 回退固定间隙
-    if raw_gap_s <= 0 or raw_gap_s > 10.0:
+    if raw_gap_s <= 0:
+        return 0
+    if raw_gap_s > 10.0:
         return _DEFAULT_GAP_MS
 
     raw_gap_ms = raw_gap_s * 1000.0
@@ -189,6 +191,12 @@ def mix_sentence_audio(
         bgm_gain_db = getattr(config, "MIXER_BGM_GAIN_DB", -10.0)
 
     sorted_indices = sorted(translated_indices)
+    missing = [i for i in sorted_indices if not tts_audio_map.get(i) or not os.path.isfile(tts_audio_map[i])]
+    if missing:
+        raise ValueError(f"Missing synthesized speech for units {missing}; refusing incomplete delivery")
+    from pipeline.timeline_plan import additional_pause_ms
+    from pydub.silence import detect_leading_silence
+    audio_first = any(seg.get("unit_id") for seg in segments)
 
     if not sorted_indices or not tts_audio_map:
         print("[Step4b] 没有 TTS 音频，无法组装")
@@ -257,6 +265,12 @@ def mix_sentence_audio(
           f"间隙={'动态' if use_dynamic else '固定 ' + str(gap_ms) + 'ms'} "
           f"(范围 {_DYNAMIC_GAP_MIN_MS}-{_DYNAMIC_GAP_MAX_MS}ms)")
 
+    # Load the next leading silence lazily; silence is measured, not assumed.
+    edge_silence = {}
+    for idx in sorted_indices:
+        clip = AudioSegment.from_file(tts_audio_map[idx])
+        edge_silence[idx] = (min(500, detect_leading_silence(clip, silence_threshold=-45, chunk_size=5)),
+                             min(500, detect_leading_silence(clip.reverse(), silence_threshold=-45, chunk_size=5)))
     for i, seg_idx in enumerate(sorted_indices):
         seg = segments[seg_idx] if seg_idx < len(segments) else {}
         tts_path = tts_audio_map.get(seg_idx, "")
@@ -271,7 +285,7 @@ def mix_sentence_audio(
             tts_clip = _normalize_tts_audio(tts_clip)
             tts_clip = _apply_dynamics_processing(tts_clip)
             tts_clip = tts_clip.fade_in(_FADE_MS).fade_out(_FADE_MS)
-            tts_len_ms = len(tts_clip)
+            tts_len_ms = tts_clip.frame_count() * 1000.0 / target_sr
 
             result += tts_clip
 
@@ -296,6 +310,8 @@ def mix_sentence_audio(
             "orig_end": orig_end,
             "type": entry_type,
             "segment_index": seg_idx,
+            "unit_id": seg.get("unit_id", str(seg_idx)),
+            "speaker": seg.get("speaker", ""),
             "chinese": chinese_text if entry_type == "tts_chinese" else "",
         })
 
@@ -304,7 +320,10 @@ def mix_sentence_audio(
         # 句间间隙（最后一句后面不加）
         if i < len(sorted_indices) - 1:
             next_seg_idx = sorted_indices[i + 1]
-            if use_dynamic:
+            if audio_first:
+                cur_gap_ms = additional_pause_ms(seg, segments[next_seg_idx],
+                    edge_silence[seg_idx][1], edge_silence[next_seg_idx][0])
+            elif use_dynamic:
                 cur_gap_ms = _compute_dynamic_gap_ms(
                     segments, seg_idx, next_seg_idx)
                 if cur_gap_ms == _DEFAULT_GAP_MS:
@@ -315,7 +334,7 @@ def mix_sentence_audio(
                 cur_gap_ms = gap_ms
 
             result += _get_silence(cur_gap_ms)
-            mixed_pos_ms += cur_gap_ms
+            mixed_pos_ms = result.frame_count() * 1000.0 / target_sr
 
     # ---- 可选 BGM 叠加 ----
     if bgm_path and os.path.exists(bgm_path):
@@ -342,7 +361,7 @@ def mix_sentence_audio(
             print(f"[Step4b] 背景音叠加失败: {e}")
 
     # ---- 导出 ----
-    fmt = getattr(config, "OUTPUT_FORMAT", "mp3")
+    fmt = os.path.splitext(output_path)[1].lstrip(".").lower() or getattr(config, "OUTPUT_FORMAT", "mp3")
     bitrate = getattr(config, "OUTPUT_BITRATE", "192k")
     result.export(output_path, format=fmt, bitrate=bitrate)
 
@@ -406,6 +425,8 @@ def build_segments_with_mixed_time(segments: list, translations: dict,
         s = {
             "text": seg.get("text", "").strip(),
             "speaker": seg.get("speaker", ""),
+            "unit_id": seg.get("unit_id", str(i)),
+            "captions": seg.get("captions", []),
         }
         if i in seg_to_mixed:
             s["start"] = seg_to_mixed[i]["start"]

@@ -236,18 +236,13 @@ def _assign_speaker_labels(segments: list) -> list:
     """
     has_real_speaker = any(seg.get("speaker") for seg in segments)
     if has_real_speaker:
-        return [seg.get("speaker") or "spk_unknown" for seg in segments]
+        from pipeline.dubbing_plan import known_speaker
+        if not all(known_speaker(seg.get("speaker")) for seg in segments):
+            raise ValueError("Unresolved speaker: cannot share or extend cloning references")
+        return [seg["speaker"] for seg in segments]
 
-    # 无 diarization：用 gap 分组作为伪说话人
-    same_speaker_gap = getattr(config, "SAME_SPEAKER_GAP", 0.8)
-    groups = _group_segments_into_turns(segments, same_speaker_gap)
-    seg_to_label = {}
-    for gi, group in enumerate(groups):
-        for idx in group:
-            seg_to_label[idx] = f"spk_auto_{gi}"
-    print("[Step3] ⚠️ 未检测到 speaker 标签，按 inter-segment gap 估算说话人。"
-          "建议开启 WhisperX diarization 以获得更稳定音色。")
-    return [seg_to_label.get(i, "spk_auto_0") for i in range(len(segments))]
+    raise ValueError("Speaker identities missing: run source analysis; gap-based voice guessing is disabled")
+
 
 
 def _find_speaker_longest_segment(segments: list, speaker_labels: list,
@@ -333,12 +328,15 @@ def extract_ref_audio_speaker_global(audio_path: str, segments: list,
     for spk, indices in speaker_segments.items():
         # 选该说话人最长的 segment 作为参考（最长段通常最中性稳定，
         # 避免 RMS 选到高音兴奋段导致所有句子音调偏高）
+        indices = [i for i in indices if segments[i].get("end", 0) - segments[i].get("start", 0) >= min_ref]
+        if not indices:
+            raise ValueError(f"Insufficient reference for speaker {spk}; provide a clean same-speaker reference")
         best_idx = max(indices, key=lambda i: segments[i].get("end", 0) - segments[i].get("start", 0))
 
         # 提取参考音频
         seg = segments[best_idx]
         start_ms = int(seg["start"] * 1000)
-        end_ms = int(seg["end"] * 1000)
+        end_ms = min(int(seg["end"] * 1000), start_ms + 10000)
         ref_path = os.path.join(output_dir, f"ref_spk_{spk}_{best_idx}.wav")
         _extract_audio_clip(audio_path, start_ms, end_ms, ref_path)
         speaker_ref[spk] = (best_idx, ref_path)
@@ -470,15 +468,8 @@ def extract_ref_audio_speaker_local(audio_path: str, segments: list,
             # 扩展后仍不足 → 回退到该说话人全篇最长段
             if (clip_end - clip_start) < min_ref_ms:
                 longest = _find_speaker_longest_segment(segments, speaker_labels, spk)
-                # 同 speaker 无更长段（== 自身或不存在）→ 放宽到全篇任意 speaker 最长段
-                if longest is None or longest == seg_idx:
-                    longest = _find_global_longest_segment(segments, exclude_idx=seg_idx)
-                    if longest is not None:
-                        lseg_tmp = segments[longest]
-                        print(f"  ⚠️ seg[{seg_idx}] spk={spk} 同 speaker 无更长段，"
-                              f"回退到全篇最长段 seg[{longest}] "
-                              f"({lseg_tmp.get('end', 0) - lseg_tmp.get('start', 0):.1f}s, "
-                              f"跨 speaker, 音色可能不匹配)")
+                if longest is None or (segments[longest]["end"] - segments[longest]["start"]) < min_ref:
+                    raise ValueError(f"Insufficient reference for speaker {spk}; cross-speaker fallback disabled")
                 if longest is not None and longest != seg_idx:
                     lseg = segments[longest]
                     lstart = int(lseg.get("start", 0) * 1000)
@@ -491,9 +482,11 @@ def extract_ref_audio_speaker_local(audio_path: str, segments: list,
 
         # 极长 → 以目标句为中心截取到 max_ref
         if (clip_end - clip_start) > max_ref_ms:
-            mid_ms = (seg_start_ms + seg_end_ms) // 2
-            clip_start = max(0, mid_ms - max_ref_ms // 2)
-            clip_end = min(audio_duration_ms, clip_start + max_ref_ms)
+            # Crop inside the actual selected reference, not the target sentence.
+            selected_start, selected_end = clip_start, clip_end
+            mid_ms = (selected_start + selected_end) // 2
+            clip_start = max(selected_start, mid_ms - max_ref_ms // 2)
+            clip_end = min(selected_end, clip_start + max_ref_ms)
 
         # 提取参考音频
         ref_filename = f"ref_seg_{seg_idx}.wav"

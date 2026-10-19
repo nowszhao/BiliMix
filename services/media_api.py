@@ -446,10 +446,14 @@ def api_index():
         ep_count = 0
         total_unread = 0
 
+    endpoints.append({"method": "POST", "path": "/api/dubbing/analyze",
+                      "description": "异步源视频人物/词级分析，返回task_id；结果位于result.analysis",
+                      "params": {"local_path": "上传媒体路径", "video_url": "或视频URL"}})
     return jsonify({
         "name": "BiliMix API",
         "version": "1.0.0",
         "description": "中英混合播客/视频学习工具",
+        "dubbing_protocol": 1,
         "total_endpoints": len(endpoints),
         "endpoints": endpoints,
         "stats": {

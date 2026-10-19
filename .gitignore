@@ -51,3 +51,4 @@ core/config_local.py
 scripts/whisperx_run.py
 .claude
 docs/*
+!docs/audio-first-dubbing.md

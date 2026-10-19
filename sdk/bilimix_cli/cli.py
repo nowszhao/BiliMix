@@ -318,8 +318,8 @@ def cmd_task_submit(args, client):
     body = {}
     task_type = getattr(args, "type", "audio")
 
-    if task_type == "video":
-        body["type"] = "video"
+    if task_type in ("video", "analysis"):
+        body["type"] = task_type
         if args.video_url:
             body["video_url"] = args.video_url
         elif args.server_path:
@@ -349,6 +349,11 @@ def cmd_task_submit(args, client):
     # 提供后跳过转录和翻译，直接用字幕生成配音音频/视频。
     if getattr(args, 'subtitle_path', None):
         body["subtitle_path"] = args.subtitle_path
+
+    if getattr(args, "dub_manifest", None):
+        with open(args.dub_manifest, encoding="utf-8") as stream:
+            body["dub_manifest"] = json.load(stream)
+        body["analysis_id"] = getattr(args, "analysis_id", None) or body["dub_manifest"].get("analysis_id")
 
     # ref_select_mode: 参考音频选取模式（声音克隆）
     if getattr(args, 'ref_select_mode', None):
@@ -1201,7 +1206,7 @@ def build_parser():
     task_sub = p_task.add_subparsers(dest="subcommand", required=True)
 
     p = add_cmd(task_sub, "submit", help="提交音频/视频处理任务")
-    p.add_argument("--type", choices=["audio", "video"], default="audio",
+    p.add_argument("--type", choices=["audio", "video", "analysis"], default="audio",
                    help="任务类型 (默认 audio)")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--url", help="音频文件 URL")
@@ -1224,6 +1229,8 @@ def build_parser():
     p.add_argument("--subtitle-path",
                    help="服务端外部双语字幕文件路径 (.ass, || 分隔英文和中文)，"
                         "提供后跳过转录和翻译，直接用字幕生成配音")
+    p.add_argument("--dub-manifest", help="本地精翻配音计划 JSON（协议 v1）")
+    p.add_argument("--analysis-id", help="已完成源人物分析 task ID")
     p.add_argument("--ref-select-mode",
                    choices=["speaker_global", "speaker_local", "segment"],
                    help="参考音频选取模式 (声音克隆, 默认服务端配置)")
@@ -1321,6 +1328,16 @@ def build_parser():
     # ---- video ----
     p_vid = add_cmd(sub, "video", help="视频文件")
     vid_sub = p_vid.add_subparsers(dest="subcommand", required=True)
+    p = add_cmd(vid_sub, "analyze", help="精翻前分析源视频人物和词级时间，返回完整 analysis")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--server-path")
+    g.add_argument("--video-url")
+    p.add_argument("--wait", action="store_true")
+    p.add_argument("--title", default="Source speaker analysis")
+    p.add_argument("--poll-interval", type=float, default=2.0)
+    p.set_defaults(func=cmd_task_submit, type="analysis", local_path=None, url=None,
+                   subtitle_mode=None, subtitle_font_size=None, skip_confirm=False, no_skip_confirm=False)
+
 
     p = add_cmd(vid_sub, "download", help="下载配音视频")
     g = p.add_mutually_exclusive_group(required=True)

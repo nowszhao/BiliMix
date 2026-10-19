@@ -57,6 +57,8 @@ from services.task_query import task_query_bp
 from services.tts_api import tts_bp
 
 from pipeline.step1_transcribe import transcribe, extract_full_text
+from pipeline.speaker_analysis import analyze_source, extract_reference_pool
+from pipeline.dubbing_plan import validate_manifest, bind_legacy_segments, file_sha256
 # step2_identify_difficult_words removed (word_replace mode deleted)
 from pipeline.step3_tts_confucius import synthesize_sentences_with_confucius_tts
 # step4_audio_editor removed (word_replace mode deleted)
@@ -359,8 +361,6 @@ def _check_hardware_requirements():
         print()
 
 
-_check_required_dependencies()
-_check_hardware_requirements()
 
 
 # ============================================================
@@ -479,24 +479,40 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
         subtitle_path = task_pre.get("_subtitle_path", "")
         external_subtitle_used = False
 
-        if subtitle_path and os.path.isfile(subtitle_path):
+        if task_pre.get("_dub_manifest") or (subtitle_path and os.path.isfile(subtitle_path)):
             print(f"[Subtitle] 检测到外部字幕文件: {subtitle_path}")
             from pipeline.subtitle_parser import parse_ass_subtitle
-            parsed_segments, parsed_translations, parsed_indices = (
-                parse_ass_subtitle(subtitle_path))
+            if task_pre.get("_dub_manifest"):
+                parsed_segments = validate_manifest(task_pre["_dub_manifest"], task_pre["_speaker_analysis"])
+                parsed_translations = {i: u["text_zh"] for i, u in enumerate(parsed_segments)}
+                parsed_indices = list(parsed_translations)
+            else:
+                parsed_segments, parsed_translations, parsed_indices = parse_ass_subtitle(subtitle_path)
 
             if parsed_segments and parsed_translations:
                 print(f"[Subtitle] 解析成功: {len(parsed_segments)} 段, "
                       f"{len(parsed_indices)} 条双语，跳过转录和翻译")
-                segments = parsed_segments
+                manifest = task_pre.get("_dub_manifest")
+                analysis = task_pre.get("_speaker_analysis")
+                if not analysis:
+                    media_source = task_pre.get("url", "").removeprefix("file://")
+                    if not os.path.isfile(media_source):
+                        media_source = task_pre.get("_video_path") or audio_path
+                    analysis = analyze_source(transcribe_audio_path, media_source,
+                                              os.path.join(result_dir, "source_analysis"), task_id=task_id)
+                if manifest:
+                    segments = validate_manifest(manifest, analysis)
+                    translations_from_plan = {i: u["text_zh"] for i, u in enumerate(segments)}
+                    parsed_translations = translations_from_plan
+                    parsed_indices = list(translations_from_plan)
+                else:
+                    segments = bind_legacy_segments(parsed_segments, analysis)
+                update_task(task_id, _speaker_analysis=analysis, segments=segments)
                 translations = parsed_translations
                 translated_indices = parsed_indices
                 full_text = " ".join(s["text"] for s in segments)
                 external_subtitle_used = True
-                serialized_segments = [{"text": s.get("text", "").strip(),
-                                        "start": s.get("start", 0),
-                                        "end": s.get("end", 0),
-                                        "speaker": s.get("speaker", "")} for s in segments]
+                serialized_segments = [dict(s) for s in segments]
                 update_task(task_id, status="processing", step="synthesize",
                             progress=30,
                             message="Step 3/4: 使用外部字幕，跳过转录和翻译...",
@@ -513,16 +529,21 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
                     "translated_indices": translated_indices,
                 })
             else:
-                print(f"[Subtitle] 外部字幕解析失败，回退到正常转录流程")
+                raise ValueError("外部精翻字幕为空或无法解析；请修复后重试，禁止回退到服务端翻译")
 
         if not external_subtitle_used:
             # ---- Step 1: 转录 ----
             update_task(task_id, status="processing", step="transcribe",
                         progress=5, message="Step 1/4: 正在转录音频...")
 
-            transcription = transcribe(transcribe_audio_path, output_dir=result_dir)
-            full_text = extract_full_text(transcription)
-            segments = transcription.get("segments", [])
+            media_source = task_pre.get("url", "").removeprefix("file://")
+            if not os.path.isfile(media_source):
+                media_source = task_pre.get("_video_path") or audio_path
+            analysis = analyze_source(transcribe_audio_path, media_source,
+                                      os.path.join(result_dir, "source_analysis"), task_id=task_id)
+            segments = analysis["sentences"]
+            full_text = " ".join(s["text"] for s in segments)
+            update_task(task_id, _speaker_analysis=analysis)
 
         if not external_subtitle_used:
             if is_cancelled(task_id):
@@ -733,15 +754,22 @@ def _build_confucius_ref_map(task_id: str, segments: list,
         for idx in translated_indices if idx < len(segments)
     ]
 
-    ref_mode = task.get("_ref_select_mode", "") or getattr(config, "REF_SELECT_MODE", "speaker_local")
-    extractor = _REF_EXTRACTORS.get(ref_mode, extract_ref_audio_for_segments)
-    ref_map, _, _ = extractor(
-        ref_audio_source, segments, pseudo_replacements,
-        confucius_ref_dir)
-
-
-    print(f"[Confucius] 提取了 {len(ref_map)} 个参考音频 (mode={ref_mode})")
+    analysis = task.get("_speaker_analysis")
+    if analysis:
+        pool = extract_reference_pool(ref_audio_source, analysis, confucius_ref_dir)
+        missing = {segments[i].get("speaker") for i in translated_indices if segments[i].get("speaker") not in pool}
+        if missing:
+            raise ValueError(f"Insufficient clean same-speaker reference: {sorted(missing)}")
+        ref_map = {i: pool[segments[i]["speaker"]]["path"] for i in translated_indices}
+        update_task(task_id, _reference_manifest=pool, _ref_select_mode="speaker_global")
+    else:
+        ref_mode = task.get("_ref_select_mode", "") or "speaker_global"
+        extractor = _REF_EXTRACTORS.get(ref_mode)
+        if not extractor:
+            raise ValueError("Unsupported reference selection mode")
+        ref_map, _, _ = extractor(ref_audio_source, segments, pseudo_replacements, confucius_ref_dir)
     return ref_map
+
 
 
 def continue_after_sentence_confirmation(task_id: str):
@@ -816,12 +844,7 @@ def continue_after_sentence_confirmation(task_id: str):
             ]
             confucius_ref_map = {}
             if voice_clone and pseudo_replacements:
-                ref_mode = task.get("_ref_select_mode", "") or getattr(config, "REF_SELECT_MODE", "speaker_local")
-                extractor = _REF_EXTRACTORS.get(ref_mode, extract_ref_audio_for_segments)
-                confucius_ref_map, confucius_ref_source_map, _confucius_ref_text_map = extractor(
-                    ref_audio_source, segments, pseudo_replacements,
-                    confucius_ref_dir)
-                print(f"[Confucius] 提取了 {len(confucius_ref_map)} 个参考音频 (mode={ref_mode})")
+                confucius_ref_map = _build_confucius_ref_map(task_id, segments, translated_indices)
 
             def _confucius_progress(current, total):
                 # 防止 TTS 完成后回调仍然修改 message 导致 step/message 不同步
@@ -1124,6 +1147,15 @@ def parse_subtitle():
     })
 
 
+@app.route("/api/dubbing/analyze", methods=["POST"])
+def submit_source_analysis():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON object required"}), 400
+    data["type"] = "analysis"
+    return submit_task()
+
+
 @app.route("/api/submit", methods=["POST"])
 def submit_task():
     """提交音频/视频处理任务"""
@@ -1137,7 +1169,7 @@ def submit_task():
     video_url = data.get("video_url", "").strip()
 
     # 视频任务
-    if task_type == "video":
+    if task_type in ("video", "analysis"):
         if not local_path and not video_url:
             return jsonify({"error": "请提供视频URL或上传本地视频文件"}), 400
         if local_path:
@@ -1167,7 +1199,7 @@ def submit_task():
         subtitle_font_size = 20
 
     # Always use sentence_translate mode with 100% translation
-    process_mode = "video" if task_type == "video" else "sentence_translate"
+    process_mode = task_type if task_type in ("video", "analysis") else "sentence_translate"
     print(f"[Submit] process_mode={process_mode!r} (task_type={task_type!r})")
     skip_confirmation = data.get("skip_confirmation",
                                  getattr(config, "SKIP_CONFIRMATION", True))
@@ -1187,6 +1219,25 @@ def submit_task():
                 pre_duration = float(duration_str)
         except ValueError:
             pass
+
+    subtitle_path = data.get("subtitle_path", "")
+    if subtitle_path and not os.path.isfile(subtitle_path):
+        return jsonify({"error": "外部精翻字幕文件不存在，禁止回退到服务端翻译"}), 400
+
+    analysis = None
+    manifest = data.get("dub_manifest")
+    analysis_id = data.get("analysis_id", "")
+    if manifest is not None:
+        previous = get_task(analysis_id) or restore_task_from_disk(analysis_id)
+        analysis = ((previous or {}).get("result") or {}).get("analysis")
+        if not analysis or (previous or {}).get("status") != "completed":
+            return jsonify({"error": "Completed source analysis_id required"}), 400
+        if not local_path or file_sha256(local_path) != analysis["source_media_sha256"]:
+            return jsonify({"error": "Source media hash disagrees with analysis"}), 400
+        try:
+            validate_manifest(manifest, analysis)
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify({"error": str(exc)}), 400
 
     task_id = generate_task_id(source + str(time.time()))
 
@@ -1223,6 +1274,9 @@ def submit_task():
             "keep_bgm": bool(data.get("keep_bgm", False)),
             "_ref_select_mode": data.get("ref_select_mode", ""),
             "_subtitle_path": data.get("subtitle_path", ""),
+            "_analysis_id": analysis_id,
+            "_dub_manifest": manifest,
+            "_speaker_analysis": analysis,
         }
 
     # 任务创建后立即持久化到 SQLite，避免进程中途退出后历史记录丢失
@@ -1272,6 +1326,9 @@ def submit_task():
             update_task(task_id, status="processing",
                         message="开始处理…")
             _run_worker(task_id, source)
+        except Exception as exc:
+            traceback.print_exc()
+            update_task(task_id, status="cancelled" if is_cancelled(task_id) else "error", message=str(exc))
         finally:
             # 执行完成（或异常退出），从队列移除并通知下一个等待者
             with _queue_condition:
@@ -1281,7 +1338,7 @@ def submit_task():
 
     def _run_worker(task_id, source_url):
         # ---- 视频任务：先下载/提取视频 ----
-        if task_type == "video":
+        if task_type in ("video", "analysis"):
             is_local = source_url.startswith("file://")
             if is_local:
                 local_path = source_url[len("file://"):]
@@ -1342,6 +1399,22 @@ def submit_task():
             audio_path_for_pipeline = _prepare_audio(task_id, source_url)
             if not audio_path_for_pipeline:
                 return
+
+        if task_type == "analysis":
+            result_dir = os.path.join(config.RESULT_DIR, "analysis_" + task_id)
+            update_task(task_id, step="analyze", progress=10, _basename="analysis_" + task_id)
+            sep = separate_vocals(audio_path_for_pipeline, os.path.join(result_dir, "vocals"))
+            source_audio = sep.get("vocals_path") if sep.get("ok") else audio_path_for_pipeline
+            analysis = analyze_source(source_audio, video_source if os.path.isfile(video_source) else video_path, result_dir, task_id=task_id)
+            if is_cancelled(task_id):
+                update_task(task_id, status="cancelled")
+                return
+            analysis["analysis_id"] = task_id
+            result = {"analysis": analysis, "original_audio": audio_path_for_pipeline}
+            update_task(task_id, status="completed", step="done", progress=100, result=result,
+                        message="Source speaker analysis ready; refine complete utterances before dubbing")
+            save_task_result_to_disk(result_dir, {**get_task(task_id), "result": result})
+            return
 
         # 执行核心管道（转录 → 翻译 → TTS → 混音）
         process_audio_sentence_mode(task_id, audio_path_for_pipeline)
@@ -1618,7 +1691,7 @@ def redo_task(task_id):
                 return
             update_task(task_id, status="processing", step="download",
                         progress=0, message="正在重做...")
-            if task_type == "video":
+            if task_type in ("video", "analysis"):
                 _do_redo_video_task(task_id, source_url)
             else:
                 _do_redo_audio_task(task_id, source_url)
@@ -1891,7 +1964,7 @@ def _synthesis_resume(task_id):
     result_dir = os.path.join(config.RESULT_DIR, basename)
 
     existing_tts = task.get("tts_audio_map", {}) or {}
-    missing_indices = [idx for idx in translated_indices if idx not in existing_tts]
+    missing_indices = list(translated_indices)  # content-addressed cache decides reuse
 
     if not missing_indices:
         tts_audio_map = existing_tts
@@ -2048,8 +2121,7 @@ def retry_sentence_synthesis(task_id):
 
     # 找出已有 TTS 和缺失 TTS 的 segment
     existing_tts = task.get("tts_audio_map", {}) or {}
-    missing_indices = [idx for idx in translated_indices
-                       if idx not in existing_tts]
+    missing_indices = list(translated_indices)  # revalidate reference/model fingerprints
 
     if not missing_indices:
         # 全部已有 TTS，可直接混合
@@ -2081,7 +2153,7 @@ def retry_sentence_synthesis(task_id):
             new_tts = synthesize_sentences_with_confucius_tts(
                 segments, missing_indices, missing_translations,
                 audio_path, confucius_cache_dir,
-                ref_audio_map={},
+                ref_audio_map=_build_confucius_ref_map(task_id, segments, missing_indices),
                 cancel_check=_retry_cancel, progress_cb=_retry_progress,
                 task_id=task_id)
         except InterruptedError:
@@ -2245,6 +2317,8 @@ def retry_sentence_synthesis(task_id):
 # ============================================================
 
 if __name__ == "__main__":
+    _check_required_dependencies()
+    _check_hardware_requirements()
     os.makedirs(_web_dir, exist_ok=True)
     os.makedirs(config.DOWNLOAD_DIR, exist_ok=True)
 
