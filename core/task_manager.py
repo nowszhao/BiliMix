@@ -172,8 +172,8 @@ def _persist_task(task_id: str):
             "message": task.get("message", ""),
             "created_at": task.get("created_at", ""),
             "keep_bgm": task.get("keep_bgm", False),
-            "basename": ((task.get("result") or {}).get("basename", "")
-                         if task.get("result") else task.get("_basename", "")),
+            "basename": ((task.get("result") or {}).get("basename")
+                         or task.get("_basename", "")),
             "total_words": ((task.get("result") or {}).get("total_words", 0)
                             if task.get("result") else 0),
             "total_replacements": ((task.get("result") or {}).get("total_replacements", 0)
@@ -265,7 +265,7 @@ def restore_task_from_disk(task_id: str) -> dict:
             is_sentence_confirm = saved_status == "awaiting_sentence_confirmation"
             task = {
                 "task_id": task_id,
-                "url": summary.get("url", ""),
+                "url": saved.get("url") or summary.get("url", ""),
                 "title": summary.get("title", ""),
                 "difficulty": saved.get("difficulty", summary.get("difficulty", "")),
                 "process_mode": saved.get("process_mode", summary.get("process_mode", "sentence_translate")),

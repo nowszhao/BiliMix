@@ -45,6 +45,29 @@ def test_complete_speaker_units_and_caption_decoupling():
     assert analysis['references'].keys() == {'A', 'B'}
 
 
+def test_context_restores_clipped_edges_without_crossing_source_words():
+    from pipeline.speaker_verification import context_bounds,verified_word_assignments
+    words=[dict(word_id=i,start=s,end=e,speaker='B',text='word')
+           for i,(s,e) in enumerate([(0,.7),(1,1.2),(1.25,1.3),(1.4,1.7),(1.8,2)])]
+    bounds=context_bounds(words,[1,2,3])
+    assert bounds==pytest.approx((.85,1.75))
+    evidence={'units':[dict(word_ids=[1,2,3],scores=[['A',.27],['B',.12]],
+        context_scores=[['A',.32],['B',.14]],context_duration=.9,runs=[])]}
+    decision=verified_word_assignments({'words':words},evidence)
+    assert {v['speaker'] for v in decision.values()}=={'A'}
+    evidence['units'][0]['context_scores']=[['B',.6],['A',.1]]
+    assert not verified_word_assignments({'words':words},evidence)
+
+
+def test_real_short_sentence_score_patterns_resolve_complete_voice():
+    from pipeline.speaker_verification import confident
+    # Two real utterance patterns: native labels split "This is ..." and
+    # "I'll see you in New York" across voices despite a clear acoustic lead.
+    assert confident([['A',.291492],['B',.123951]],1.86)=='A'
+    assert confident([['A',.29448],['B',.196306]],1.27)=='A'
+    assert confident([['A',.316596],['B',.237041]],2.04) is None
+
+
 @pytest.mark.parametrize('corruption', ['speaker', 'reorder', 'missing', 'duplicate', 'media', 'caption'])
 def test_rejects_corrupted_translation_ownership(corruption):
     manifest, analysis = manifest_fixture()
@@ -170,3 +193,79 @@ def test_final_caption_splits_preserve_speaker_name(tmp_path):
     dialogues=[line for line in Path(path).read_text().splitlines() if line.startswith('Dialogue:')]
     assert len(dialogues)==2
     assert all(line.split(',')[4]=='A' for line in dialogues)
+
+
+def test_real_diarization_boundary_jitter_uses_unique_nearby_turn():
+    transcript={'segments':[{'words':[
+        {'word':'I','start':1023.138,'end':1023.178},
+        {'word':"don't",'start':1023.198,'end':1023.319}]}]}
+    turns=[dict(start=1003.688,end=1022.605,speaker='A'),
+           dict(start=1023.17909375,end=1037.539,speaker='B')]
+    analysis=build_analysis(transcript,'media',turns)
+    assert [w['speaker'] for w in analysis['words']]==['B','B']
+    assert analysis['words'][0]['speaker_assignment']=='boundary_tolerance'
+
+
+@pytest.mark.parametrize('turns',[
+    [dict(start=1.1,end=3,speaker='A')],
+    [dict(start=0,end=.995,speaker='A'),dict(start=1.025,end=3,speaker='B')]])
+def test_boundary_tolerance_rejects_large_gap_or_ambiguous_identity(turns):
+    with pytest.raises(ValueError,match='speaker'):
+        build_analysis({'segments':[{'words':[dict(word='I',start=1,end=1.01)]}]},'media',turns)
+
+
+def test_native_result_cache_survives_binding_errors_and_validates_content(tmp_path,monkeypatch):
+    from pipeline.speaker_analysis import _native_speaker_turns
+    import subprocess
+    calls=[]
+    class Process:
+        returncode=0
+        def __init__(self,cmd,**kwargs):
+            calls.append(cmd)
+            Path(cmd[-1]).write_text(json.dumps([dict(start=0,end=3,speaker='A')]))
+        def communicate(self,**kwargs):return '', ''
+        def poll(self):return 0
+    monkeypatch.setattr(subprocess,'Popen',Process)
+    first=_native_speaker_turns('audio',str(tmp_path),'signature')
+    assert _native_speaker_turns('audio',str(tmp_path),'signature')==first
+    assert len(calls)==1
+    (tmp_path/'speaker_turns.json').write_text('[]')
+    assert _native_speaker_turns('audio',str(tmp_path),'signature')==first
+    assert len(calls)==2
+    _native_speaker_turns('changed-audio',str(tmp_path),'new-signature')
+    assert len(calls)==3
+
+
+def test_acoustic_verification_repairs_native_question_and_keeps_real_turn():
+    from pipeline.speaker_verification import verified_word_assignments
+    words=[dict(word_id=i,speaker=s,start=i*.5,end=(i+1)*.5) for i,s in enumerate(['A','B','B','A'])]
+    evidence={'units':[dict(word_ids=list(range(4)),scores=[['B',.70],['A',.20]],runs=[
+        dict(word_ids=[0],scores=[['B',.60],['A',.10]]),
+        dict(word_ids=[1,2],scores=[['B',.80],['A',.10]]),
+        dict(word_ids=[3],scores=[['B',.50],['A',.10]])])]}
+    out=verified_word_assignments({'words':words},evidence)
+    assert [out[i]['speaker'] for i in range(4)]==['B']*4
+    words=[dict(word_id=i,speaker='A' if i<3 else 'B',start=i,end=i+1) for i in range(6)]
+    evidence={'units':[dict(word_ids=list(range(6)),scores=[['A',.7],['B',.5]],runs=[
+        dict(word_ids=[0,1,2],scores=[['A',.8],['B',.1]]),
+        dict(word_ids=[3,4,5],scores=[['B',.8],['A',.1]])])]}
+    out=verified_word_assignments({'words':words},evidence)
+    assert [out[i]['speaker'] for i in range(6)]==['A']*3+['B']*3
+
+
+def test_acoustic_verification_does_not_guess_tiny_or_ambiguous_answer():
+    from pipeline.speaker_verification import verified_word_assignments,confident
+    words=[dict(word_id=0,speaker='A',start=0,end=.15)]
+    assert verified_word_assignments({'words':words},{'units':[dict(word_ids=[0],scores=[['B',.8],['A',.1]],runs=[])]})=={}
+    assert confident([['B',.4],['A',.35]],2) is None
+    assert confident([['A',.8]],3)=='A'
+
+
+def test_only_verified_words_can_enter_final_cloning_reference():
+    # Ambiguous internal words are retained as dialogue but excluded from references.
+    words=[dict(word='hello',start=i*.5,end=(i+1)*.5,speaker='A') for i in range(8)]
+    evidence={'units':[dict(word_ids=[0,1,2,3],scores=[['A',.8],['B',.1]],runs=[]),
+                       dict(word_ids=[4,5,6,7],scores=[['A',.3],['B',.29]],runs=[])]}
+    result=build_analysis({'segments':[{'words':words}]},'media',[dict(start=0,end=4,speaker='A')],verification=evidence)
+    assert result['references']['A']['end']==2
+    assert not result['words'][-1]['speaker_verified']

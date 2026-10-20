@@ -1147,6 +1147,33 @@ def parse_subtitle():
     })
 
 
+def _process_source_analysis(task_id, audio_path, media_path):
+    """Shared initial/retry path. Analysis never enters translation or synthesis."""
+    result_dir = os.path.join(config.RESULT_DIR, "analysis_" + task_id)
+    os.makedirs(result_dir, exist_ok=True)
+    update_task(task_id, step="analyze", progress=10, _basename="analysis_" + task_id,
+                _audio_path=audio_path, _video_path=media_path,
+                url=(get_task(task_id) or {}).get("url") or "file://"+media_path)
+    try:
+        sep = separate_vocals(audio_path, os.path.join(result_dir, "vocals"))
+        source_audio = sep.get("vocals_path") if sep.get("ok") else audio_path
+        analysis = analyze_source(source_audio, media_path, result_dir, task_id=task_id)
+        if is_cancelled(task_id):
+            update_task(task_id,status="cancelled")
+            return
+        analysis["analysis_id"] = task_id
+        result = {"analysis":analysis,"original_audio":audio_path,
+                  "basename":"analysis_"+task_id}
+        completion = dict(status="completed",step="done",progress=100,result=result,
+                    message="Source speaker analysis ready; refine complete utterances before dubbing")
+        save_task_result_to_disk(result_dir,{**get_task(task_id),**completion})
+        update_task(task_id,**completion)
+    except Exception as exc:
+        update_task(task_id,status="cancelled" if is_cancelled(task_id) else "error",message=str(exc))
+        save_task_result_to_disk(result_dir,dict(get_task(task_id)))
+        raise
+
+
 @app.route("/api/dubbing/analyze", methods=["POST"])
 def submit_source_analysis():
     data = request.get_json(silent=True)
@@ -1401,19 +1428,8 @@ def submit_task():
                 return
 
         if task_type == "analysis":
-            result_dir = os.path.join(config.RESULT_DIR, "analysis_" + task_id)
-            update_task(task_id, step="analyze", progress=10, _basename="analysis_" + task_id)
-            sep = separate_vocals(audio_path_for_pipeline, os.path.join(result_dir, "vocals"))
-            source_audio = sep.get("vocals_path") if sep.get("ok") else audio_path_for_pipeline
-            analysis = analyze_source(source_audio, video_source if os.path.isfile(video_source) else video_path, result_dir, task_id=task_id)
-            if is_cancelled(task_id):
-                update_task(task_id, status="cancelled")
-                return
-            analysis["analysis_id"] = task_id
-            result = {"analysis": analysis, "original_audio": audio_path_for_pipeline}
-            update_task(task_id, status="completed", step="done", progress=100, result=result,
-                        message="Source speaker analysis ready; refine complete utterances before dubbing")
-            save_task_result_to_disk(result_dir, {**get_task(task_id), "result": result})
+            _process_source_analysis(task_id,audio_path_for_pipeline,
+                                     video_source if os.path.isfile(video_source) else video_path)
             return
 
         # 执行核心管道（转录 → 翻译 → TTS → 混音）
@@ -1786,7 +1802,10 @@ def retry_task(task_id):
     if not task:
         return jsonify({"error": "任务不存在"}), 404
 
-    if task.get("status") != "error":
+    refresh_analysis = (request.get_json(silent=True) or {}).get("refresh_analysis") is True
+    can_refresh = (refresh_analysis and task.get("type") == "analysis"
+                   and task.get("status") == "completed")
+    if task.get("status") != "error" and not can_refresh:
         return jsonify({"error": f"任务状态为 {task.get('status')}，仅 error 状态可重试"}), 400
 
     mode = "sentence_translate"
@@ -1870,7 +1889,14 @@ def retry_task(task_id):
     translated_indices = task.get("translated_indices", [])
     difficult_words = task.get("difficult_words", [])
 
-    if True:  # always sentence_translate
+    if task.get("type") == "analysis":
+        source_media = task.get("url", "").removeprefix("file://")
+        if not os.path.isfile(source_media):
+            source_media = task.get("_video_path", "")
+        if not source_media or not os.path.isfile(source_media):
+            return jsonify({"error":"Source analysis media missing"}),400
+        _retry_target = lambda: _process_source_analysis(task_id,audio_path,source_media)
+    elif True:  # sentence_translate
 
         if translations and translated_indices and segments:
             # 翻译已完成，直接从 TTS 合成恢复（只补缺失的 TTS 文件）
@@ -1937,6 +1963,9 @@ def retry_task(task_id):
             update_task(task_id, status="processing",
                         message="开始处理…")
             _retry_target()
+        except Exception as exc:
+            traceback.print_exc()
+            update_task(task_id,status="cancelled" if is_cancelled(task_id) else "error",message=str(exc))
         finally:
             with _queue_condition:
                 if task_id in _queue_waiters:

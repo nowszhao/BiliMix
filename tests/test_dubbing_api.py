@@ -104,3 +104,44 @@ def test_invalid_ass_cannot_trigger_server_translation(tmp_path, monkeypatch):
     task=wa.get_task(task_id)
     assert task['status']=='error'
     assert '禁止回退' in task['message']
+
+
+def test_failed_analysis_retries_analysis_without_server_translation(tmp_path,monkeypatch):
+    from services import web_app as wa
+    monkeypatch.setattr(config,'AUTH_ENABLED',False)
+    source=tmp_path/'source.mp4';source.write_bytes(b'media')
+    audio=tmp_path/'audio.wav';audio.write_bytes(b'audio')
+    monkeypatch.setattr(wa,'prepare_video',lambda *a,**k:dict(ok=True,video_path=str(source),audio_path=str(audio)))
+    monkeypatch.setattr(wa,'separate_vocals',lambda *a,**k:dict(ok=False))
+    monkeypatch.setattr(wa,'_probe_audio_duration',lambda _:11)
+    calls=[]
+    def analyze(*args,**kwargs):
+        calls.append(args)
+        if len(calls)==1:raise ValueError('binding failed after native inference')
+        return analysis_fixture()
+    monkeypatch.setattr(wa,'analyze_source',analyze)
+    def forbidden(*args,**kwargs):raise AssertionError('Analysis retry must not enter translation or TTS')
+    monkeypatch.setattr(wa,'process_audio_sentence_mode',forbidden)
+    client=wa.app.test_client()
+    response=client.post('/api/dubbing/analyze',json=dict(local_path=str(source)))
+    tid=response.get_json()['task_id'];assert wait_for(wa,tid,{'error'})['status']=='error'
+    response=client.post(f'/api/task/{tid}/retry')
+    assert response.status_code==200
+    assert wait_for(wa,tid,{'completed','error'})['status']=='completed'
+    assert len(calls)==2
+    assert client.post(f'/api/task/{tid}/retry').status_code == 400
+    response=client.post(f'/api/task/{tid}/retry',json={'refresh_analysis':True})
+    assert response.status_code==200
+    assert wait_for(wa,tid,{'completed','error'})['status']=='completed'
+    assert len(calls)==3
+    from core.task_manager import tasks,tasks_lock,restore_task_from_disk
+    with tasks_lock:tasks.pop(tid)
+    restored=restore_task_from_disk(tid)
+    assert restored['status']=='completed'
+    assert restored['type']=='analysis'
+    assert restored['_audio_path']==str(audio)
+    assert restored['_video_path']==str(source)
+    assert restored['url']=='file://'+str(source)
+    assert client.post(f'/api/task/{tid}/retry',json={'refresh_analysis':True}).status_code==200
+    assert wait_for(wa,tid,{'completed','error'})['status']=='completed'
+    assert len(calls)==4
