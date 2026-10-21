@@ -50,9 +50,9 @@ WhisperX 提供词级定位；pyannote 提供人物分段和重叠发言区间�
 
 ## 任务恢复
 
-`analysis_state.json` 绑定服务地址和媒体哈希；分析 ID 在等待前保存。`dubbing_state.json` 记录配音提交结果，相同请求复用 task_id。`--new-task` 显式创建新任务；`--fresh-upload` 重新上传和分析。
+统一 Skill 使用 `project.json` 绑定服务地址、媒体哈希、上传路径和分析/配音任务。任务 ID 在等待前保存；恢复同一项目会查询原任务，不创建另一条配音。
 
-`submission_pending.json` 表示提交响应尚未确认。先检查服务器任务列表，再决定是否重发；服务端提交不提供原子幂等保证。
+`pending_submission` 在提交前记录到项目快照。响应丢失时先按唯一 title 和媒体核对服务端任务，再通过统一入口 recover 绑定已有任务；服务端提交不提供原子幂等保证。
 
 失败分析可 retry；完成分析需显式 `POST /api/task/<id>/retry`，JSON 为 `{"refresh_analysis":true}`。已提交配音保存分析快照，新的精翻任务应使用当前分析结果。
 
@@ -64,4 +64,4 @@ WhisperX 提供词级定位；pyannote 提供人物分段和重叠发言区间�
 
 用户听原声并明确确认后，可用 `bmx video confirm-speakers --analysis-id ID --resolutions decisions.json` 提交 JSON 列表，例如 `[{"word_ids":[42],"speaker_id":"SPEAKER_01"}]`。对应 API 为 `POST /api/dubbing/ID/confirm-speakers`，请求 `{"resolutions":[...]}`。仅允许确认未知词，目标人物必须有合格参考；不能修改既有人物、原文或时间。响应包含最新 `analysis`。人工确认持久化且标记为 `human_confirmed`，不会伪装成声纹通过或进入参考池。
 
-刷新本地 analysis 后，精翻脚本按原词 ID 重新读取人物；ASS 和 manifest 可复用已有翻译重建。人物未确认或缺少同人参考时，客户端和服务端均拒绝配音。
+刷新本地 analysis 后，统一入口按原词 ID 重新读取人物；ASS 和 manifest 可复用 language/units.json 重建。人物未确认或缺少同人参考时，客户端和服务端均拒绝配音。FULL 和中文精翻由当前 Agent 分两步处理，格式转换与提交由 workflow.py 统一执行。

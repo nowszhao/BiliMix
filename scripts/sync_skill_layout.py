@@ -10,7 +10,7 @@ import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT/'pipeline/subtitle_layout.py'
-DESTINATION = ROOT/'skills/nows-ytb-bilingualex/scripts/subtitle_layout.py'
+DESTINATION = ROOT/'skills/nows-ytb-dubbing/scripts/subtitle_layout.py'
 
 
 def sync(check=False):

@@ -6,7 +6,7 @@ BiliMix produces Chinese dubbing for English audio and video, with per-speaker v
 
 ## Workflow
 
-The `nows-ytb-bilingualex` Code Agent skill refines English, translates into Chinese and assembles complete spoken utterances. `nows-ytb-bmxtask` uploads media, requests source speaker analysis and submits the work ASS with the dubbing manifest. The server synthesizes each utterance and adapts video timing to the resulting audio.
+Use the single `nows-ytb-dubbing` skill: input video → speaker analysis → FULL English refinement → Chinese translation → server dubbing → delivery. The current Code Agent performs both language passes. One local workflow handles uploads, validation, ASS/manifest export, task recovery and downloads. BiliMix synthesizes complete utterances and adapts video timing to the resulting audio.
 
 Each speaker uses one qualified reference pool throughout a task. Subtitle pagination is independent of synthesis: at most two lines per language, four lines total and a text height budget of 25% of the frame.
 
@@ -25,10 +25,9 @@ python -m bilimix_cli --server <server-url> auth status
 Use `--update` to replace installed skills with current files. Any Code Agent able to read files and execute commands can read the installed SKILL.md files.
 
 ```text
-python <task-skill>/scripts/bmx_video_task.py --video source.mp4 --workdir work --server <server-url> --analyze-only
-python <task-skill>/scripts/bmx_video_task.py --video source.mp4 --workdir work --server <server-url> --subtitle work/refined.ass --dub-manifest work/dub_manifest.json
-bmx --server <server-url> video download --task-id <task-id> -o dubbed.mp4
-bmx --server <server-url> video download-subtitles --task-id <task-id> -o dubbed.ass
+python <skill>/scripts/workflow.py setup --workdir work
+python <skill>/scripts/workflow.py run --input source.mp4 --workdir work --server <server-url>
+python <skill>/scripts/workflow.py run --workdir work
 ```
 
 External refined dubbing requires media, a bilingual work ASS, a manifest and completed source analysis. The server validates source hashes, speaker ownership and complete ordered word coverage.

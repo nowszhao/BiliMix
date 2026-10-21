@@ -16,7 +16,7 @@ bmx --server <URL> auth login --username <用户名> --password <密码>
 
 ```text
 bmx --server <URL> audio upload <MP4或ASS> --field local_path
-bmx --server <URL> video analyze --server-path <上传返回路径>
+bmx --server <URL> video analyze --server-path <上传返回路径> --title <视频标题>
 bmx --server <URL> task wait <分析ID>
 bmx --server <URL> task result <分析ID>
 ```
@@ -25,7 +25,7 @@ bmx --server <URL> task result <分析ID>
 
 ```text
 bmx --server <URL> subtitle parse <工作ASS的服务端路径>
-bmx --server <URL> task submit --type video --server-path <MP4路径> --subtitle-path <工作ASS路径> --dub-manifest <本地manifest.json> --analysis-id <分析ID> --subtitle-mode bilingual --subtitle-font-size 40
+bmx --server <URL> task submit --type video --server-path <MP4路径> --subtitle-path <工作ASS路径> --dub-manifest <本地manifest.json> --analysis-id <分析ID> --subtitle-mode bilingual --subtitle-font-size 40 --title <视频标题>
 ```
 
 工作 ASS 每行用 `EN || ZH` 保留导入契约。`count == bilingual_count > 0` 才通过。无效文件明确失败，不回退服务端翻译；字幕不代替原声人物分析。

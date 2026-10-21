@@ -97,6 +97,32 @@ def save_json(path, value):
     temporary.replace(path)
 
 
+def resolve_title(video, work, explicit=None):
+    """Use the original download title for both analysis and dubbing jobs."""
+    if explicit and explicit.strip():
+        return explicit.strip()
+    for directory in dict.fromkeys((work, video.parent)):
+        metadata = load_json(directory/'video_info.json')
+        download = load_json(directory/'manifest.json')
+        metadata = metadata if isinstance(metadata, dict) else {}
+        download = download if isinstance(download, dict) else {}
+        declared = download.get('video_path')
+        matches = isinstance(declared, str) and Path(declared.replace('\\', '/')).name == video.name
+        source_id = metadata.get('id')
+        id_matches = isinstance(source_id, str) and bool(source_id) and video.stem.endswith('_'+source_id)
+        # Each video has its own workdir. When a download manifest explicitly
+        # points at another file, do not borrow that video's metadata title.
+        if not declared or matches or id_matches:
+            title = metadata.get('title')
+            if isinstance(title, str) and title.strip():
+                return title.strip()
+        if matches:
+            title = download.get('title')
+            if isinstance(title, str) and title.strip():
+                return title.strip()
+    return video.stem
+
+
 def emit(value):
     print(json.dumps(value,ensure_ascii=False))
 
@@ -111,7 +137,7 @@ def main():
     parser.add_argument('--bmx',help='CLI path; alternatively BILIMIX_CLI or python -m bilimix_cli')
     parser.add_argument('--analyze-only',action='store_true')
     parser.add_argument('--analysis-out')
-    parser.add_argument('--title')
+    parser.add_argument('--title',help='Override the video title for both analysis and dubbing')
     parser.add_argument('--duration')
     parser.add_argument('--subtitle-mode',choices=['bilingual','chinese_only','none'],default='bilingual')
     parser.add_argument('--subtitle-font-size',type=int,default=40)
@@ -150,6 +176,7 @@ def main():
         server = canonical_server(identity) if identity else '<dry-run-server>'
         video = Path(args.video).expanduser().resolve()
         work = Path(args.workdir).expanduser().resolve() if args.workdir else video.parent
+        task_title = resolve_title(video, work, args.title)
         state_path,receipt_path = work/'analysis_state.json',work/'dubbing_state.json'
         fingerprint = file_hash(video) if not args.dry_run else 'dry-run'
         if manifest and not args.dry_run and manifest.get('source_media_sha256') != fingerprint:
@@ -162,6 +189,7 @@ def main():
             'manifest':file_hash(args.dub_manifest) if args.dub_manifest and not args.dry_run else None,
             'subtitle':file_hash(args.subtitle) if args.subtitle and not args.dry_run else None,
             'mode':args.subtitle_mode,'font_size':args.subtitle_font_size,'keep_bgm':args.keep_bgm,
+            # Automatic display titles do not invalidate a saved task receipt.
             'title':args.title,'duration':args.duration}
         request_hash = hashlib.sha256(json.dumps(request,sort_keys=True).encode()).hexdigest()
         receipt = load_json(receipt_path) if not args.dry_run else {}
@@ -184,10 +212,10 @@ def main():
         if args.analyze_only:
             destination = Path(args.analysis_out).expanduser().resolve() if args.analysis_out else work/'analysis.json'
             if args.dry_run:
-                bmx_json(bmx,['video','analyze','--server-path',paths['video']],True)
+                bmx_json(bmx,['video','analyze','--server-path',paths['video'],'--title',task_title],True)
                 emit({'dry_run':True,'action':'analyze','analysis_path':str(destination)});return 0
             if not state.get('analysis_id'):
-                result,_ = bmx_json(bmx,['video','analyze','--server-path',paths['video']],False)
+                result,_ = bmx_json(bmx,['video','analyze','--server-path',paths['video'],'--title',task_title],False)
                 if not result or not result.get('task_id'):
                     raise ValueError('Analysis submission failed')
                 state['analysis_id'] = result['task_id'];save_json(state_path,state)
@@ -215,7 +243,7 @@ def main():
         command = ['task','submit','--type','video','--server-path',paths['video'],
             '--subtitle-path',paths['subtitle'],'--subtitle-mode',args.subtitle_mode,
             '--subtitle-font-size',str(args.subtitle_font_size),
-            '--title',args.title or video.stem]
+            '--title',task_title]
         if manifest:
             command += ['--dub-manifest',str(Path(args.dub_manifest).resolve()),'--analysis-id',manifest['analysis_id']]
         if args.duration:

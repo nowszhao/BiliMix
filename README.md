@@ -6,11 +6,11 @@ BiliMix 为英文音频与视频生成中文配音，支持人物音色克隆、
 
 ## 精翻配音
 
-两份 Code Agent Skill 配合 BiliMix 服务端完成工作：
+使用一个 Code Agent Skill：`nows-ytb-dubbing`。
 
-1. `nows-ytb-bilingualex` 下载或读取视频，按人物整理完整话语，完成英文校正、中文精翻和配音计划。
-2. `nows-ytb-bmxtask` 上传媒体、发起人物分析，并提交工作 ASS 与配音计划。
-3. BiliMix 按已确认的来源归属选择人物参考，合成完整中文话语，再按音频时间调整视频。
+流程为：视频输入 → 原声人物分析 → FULL 完整断句 → 中文精翻 → 服务端配音 → 交付。
+
+当前 Agent 完成 FULL 和精翻；统一入口负责下载、上传、格式转换、校验、恢复和交付。BiliMix 使用已确认的人物参考合成完整话语，再按音频时间调整视频。
 
 一个完整中文话语对应一次 TTS。同一人物全片使用固定参考；显示字幕独立分页，默认中文最多两行、英文最多两行、合计最多四行，文字高度预算为画面的 25%。
 
@@ -45,14 +45,15 @@ python services/web_app.py 5000
 
 ## 提交精翻任务
 
-每个视频使用独立工作目录。先运行人物分析，然后按精翻 Skill 完成 FULL、翻译与中文话语组装。
+每个视频使用独立工作目录，按新 Skill 的 SKILL.md 操作。缺少客户端工具时先 setup；依赖安装到工作目录，不修改 Agent 环境。
 
 ```text
-python <提交Skill>/scripts/bmx_video_task.py --video source.mp4 --workdir work --server <服务URL> --analyze-only
-python <提交Skill>/scripts/bmx_video_task.py --video source.mp4 --workdir work --server <服务URL> --subtitle work/refined.ass --dub-manifest work/dub_manifest.json
+python <Skill>/scripts/workflow.py setup --workdir work
+python <Skill>/scripts/workflow.py run --input source.mp4 --workdir work --server <服务URL>
+python <Skill>/scripts/workflow.py run --workdir work
 ```
 
-外部精翻任务必须同时提交媒体、工作 ASS、manifest 和已完成的源人物分析。人物身份、媒体哈希、源词顺序和完整覆盖均由服务端校验；缺失或冲突会返回错误。
+run 返回明确的下一步：当前 Agent 写 FULL/精翻结果、等待原任务、请用户确认人物，或交付成品。ASS 和 manifest 自动从语言结果生成，同视频一起提交；媒体哈希、源词顺序及完整覆盖由服务端校验。
 
 ```text
 bmx --server <服务URL> task wait <task_id>
@@ -72,7 +73,7 @@ python scripts/sync_skill_layout.py --check
 python scripts/release.py --output dist
 ```
 
-发布目录只包含当前完整源码、两个 Skill ZIP、SDK wheel 和校验清单。发布流程不打包用户配置、凭据、模型、任务、缓存或开发过程文件。
+发布目录包含完整源码、统一 Skill ZIP、SDK wheel 和校验清单。发布流程不打包用户配置、凭据、模型、任务、缓存或开发过程文件。
 
 ## License
 

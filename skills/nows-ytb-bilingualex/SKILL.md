@@ -28,6 +28,8 @@ python <本skill>/scripts/download.py --url <URL> --quality 720p --output <工�
 
 按实际安装路径调用配套 `nows-ytb-bmxtask/scripts/bmx_video_task.py --video <MP4> --workdir <工作目录> --server <URL> --analyze-only`。两份 skill 不相邻时使用各自实际路径，不猜用户目录。它上传一次并等待异步人物分析，写入视频目录 `analysis.json` 和 `analysis_state.json`；后续提交会复用上传路径。
 
+分析与配音任务都使用视频原始标题。保留下载生成的 `video_info.json` 和 `manifest.json` 供提交脚本读取；视频转移到其他目录且没有元数据时，显式传入 `--title <原始标题>`。纯本地视频无标题元数据时使用文件名（去扩展名）。
+
 ```bash
 python <skill>/scripts/import_analysis.py <工作目录>/analysis.json --workdir <工作目录>
 python <skill>/scripts/refine_srt.py prepare-full <工作目录>/transcript_official.srt <工作目录>/raw_aligned.srt --workdir <工作目录>

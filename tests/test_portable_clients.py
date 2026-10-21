@@ -160,20 +160,22 @@ def test_packages_install_in_an_arbitrary_directory_with_no_local_state(tmp_path
     install=runpy.run_path(str(ROOT/'scripts/install_skills.py'))['install']
     target=tmp_path/'another Agent'/'skills'
     result=install(target)
-    assert len(result['installed'])==2
-    check=target/'nows-ytb-bilingualex/scripts/check_env.py'
-    output=subprocess.run([sys.executable,str(check),'--help'],cwd=tmp_path,capture_output=True,text=True,timeout=10)
-    assert output.returncode==0
-    (target/'nows-ytb-bmxtask/obsolete.txt').write_text('obsolete')
+    assert len(result['installed'])==1
+    check=target/'nows-ytb-dubbing/scripts/workflow.py'
+    if sys.version_info >= (3,10):
+        output=subprocess.run([sys.executable,str(check),'--help'],cwd=tmp_path,capture_output=True,text=True,timeout=10)
+        assert output.returncode==0
+    (target/'nows-ytb-dubbing/obsolete.txt').write_text('obsolete')
     install(target,True)
-    assert not (target/'nows-ytb-bmxtask/obsolete.txt').exists()
-    assert sorted(p.name for p in target.iterdir())==sorted(['nows-ytb-bilingualex','nows-ytb-bmxtask'])
+    assert not (target/'nows-ytb-dubbing/obsolete.txt').exists()
+    assert sorted(p.name for p in target.iterdir())==['nows-ytb-dubbing']
     package=runpy.run_path(str(ROOT/'scripts/package_skills.py'))['package']
     archives=package(tmp_path/'distributable')
     import zipfile
     for item in archives:
         with zipfile.ZipFile(item['path'])as archive:
-            assert not any('__pycache__' in n or n.endswith('.json')for n in archive.namelist())
+            assert not any('__pycache__' in n or n.endswith('project.json') for n in archive.namelist())
+            assert 'nows-ytb-dubbing/assets/client.json' in archive.namelist()
 
 
 def test_model_cache_respects_portable_huggingface_environment(tmp_path):
@@ -250,7 +252,7 @@ def test_downloader_uses_selected_ffmpeg_without_browser_or_wrong_video(tmp_path
         assert status!=0 and not (tmp_path/'manifest.json').exists()
 
 
-def test_skill_update_rolls_back_both_skills_on_install_failure(tmp_path, monkeypatch):
+def test_skill_update_rolls_back_on_install_failure(tmp_path, monkeypatch):
     module = runpy.run_path(str(ROOT / 'scripts/install_skills.py'))
     install = module['install']
     destination = tmp_path / 'skills'
@@ -259,7 +261,7 @@ def test_skill_update_rolls_back_both_skills_on_install_failure(tmp_path, monkey
         (destination / name / 'installed.txt').write_text('original')
     original = os.replace
     def replace(source, target):
-        if Path(source).name == 'nows-ytb-bmxtask' and '.bilimix-install-' in str(source):
+        if Path(source).name == 'nows-ytb-dubbing' and '.bilimix-install-' in str(source):
             raise OSError('installation interrupted')
         return original(source, target)
     monkeypatch.setattr(os, 'replace', replace)

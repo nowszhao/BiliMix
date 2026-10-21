@@ -88,3 +88,5 @@ python scripts/release.py --output dist
 ```
 
 构建会检查共享字幕布局、生成 SDK wheel、Skill ZIP 和完整源码，写出版本与 SHA256 清单。成功后发布目录整体替换，仅保留当前发布内容；构建失败保留现有发布目录。
+
+当前统一 Skill 是 `nows-ytb-dubbing`。只安装 Skill ZIP 时可直接运行其中的 `scripts/workflow.py setup --workdir <项目目录>`，使用随包轻量 SDK wheel 初始化隔离客户端环境，无须在另一台电脑上寻找 BiliMix 源码路径。随后按 SKILL.md 的单一入口完成 FULL、精翻和配音。setup 安装客户端工具；它不在服务端部署模型或重启服务。

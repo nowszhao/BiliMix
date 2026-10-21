@@ -9,7 +9,7 @@ from pathlib import Path
 import shutil
 import tempfile
 
-SKILLS = ('nows-ytb-bilingualex', 'nows-ytb-bmxtask')
+SKILLS = ('nows-ytb-dubbing',)
 ROOT = Path(__file__).resolve().parents[1] / 'skills'
 
 

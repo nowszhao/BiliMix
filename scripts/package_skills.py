@@ -8,12 +8,12 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]/'skills'
-NAMES = ('nows-ytb-bilingualex','nows-ytb-bmxtask')
+NAMES = ('nows-ytb-dubbing',)
 
 
 def package(destination):
     source = ROOT.parent/'pipeline/subtitle_layout.py'
-    copied = ROOT/'nows-ytb-bilingualex/scripts/subtitle_layout.py'
+    copied = ROOT/'nows-ytb-dubbing/scripts/subtitle_layout.py'
     if source.read_bytes() != copied.read_bytes():
         raise ValueError('Run python scripts/sync_skill_layout.py before packaging')
     destination = Path(destination).expanduser().resolve()
@@ -30,7 +30,10 @@ def package(destination):
                 if not path.is_file() or any(p.startswith('.') or p == '__pycache__' for p in relative.parts):
                     continue
                 # Only maintained source/docs belong in a redistributable skill.
-                if relative == Path('SKILL.md') or (relative.parts[0] in ('scripts','references') and path.suffix in ('.py','.md')):
+                included = (relative == Path('SKILL.md')
+                            or (relative.parts[0] in ('scripts','references') and path.suffix in ('.py','.md'))
+                            or (relative.parts[0] == 'assets' and path.suffix in ('.whl','.json')))
+                if included:
                     member = zipfile.ZipInfo((Path(name)/relative).as_posix(), date_time=(1980,1,1,0,0,0))
                     member.compress_type = zipfile.ZIP_DEFLATED
                     member.external_attr = 0o100644 << 16

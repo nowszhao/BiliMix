@@ -19,6 +19,8 @@ description: Analyze speakers in a local or downloaded video and submit locally 
 
 默认下载 720p、关闭 BGM、请求字号 40；用户可覆盖。实际字号会结合分辨率及字幕高度预算适配。
 
+分析和配音任务统一使用视频标题：优先采用用户明确传入的 `--title`，否则读取工作目录或视频目录的 `video_info.json` / 下载 `manifest.json` 中的原始标题；没有标题元数据时使用文件名（去扩展名）。不把内部编号或默认的 Source speaker analysis 作为任务名。
+
 ## 流程
 
 1. 输入可为已有 MP4，或由配套 skill 下载的视频。读取标题/简介/章节整理术语；纯音乐、无台词视频不提交配音。每个视频使用独立工作目录。
