@@ -132,3 +132,36 @@ def test_reanchor_validates_all_rows_before_updating_without_history(tmp_path):
                              '--workdir', str(tmp_path)], capture_output=True, timeout=15)
     assert result.returncode != 0
     assert translated.read_bytes() == before
+
+
+def test_pending_speaker_can_be_refined_and_translated_then_confirmed_without_retranslation(tmp_path):
+    from pipeline.speaker_analysis import build_analysis, confirm_speakers
+    from tests.test_speaker_uncertainty import gap_fixture
+    asr, turns = gap_fixture()
+    analysis = build_analysis(asr, 'media', turns)
+    (tmp_path/'analysis.json').write_text(json.dumps(analysis))
+    run('import_analysis.py',tmp_path/'analysis.json','--workdir',tmp_path)
+    run('refine_srt.py','prepare-full',tmp_path/'transcript_official.srt',tmp_path/'raw_aligned.srt','--workdir',tmp_path)
+    (tmp_path/'refine_parts/refined_01.txt').write_text('\n'.join(
+        f'S{i}\t{turn["text"]}' for i,turn in enumerate(analysis['turns'],1))+'\n')
+    run('check_refined.py','--workdir',tmp_path)
+    run('refine_srt.py','apply','--workdir',tmp_path)
+    run('split_translation.py',tmp_path/'transcript_refined.srt','--out',tmp_path)
+    rows=(tmp_path/'transcript.txt').read_text().splitlines()
+    translated='\n'.join(row+'\t完整自然的一句话。' for row in rows)+'\n'
+    (tmp_path/'parts/trans_01.txt').write_text(translated)
+    run('assemble_final.py','--workdir',tmp_path)
+    run('build_dub_manifest.py','prepare','--workdir',tmp_path)
+    prepared=json.loads((tmp_path/'dub_unit_input.json').read_text())
+    assert prepared['rows'][1]['speaker_id'] is None
+    plan={'units':[{'source_indices':[i], 'text_zh':'完整自然的一句话。'} for i in range(1,4)]}
+    (tmp_path/'dub_units_plan.json').write_text(json.dumps(plan))
+    result=subprocess.run([sys.executable,str(SCRIPTS/'build_dub_manifest.py'),'apply','--workdir',str(tmp_path)],capture_output=True,text=True)
+    assert result.returncode!=0 and 'Unresolved speakers' in result.stderr
+    revised=confirm_speakers(analysis,[{'word_ids':[12],'speaker_id':'B'}])
+    (tmp_path/'analysis.json').write_text(json.dumps(revised))
+    run('assemble_final.py','--workdir',tmp_path)
+    run('build_dub_manifest.py','apply','--workdir',tmp_path)
+    manifest=json.loads((tmp_path/'dub_manifest.json').read_text())
+    assert [unit['speaker'] for unit in validate_manifest(manifest,revised)]==['A','B','B']
+    assert (tmp_path/'parts/trans_01.txt').read_text()==translated

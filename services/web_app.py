@@ -57,7 +57,8 @@ from services.task_query import task_query_bp
 from services.tts_api import tts_bp
 
 from pipeline.step1_transcribe import transcribe, extract_full_text
-from pipeline.speaker_analysis import analyze_source, extract_reference_pool
+from pipeline.speaker_analysis import (analyze_source, extract_reference_pool, ensure_dubbing_ready,
+                                       confirm_speakers, atomic_json)
 from pipeline.dubbing_plan import validate_manifest, file_sha256
 from pipeline.step3_tts_confucius import synthesize_sentences_with_confucius_tts
 from pipeline.step2b_translate_sentences import (
@@ -496,6 +497,7 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
                 media_source = task_pre.get("_video_path") or audio_path
             analysis = analyze_source(transcribe_audio_path, media_source,
                                       os.path.join(result_dir, "source_analysis"), task_id=task_id)
+            ensure_dubbing_ready(analysis)
             segments = analysis["sentences"]
             full_text = " ".join(s["text"] for s in segments)
             update_task(task_id, _speaker_analysis=analysis)
@@ -707,6 +709,7 @@ def _build_confucius_ref_map(task_id: str, segments: list,
     analysis = task.get("_speaker_analysis")
     if not analysis:
         raise ValueError("Source speaker analysis required for voice cloning")
+    ensure_dubbing_ready(analysis)
     pool = extract_reference_pool(ref_audio_source, analysis, confucius_ref_dir)
     missing = {segments[i].get("speaker") for i in translated_indices
                if segments[i].get("speaker") not in pool}
@@ -1097,7 +1100,7 @@ def _process_source_analysis(task_id, audio_path, media_path):
     """Shared initial/retry path. Analysis never enters translation or synthesis."""
     result_dir = os.path.join(config.RESULT_DIR, "analysis_" + task_id)
     os.makedirs(result_dir, exist_ok=True)
-    update_task(task_id, step="analyze", progress=10, _basename="analysis_" + task_id,
+    update_task(task_id, step="separate", progress=5, message="正在准备原声分析音频...", _basename="analysis_" + task_id,
                 _audio_path=audio_path, _video_path=media_path,
                 url=(get_task(task_id) or {}).get("url") or "file://"+media_path)
     try:
@@ -1111,13 +1114,59 @@ def _process_source_analysis(task_id, audio_path, media_path):
         result = {"analysis":analysis,"original_audio":audio_path,
                   "basename":"analysis_"+task_id}
         completion = dict(status="completed",step="done",progress=100,result=result,
-                    message="Source speaker analysis ready; refine complete utterances before dubbing")
+                    message=("人物分析完成，可进行精翻与配音" if analysis["dubbing_ready"] else
+                             f"人物分析完成：{len(analysis['unresolved_segments'])} 段待确认，{len(analysis['missing_reference_speakers'])} 个人物缺少合格参考；请先复核再配音"))
         save_task_result_to_disk(result_dir,{**get_task(task_id),**completion})
         update_task(task_id,**completion)
     except Exception as exc:
+        checkpoint = os.path.join(result_dir, "speaker_analysis.json")
+        if os.path.isfile(checkpoint):
+            with open(checkpoint, encoding="utf-8") as stream:
+                partial = json.load(stream)
+            partial["analysis_id"] = task_id
+            update_task(task_id, result={"analysis": partial, "original_audio": audio_path,
+                                         "basename": "analysis_"+task_id})
         update_task(task_id,status="cancelled" if is_cancelled(task_id) else "error",message=str(exc))
         save_task_result_to_disk(result_dir,dict(get_task(task_id)))
         raise
+
+
+_speaker_review_lock = threading.Lock()
+
+
+@app.route("/api/dubbing/<analysis_id>/confirm-speakers", methods=["POST"])
+def confirm_source_speakers(analysis_id):
+    """An explicit listening decision, separate from a translator's manifest."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON object required"}), 400
+    with _speaker_review_lock:
+        task = get_task(analysis_id) or restore_task_from_disk(analysis_id)
+        original = ((task or {}).get("result") or {}).get("analysis")
+        if not original or task.get("type") != "analysis" or task.get("status") != "completed":
+            return jsonify({"error": "Completed source analysis required"}), 400
+        try:
+            revised = confirm_speakers(original, data.get("resolutions"))
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        result = {**task["result"], "analysis": revised}
+        message = ("人物确认完成，可提交精翻配音" if revised["dubbing_ready"] else
+                   f"已保存人物确认，仍有 {len(revised['unresolved_segments'])} 段待确认或参考不足")
+        folder = os.path.join(config.RESULT_DIR, "analysis_"+analysis_id)
+        task_file = os.path.join(folder, "task_result.json")
+        cache_file = os.path.join(folder, "speaker_analysis.json")
+        # Disk is authoritative across restarts. Publish memory only after both
+        # snapshots succeed; restore the previous task snapshot on write failure.
+        with open(task_file, encoding="utf-8") as stream:
+            previous = json.load(stream)
+        try:
+            atomic_json(task_file, {**previous, "result": result, "message": message})
+            atomic_json(cache_file, revised)
+        except OSError:
+            atomic_json(task_file, previous)
+            raise
+        update_task(analysis_id, result=result, message=message)
+        return jsonify({"analysis": revised, "dubbing_ready": revised["dubbing_ready"]})
 
 
 @app.route("/api/dubbing/analyze", methods=["POST"])
@@ -1216,7 +1265,9 @@ def submit_task():
         try:
             validate_manifest(manifest, analysis)
         except (ValueError, TypeError, KeyError) as exc:
-            return jsonify({"error": str(exc)}), 400
+            return jsonify({"error": str(exc), "code": "analysis_not_ready" if not analysis.get("dubbing_ready", True) else "invalid_manifest",
+                            "unresolved_segments": analysis.get("unresolved_segments", []),
+                            "missing_reference_speakers": analysis.get("missing_reference_speakers", [])}), 400
 
     task_id = generate_task_id(source + str(time.time()))
 

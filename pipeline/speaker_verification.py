@@ -2,7 +2,7 @@
 import re
 
 
-POLICY_VERSION = 2
+POLICY_VERSION = 3
 
 
 def context_bounds(words, ids, padding=.15):
@@ -35,42 +35,54 @@ def confident(scores, duration):
     return first[0] if first[1]>=minimum and first[1]-second[1]>=margin else None
 
 
+def _local_winner(evidence, duration):
+    winner = confident(evidence.get('scores', []), duration)
+    if winner is not None:
+        return winner, 'acoustic'
+    context = evidence.get('context_scores', [])
+    contextual = confident(context, evidence.get('context_duration', 0))
+    direct = evidence.get('scores', [])
+    if contextual is not None and direct and contextual == direct[0][0]:
+        return contextual, 'acoustic_bounded_context'
+    # A tiny word may be below the embedding's minimum input length. Accept
+    # its own bounded context only with a stronger independent acoustic lead.
+    if (contextual is not None and not direct and len(context) >= 2
+            and context[0][1] >= .45 and context[0][1]-context[1][1] >= .20):
+        return contextual, 'acoustic_bounded_context'
+    return None, None
+
+
 def verified_word_assignments(analysis, evidence):
-    """Confident independently voiced runs remain separate inside an utterance."""
-    catalog={w['word_id']:w for w in analysis['words']}
-    output={}
+    """Verify each voiced run; a parent winner never fills an unknown run."""
+    from pipeline.dubbing_plan import known_speaker
+    if evidence.get('missing_reference_speakers'):
+        return {}
+    catalog = {w['word_id']: w for w in analysis['words']}
+    output = {}
     for unit in evidence['units']:
-        ids=unit['word_ids'];duration=catalog[ids[-1]]['end']-catalog[ids[0]]['start']
-        winner=confident(unit['scores'],duration)
-        method='acoustic'
-        if winner is None and unit.get('context_scores') and unit['scores']:
-            contextual=confident(unit['context_scores'],unit['context_duration'])
-            if contextual==unit['scores'][0][0]:
-                winner=contextual;method='acoustic_bounded_context'
-        if winner is None:
-            # Repair a single edge token only when native ownership and the
-            # acoustic scores agree; never smooth an independent short answer.
-            counts={}
-            for i in ids:counts[catalog[i]['speaker']]=counts.get(catalog[i]['speaker'],0)+1
-            dominant=max(counts,key=counts.get)
-            minority=[i for i in ids if catalog[i]['speaker']!=dominant]
-            score=dict(unit['scores']).get(dominant,-1)
-            edge=minority and len(minority)==1 and minority[0] in (ids[0],ids[-1])
-            if edge and len(ids)>=5 and counts[dominant]/len(ids)>=.8 and score>=.2 and unit['scores'] and unit['scores'][0][1]-score<=.1 and all(score-value>=.1 for speaker,value in unit['scores'] if speaker in counts and speaker!=dominant) and catalog[minority[0]]['end']-catalog[minority[0]]['start']<=.25:
-                winner=dominant;method='native_and_acoustic_boundary'
-        if winner is None:continue
-        protected={}
-        for run in unit.get('runs',[]):
-            run_ids=run['word_ids'];rd=catalog[run_ids[-1]]['end']-catalog[run_ids[0]]['start']
-            run_winner=confident(run['scores'],rd)
-            if run_winner and run_winner!=winner:
-                protected.update({i:run_winner for i in run_ids})
-            elif run_winner is None and rd>=.6 and run_ids[0]!=ids[0] and run_ids[-1]!=ids[-1]:
-                # Unknown internal speech can be a real interruption. Preserve
-                # its native identity instead of overruling it by whole-span vote.
-                protected.update({i:catalog[i]['speaker'] for i in run_ids})
-        for i in ids:
-            speaker=protected.get(i,winner)
-            output[i]={'speaker':speaker,'speaker_assignment':method,
-                       'speaker_verified':i not in protected or any(confident(r['scores'],catalog[r['word_ids'][-1]]['end']-catalog[r['word_ids'][0]]['start'])==speaker for r in unit.get('runs',[]) if i in r['word_ids'])}
+        ids = unit['word_ids']
+        duration = catalog[ids[-1]]['end']-catalog[ids[0]]['start']
+        winner, method = _local_winner(unit, duration)
+        runs = unit.get('runs') or []
+        if not runs:
+            for i in ids:
+                speaker = catalog[i]['speaker']
+                if not runs or runs[-1]['speaker'] != speaker:
+                    runs.append({'speaker': speaker, 'word_ids': []})
+                runs[-1]['word_ids'].append(i)
+        if len(runs) == 1 and 'scores' not in runs[0]:
+            runs[0] = {**unit, **runs[0]}
+        for run in runs:
+            run_ids = run['word_ids']
+            run_duration = catalog[run_ids[-1]]['end']-catalog[run_ids[0]]['start']
+            local, local_method = _local_winner(run, run_duration)
+            if local is not None:
+                for i in run_ids:
+                    output[i] = dict(speaker=local, speaker_assignment=local_method, speaker_verified=True)
+            elif winner is not None:
+                # A whole utterance can corroborate an existing owner. It
+                # cannot overrule a different voice or invent a missing one.
+                for i in run_ids:
+                    if known_speaker(catalog[i]['speaker']) and catalog[i]['speaker'] == winner:
+                        output[i] = dict(speaker=winner, speaker_assignment=method, speaker_verified=True)
     return output

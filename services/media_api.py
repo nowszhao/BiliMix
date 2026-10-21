@@ -451,9 +451,12 @@ def api_index():
     endpoints.append({"method": "POST", "path": "/api/dubbing/analyze",
                       "description": "异步源视频人物/词级分析，返回task_id；结果位于result.analysis",
                       "params": {"local_path": "上传媒体路径", "video_url": "或视频URL"}})
+    endpoints.append({"method": "POST", "path": "/api/dubbing/<analysis_id>/confirm-speakers",
+                      "description": "听原声后明确确认未知词的人物；返回最新 analysis 和 dubbing_ready",
+                      "params": {"resolutions": "[{word_ids: [整数], speaker_id: 已有合格参考人物}]"}})
     return jsonify({
         "name": "BiliMix API",
-        "version": "2.0.0",
+        "version": "2.0.1",
         "description": "中英混合播客/视频学习工具",
         "dubbing_protocol": 1,
         "total_endpoints": len(endpoints),

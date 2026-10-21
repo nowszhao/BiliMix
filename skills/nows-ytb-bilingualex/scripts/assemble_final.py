@@ -159,6 +159,11 @@ def main() -> int:
     # when available; otherwise only structural sanity is checked.
     src_events = {}
     src_names = {}
+    analysis_path = os.path.join(args.workdir, "analysis.json")
+    catalog = None
+    if os.path.isfile(analysis_path):
+        from audio_first import load_analysis
+        catalog = {w["word_id"]:w for w in load_analysis(analysis_path)["words"]}
     meta_path = os.path.join(args.workdir, "subtitle_meta.json")
     if os.path.exists(meta_path):
         try:
@@ -166,7 +171,15 @@ def main() -> int:
                 meta = json.load(f)
             for i, ev in enumerate(meta.get("events", []), start=1):
                 src_events[i] = (ev.get("start"), ev.get("end"))
-                src_names[i] = ev.get("speaker_id") or ev.get("name", "")
+                if catalog is not None and ev.get("source_word_ids"):
+                    speakers = {catalog[w]["speaker"] for w in ev["source_word_ids"]}
+                    if len(speakers) != 1:
+                        raise ValueError("Source row crosses a confirmed speaker change; split that row")
+                    src_names[i] = next(iter(speakers)) or ""
+                else:
+                    src_names[i] = ev.get("speaker_id") or ev.get("name") or ""
+        except ValueError:
+            raise
         except Exception as e:
             log(f"WARN: could not load subtitle_meta.json ({e}); "
                 "skipping timestamp-inheritance check")

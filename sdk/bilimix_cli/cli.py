@@ -615,6 +615,16 @@ def cmd_audio_url(args, client):
 # video 命令
 # ============================================================
 
+def cmd_video_confirm_speakers(args, client):
+    resolutions = json.loads(Path(args.resolutions).read_text(encoding="utf-8"))
+    if not isinstance(resolutions, list):
+        raise ValueError("resolutions file must contain a JSON list")
+    result = client.post_json(f"/api/dubbing/{args.analysis_id}/confirm-speakers",
+                              {"resolutions": resolutions})
+    emit(result, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
 def _resolve_video_path(client, task_id, mode):
     """从视频任务结果解析文件的 URL 路径
 
@@ -1338,6 +1348,11 @@ def build_parser():
     p.set_defaults(func=cmd_task_submit, type="analysis", local_path=None, url=None,
                    subtitle_mode=None, subtitle_font_size=None, skip_confirm=False, no_skip_confirm=False)
 
+
+    p = add_cmd(vid_sub, "confirm-speakers", help="听原声后明确确认待解析词的人物，禁止猜测")
+    p.add_argument("--analysis-id", required=True)
+    p.add_argument("--resolutions", required=True, help="JSON 列表文件: [{word_ids: [...], speaker_id: ...}]")
+    p.set_defaults(func=cmd_video_confirm_speakers)
 
     p = add_cmd(vid_sub, "download", help="下载配音视频")
     g = p.add_mutually_exclusive_group(required=True)

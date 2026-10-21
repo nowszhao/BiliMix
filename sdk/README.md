@@ -65,3 +65,14 @@ tasks = client.get("/api/tasks")
 | 3 | 超时 |
 | 4 | 网络错误 |
 | 5 | 依赖错误 |
+
+## 待确认人物
+
+`completed` 是分析任务完成；`result.analysis.dubbing_ready` 才表示人物与参考可用于配音。未知词完整保留在 `unresolved_segments` 中。听原声及对应参考并取得用户明确选择后，提交 JSON 列表（如 `[{"word_ids":[42],"speaker_id":"SPEAKER_01"}]`）：
+
+```text
+bmx --server <服务URL> video confirm-speakers --analysis-id <分析ID> --resolutions decisions.json
+bmx --server <服务URL> task result <分析ID> --field result.analysis
+```
+
+刷新本地 analysis 后重建 ASS 与 manifest，可复用既有翻译。确认前不得修改 manifest 强行认领未知词；人工确认不会成为克隆参考。

@@ -31,6 +31,8 @@ def validate_manifest(manifest, analysis):
         raise ValueError("Dubbing manifest belongs to a different source media")
     if manifest.get("analysis_id") != analysis.get("analysis_id"):
         raise ValueError("Dubbing manifest analysis_id mismatch")
+    from pipeline.speaker_analysis import ensure_dubbing_ready
+    ensure_dubbing_ready(analysis)
     catalog = {w["word_id"]: w for w in analysis["words"]}
     expected = list(catalog)
     used, output, ids = [], [], set()

@@ -37,7 +37,10 @@ def attach_sources(texts, analysis):
         speakers = {w["speaker"] for w in words}
         if len(speakers) != 1:
             raise ValueError("Refined utterance crosses a real speaker change; keep each person's complete speech separate")
-        result.append({"speaker_id": next(iter(speakers)), "source_word_ids": word_ids,
+        speaker = next(iter(speakers))
+        result.append({"speaker_id": speaker, "speaker_status": "assigned" if speaker else "unresolved",
+                       "speaker_candidates": sorted({s for w in words for s in w.get("speaker_candidates", [])}),
+                       "source_word_ids": word_ids,
                        "start_ms": round(words[0]["start"]*1000),
                        "end_ms": round(words[-1]["end"]*1000)})
         used.extend(word_ids)

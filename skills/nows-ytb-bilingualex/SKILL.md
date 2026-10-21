@@ -108,3 +108,15 @@ python <本skill>/scripts/render_subtitles.py --input <工作ASS> --output <观�
 返回 MP4、精翻工作 ASS、dub_manifest。配音完成后返回服务端最终视频和配音时间轴 ASS。明确合成/参考不足等错误，不把缺失台词当成功。
 
 只交字幕时，优先交付观看用分页 ASS；工作 ASS 标明导入/审校用途，保留源定位。
+
+## 人物待确认的处理
+
+分析任务 `completed` 表示词流分析已完成，配音还须满足 `dubbing_ready=true`。检查 `unresolved_segments`（源时间、原文、word_ids、候选人物）和 `missing_reference_speakers`。未知词仍完整保留，可作为独立片段继续 FULL 和精翻；不得把它并入已知人物话语。`speaker_verified=false` 本身不等于未知，人物是否未知看 `speaker=null`。
+
+服务端先用该片段自身的声纹和有边界限制的上下文复核；证据不足时由用户听原声和人物参考后明确确认。当前 Agent 不得按语义、前后人物或候选排序代替用户做决定。用户明确确认后写 JSON 列表，例如 `[{"word_ids":[42],"speaker_id":"SPEAKER_01"}]`，再执行：
+
+```text
+bmx video confirm-speakers --analysis-id <分析任务ID> --resolutions <用户确认.json>
+```
+
+该接口只接受待确认词和有合格参考的现有人物，保留所有原词、时间和词 ID；人工确认标记与声纹通过标记分开。之后重新执行原 `bmx_video_task.py --analyze-only` 命令，刷新本地 `analysis.json`，不会创建新的已绑定分析任务。再运行 `assemble_final.py` 和 `build_dub_manifest.py prepare/apply`，按最新词归属生成 ASS Name 和 manifest；已有精翻可复用。如果原来的一行确认后涉及多人，只拆分该行及其中文内容。不能修改 manifest 来绕过服务端人物校验。缺少合格同人参考时停止配音并报告，不借用其他人物声线。

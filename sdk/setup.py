@@ -3,7 +3,7 @@ from pathlib import Path
 
 setup(
     name="bilimix-cli",
-    version="2.0.0",
+    version="2.0.1",
     description="BiliMix CLI — 面向 AI Agent 的命令行接口与 Python SDK",
     long_description=(Path(__file__).parent / "README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",

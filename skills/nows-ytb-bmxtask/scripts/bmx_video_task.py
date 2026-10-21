@@ -200,7 +200,10 @@ def main():
             if not analysis or analysis.get('source_media_sha256') != fingerprint or analysis.get('analysis_id') != task:
                 raise ValueError('Analysis incomplete/failed or source identity changed; inspect the saved task')
             save_json(destination,analysis)
-            emit({'analysis_id':task,'analysis_path':str(destination),'state_path':str(state_path),'server':server});return 0
+            emit({'analysis_id':task,'analysis_path':str(destination),'state_path':str(state_path),'server':server,
+                  'dubbing_ready':analysis.get('dubbing_ready', True),
+                  'unresolved_segments':analysis.get('unresolved_segments', []),
+                  'missing_reference_speakers':analysis.get('missing_reference_speakers', [])});return 0
         _,paths['subtitle'] = bmx_json(bmx,['audio','upload',str(Path(args.subtitle).expanduser().resolve())],args.dry_run,field='local_path')
         if not paths['subtitle']:
             raise ValueError('Subtitle upload failed')

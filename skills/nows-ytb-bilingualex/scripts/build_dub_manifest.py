@@ -16,6 +16,8 @@ from audio_first import load_analysis
 
 def read_rows(work):
     meta = json.loads((work/'subtitle_meta.json').read_text())['events']
+    analysis = load_analysis(work/'analysis.json')
+    catalog = {w['word_id']: w for w in analysis['words']}
     rows = {}
     for file in sorted((work/'parts').glob('trans_*.txt')):
         for line in file.read_text().splitlines():
@@ -25,8 +27,13 @@ def read_rows(work):
             idx = int(fields[0])
             if idx in rows: raise ValueError(f'Duplicate idx {idx}')
             source = meta[idx-1]
-            if not source.get('source_word_ids') or not source.get('speaker_id'):
+            if not source.get('source_word_ids'):
                 raise ValueError('Refine using analysis.json before translation')
+            speakers = {catalog[i]['speaker'] for i in source['source_word_ids']}
+            if len(speakers) != 1:
+                raise ValueError('Source row crosses a speaker change; split this row before grouping')
+            source = {**source, 'speaker_id': next(iter(speakers))}
+            source['speaker_status'] = 'assigned' if source['speaker_id'] else 'unresolved'
             rows[idx] = {'idx':idx,'text_en':fields[3],'text_zh':fields[4],**source}
             rows[idx]['text_en'],rows[idx]['text_zh'] = fields[3],fields[4]
     if sorted(rows)!=list(range(1,len(meta)+1)): raise ValueError('Missing translation rows')
@@ -35,6 +42,10 @@ def read_rows(work):
 
 def build(work, plan):
     analysis = load_analysis(work/'analysis.json')
+    if analysis.get('unresolved_segments') or any(not w.get('speaker') for w in analysis['words']):
+        raise ValueError('Unresolved speakers: listen and confirm through BiliMix, refresh analysis.json, then rebuild the manifest')
+    if analysis.get('missing_reference_speakers'):
+        raise ValueError('Missing clean speaker references; cannot submit voice cloning')
     rows = read_rows(work)
     used, words_used, units = [], [], []
     catalog = {w['word_id']:w for w in analysis['words']}

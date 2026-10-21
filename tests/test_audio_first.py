@@ -132,9 +132,11 @@ def test_zero_source_gap_has_video_hold(blocked):
         Path(path).unlink()
 
 
-def test_source_analysis_rejects_unidentified_and_unaligned():
-    for word in ({'word':'x','start':0,'end':1}, {'word':'x','speaker':'A'}):
-        with pytest.raises(ValueError): build_analysis({'segments':[{'words':[word]}]},'media')
+def test_source_analysis_preserves_unknown_but_rejects_unaligned():
+    result = build_analysis({'segments':[{'words':[{'word':'x','start':0,'end':1}]}]},'media')
+    assert result['words'][0]['speaker'] is None and not result['dubbing_ready']
+    with pytest.raises(ValueError):
+        build_analysis({'segments':[{'words':[{'word':'x','speaker':'A'}]}]},'media')
 
 
 def test_natural_pause_does_not_discard_all_reference_candidates():
@@ -189,8 +191,9 @@ def test_real_diarization_boundary_jitter_uses_unique_nearby_turn():
     [dict(start=1.1,end=3,speaker='A')],
     [dict(start=0,end=.995,speaker='A'),dict(start=1.025,end=3,speaker='B')]])
 def test_boundary_tolerance_rejects_large_gap_or_ambiguous_identity(turns):
-    with pytest.raises(ValueError,match='speaker'):
-        build_analysis({'segments':[{'words':[dict(word='I',start=1,end=1.01)]}]},'media',turns)
+    result = build_analysis({'segments':[{'words':[dict(word='I',start=1,end=1.01)]}]},'media',turns)
+    assert result['words'][0]['speaker'] is None
+    assert not result['dubbing_ready']
 
 
 def test_native_result_cache_survives_binding_errors_and_validates_content(tmp_path,monkeypatch):
