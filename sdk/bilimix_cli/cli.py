@@ -26,6 +26,7 @@ BiliMix CLI — 面向 AI Agent 的命令行接口
   bmx tts synth --ref-audio ref.mp3 --text "要合成的话" --wait -o out.wav
 """
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -58,6 +59,7 @@ EXIT_DEP = 5
 # 视为「终态」的任务状态：达到后停止轮询
 TERMINAL_STATUSES = {
     "completed",
+    "failed",
     "error",
     "cancelled",
     "awaiting_confirmation",
@@ -65,7 +67,7 @@ TERMINAL_STATUSES = {
 }
 
 # 独立 TTS 任务的终态（无确认环节）
-TTS_TERMINAL_STATUSES = {"completed", "error", "cancelled"}
+TTS_TERMINAL_STATUSES = {"completed", "failed", "error", "cancelled"}
 
 
 # ============================================================
@@ -134,14 +136,19 @@ class BiliMixClient:
     def __init__(self, server, quiet=False):
         self.server = server.rstrip("/")
         self.quiet = quiet
+        key = hashlib.sha256(self.server.encode("utf-8")).hexdigest()[:24]
+        self.session_file = SESSION_DIR / "sessions" / (key + ".json")
         self.session = requests.Session()
         self._load_cookies()
 
     # ---- cookie 持久化 ----
     def _load_cookies(self):
-        if SESSION_FILE.exists():
+        source = self.session_file
+        # Legacy session.json has no server identity. Never send it to a host
+        # inferred from a newly changed CLI/config value; sign in once per server.
+        if source.exists():
             try:
-                with open(SESSION_FILE, "r", encoding="utf-8") as f:
+                with open(source, "r", encoding="utf-8") as f:
                     cookies = json.load(f)
                 for name, value in cookies.items():
                     self.session.cookies.set(name, value)
@@ -150,10 +157,11 @@ class BiliMixClient:
 
     def _save_cookies(self):
         try:
-            SESSION_DIR.mkdir(parents=True, exist_ok=True)
+            self.session_file.parent.mkdir(parents=True, exist_ok=True)
             cookies = {c.name: c.value for c in self.session.cookies}
-            with open(SESSION_FILE, "w", encoding="utf-8") as f:
+            with open(self.session_file, "w", encoding="utf-8") as f:
                 json.dump(cookies, f)
+            self.session_file.chmod(0o600)
         except Exception as e:
             if not self.quiet:
                 sys.stderr.write(f"[warn] 无法保存 session: {e}\n")
@@ -161,8 +169,8 @@ class BiliMixClient:
     def _clear_cookies(self):
         self.session.cookies.clear()
         try:
-            if SESSION_FILE.exists():
-                SESSION_FILE.unlink()
+            if self.session_file.exists():
+                self.session_file.unlink()
         except Exception:
             pass
 
@@ -306,6 +314,7 @@ def cmd_auth_logout(args, client):
 
 def cmd_auth_status(args, client):
     result = client.get("/api/auth/check")
+    result = {**result, "server": client.server}
     emit(result, pretty=args.pretty, field=args.field)
     return EXIT_OK
 
@@ -417,7 +426,7 @@ def _wait_task(client, task_id, args, until_terminal=False, until_status=None):
             emit(result, pretty=args.pretty, field=args.field)
             if st == "completed":
                 return EXIT_OK
-            if st in ("error", "cancelled"):
+            if st in ("failed", "error", "cancelled"):
                 return EXIT_API_ERROR
             # awaiting_* 视为正常暂停，退出 0 让 Agent 继续确认流程
             return EXIT_OK
@@ -1597,6 +1606,9 @@ def build_parser():
 # ============================================================
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = build_parser()
     args = parser.parse_args()
 

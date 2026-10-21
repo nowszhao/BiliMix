@@ -269,3 +269,71 @@ def test_only_verified_words_can_enter_final_cloning_reference():
     result=build_analysis({'segments':[{'words':words}]},'media',[dict(start=0,end=4,speaker='A')],verification=evidence)
     assert result['references']['A']['end']==2
     assert not result['words'][-1]['speaker_verified']
+
+
+@pytest.mark.parametrize('fps_text', ['25', '30000/1001', '24000/1001'])
+@pytest.mark.parametrize('blocked', [False, True])
+def test_real_ffmpeg_preserves_irregular_audio_frame_plan(tmp_path, fps_text, blocked):
+    """Exercise encoding: inspecting the planned graph alone missed lost frames."""
+    import shutil
+    import subprocess
+    from fractions import Fraction
+    if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
+        pytest.skip('ffmpeg/ffprobe required')
+    fps = float(Fraction(fps_text))
+    source = tmp_path/'source.mp4'
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
+                    f'color=c=blue:size=160x90:rate={fps_text}', '-t', '9',
+                    '-c:v', 'libx264', '-preset', 'ultrafast', str(source)], check=True)
+    entries, cursor = [], 0.0
+    for i in range(51):
+        duration = .16 + i % 7 * .073
+        # Tiny source/output gaps and a new long pause all need real frames.
+        source_start = i * .15
+        source_end = source_start + (.149 if i % 4 == 0 else .1)
+        entries.append(dict(type='tts_chinese', orig_start=source_start,
+                            orig_end=source_end, mixed_start=cursor,
+                            mixed_end=cursor+duration))
+        cursor += duration + ([.009, .012, .035, .003][i % 4])
+    # Adjacent source spans with a long new audio pause must hold the image.
+    entries[11]['orig_start'] = entries[10]['orig_end']
+    shift = 1.6
+    for entry in entries[11:]:
+        entry['mixed_start'] += shift
+        entry['mixed_end'] += shift
+    outputs = []
+    size = 7 if blocked else len(entries)
+    for start in range(0, len(entries), size):
+        end = min(start+size, len(entries))
+        if blocked:
+            gp, _ = video._build_block_filter_graph(entries[start:end+1],
+                include_trailing_gap=end < len(entries), fps=fps)
+        else:
+            gp = video._build_filter_graph(entries, fps=fps)
+        output = tmp_path/f'block_{start}.mp4'
+        expected = round((entries[end]['mixed_start'] if end < len(entries)
+                          else entries[-1]['mixed_end'])*fps)-round(entries[start]['mixed_start']*fps)
+        try:
+            subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(source),
+                '-/filter_complex', gp, '-map', '[outv]', '-an', '-c:v', 'libx264',
+                '-preset', 'ultrafast', '-r', str(fps), str(output)], check=True)
+            video._validate_video_frames(str(output), expected)
+        finally:
+            Path(gp).unlink()
+        outputs.append(output)
+    concat = tmp_path/'concat.txt'
+    concat.write_text(''.join(f"file '{p}'\n" for p in outputs))
+    result = tmp_path/'final.mp4'
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0',
+                    '-i', str(concat), '-c', 'copy', str(result)], check=True)
+    video._validate_video_frames(str(result), round(entries[-1]['mixed_end']*fps))
+    streams = json.loads(subprocess.check_output(['ffprobe', '-v', 'error',
+        '-show_entries', 'stream=duration', '-of', 'json', str(result)], text=True))['streams']
+    assert abs(float(streams[0]['duration'])-entries[-1]['mixed_end']) <= 1/fps
+
+
+def test_successful_encode_with_missing_frames_is_rejected(monkeypatch):
+    import subprocess
+    monkeypatch.setattr(subprocess, 'check_output', lambda *a, **k: '{"streams":[{"nb_frames":"4"}]}')
+    with pytest.raises(RuntimeError, match='expected 5, got 4'):
+        video._validate_video_frames('short.mp4', 5)

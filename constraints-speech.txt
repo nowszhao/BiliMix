@@ -1,0 +1,19 @@
+# Validated together on the Linux/Python 3.10 model server, 2026-10-21.
+# CPU/CUDA wheels may use local version suffixes (e.g. +cpu).
+# Do not downgrade Torch/NumPy after installing WhisperX.
+torch==2.8.0
+torchaudio==2.8.0
+torchvision==0.23.0
+torchcodec==0.7.0
+whisperx==3.8.6
+pyannote.audio==4.0.4
+demucs==4.1.0
+transformers==4.57.6
+tokenizers==0.22.2
+numpy==2.2.6
+scipy==1.15.3
+librosa==0.11.0
+soundfile==0.14.0
+huggingface_hub==0.36.2
+safetensors==0.7.0
+protobuf==6.33.6

@@ -217,3 +217,10 @@ MIT
 `bmx video analyze --server-path <uploaded MP4> --wait` 获取 `result.analysis`。
 精翻后用 `bmx task submit --type video --server-path <same MP4> --dub-manifest <local JSON> --analysis-id <analysis task id> --ref-select-mode speaker_global` 提交完整中文话语。
 `bmx api --field dubbing_protocol` 应返回1。manifest作为结构化JSON请求发送，显示字幕切分不会拆开合成。完整契约见 `docs/audio-first-dubbing.md`。
+
+
+### Portable Agent clients (1.1)
+
+Use Python 3.10+ and `python -m pip install /path/to/BiliMix/sdk`; `python -m bilimix_cli` avoids PATH assumptions. Server selection is `--server` > `BILIMIX_SERVER` > saved configuration > localhost:5000. `BILIMIX_HOME` selects the configuration directory. Authentication sessions are now scoped per server; log in once per authenticated server after upgrading from an unscoped 1.0 session. `auth status` includes the actual `server` URL.
+
+The repository includes two provider-independent skills and an explicit-destination installer. See [portable workflow](../docs/portable-workflow.md). No model packages or remote credentials are needed on the client.

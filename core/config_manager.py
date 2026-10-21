@@ -1,77 +1,13 @@
 """
 配置管理模块
-负责配置的读取、更新和持久化（写回 config.py 文件）。
+负责配置的读取、更新和独立 JSON 持久化（不修改源码）。
 """
-import os
-import re
 
 from core import config
 
 
 # 可更新的配置项映射: { json_key: (config_attr, type_converter) }
-UPDATABLE_CONFIGS = {
-    "skip_confirmation": ("SKIP_CONFIRMATION", bool),
-    "sentence_cn_ratio": ("SENTENCE_CN_RATIO", float),
-    "sentence_gap_ms": ("SENTENCE_GAP_MS", int),
-    "sentence_full_gap_ms": ("SENTENCE_FULL_GAP_MS", int),
-    "tts_engine": ("TTS_ENGINE", str),
-    "tts_text_format": ("TTS_TEXT_FORMAT", str),
-    "whisperx_model": ("WHISPERX_MODEL", str),
-    "whisperx_device": ("WHISPERX_DEVICE", str),
-    "whisperx_language": ("WHISPERX_LANGUAGE", str),
-    "whisperx_threads": ("WHISPERX_THREADS", int),
-    "demucs_timeout": ("DEMUCS_TIMEOUT", int),
-    "ollama_base_url": ("OLLAMA_BASE_URL", str),
-    "ollama_model": ("OLLAMA_MODEL", str),
-    "llm_batch_size": ("LLM_BATCH_SIZE", int),
-    "llm_num_predict": ("LLM_NUM_PREDICT", int),
-    "output_format": ("OUTPUT_FORMAT", str),
-    "output_bitrate": ("OUTPUT_BITRATE", str),
-    "confucius_tts_device": ("CONFUCIUS4_TTS_DEVICE", str),
-    "confucius_tts_temperature": ("CONFUCIUS4_TTS_TEMPERATURE", float),
-    "confucius_tts_top_p": ("CONFUCIUS4_TTS_TOP_P", float),
-    "confucius_tts_top_k": ("CONFUCIUS4_TTS_TOP_K", int),
-    "confucius_tts_num_beams": ("CONFUCIUS4_TTS_NUM_BEAMS", int),
-    "confucius_tts_repetition_penalty": ("CONFUCIUS4_TTS_REPETITION_PENALTY", float),
-    "confucius_tts_n_timesteps": ("CONFUCIUS4_TTS_N_TIMESTEPS", int),
-    "confucius_tts_inference_cfg_rate": ("CONFUCIUS4_TTS_INFERENCE_CFG_RATE", float),
-    "confucius_tts_num_workers": ("CONFUCIUS4_TTS_NUM_WORKERS", int),
-    "same_speaker_gap": ("SAME_SPEAKER_GAP", float),
-    "auto_retry_max": ("AUTO_RETRY_MAX", int),
-    # 登录认证
-    "auth_enabled": ("AUTH_ENABLED", bool),
-    "auth_username": ("AUTH_USERNAME", str),
-    "auth_password": ("AUTH_PASSWORD", str),
-    # 默认保留背景音乐
-    "keep_bgm": ("KEEP_BGM", bool),
-    # --- 参考音频配置 ---
-    "ref_select_mode": ("REF_SELECT_MODE", str),
-    "ref_min_duration": ("REF_MIN_DURATION", int),
-    "ref_target_duration": ("REF_TARGET_DURATION", int),
-    "ref_max_duration": ("REF_MAX_DURATION", int),
-    # --- 句子翻译 ---
-    "sentence_tts_voice_clone": ("SENTENCE_TTS_VOICE_CLONE", bool),
-    # --- LLM 翻译 ---
-    "llm_translate_temperature": ("LLM_TRANSLATE_TEMPERATURE", float),
-    # --- 音频混音 ---
-    "tts_target_dbfs": ("TTS_TARGET_DBFS", float),
-    "mixer_default_gap_ms": ("MIXER_DEFAULT_GAP_MS", int),
-    "mixer_fade_ms": ("MIXER_FADE_MS", int),
-    "mixer_bgm_gain_db": ("MIXER_BGM_GAIN_DB", float),
-    # --- 转录缺口补录 ---
-    "transcribe_gap_min_seconds": ("TRANSCRIBE_GAP_MIN_SECONDS", float),
-    "transcribe_gap_voice_dbfs": ("TRANSCRIBE_GAP_VOICE_DBFS", float),
-    # --- 视频组装 ---
-    "ffmpeg_threads_cap": ("FFMPEG_THREADS_CAP", int),
-    # 新建视频任务时字幕字号的默认值（-1/0 表示按视频高度自动）
-    "sub_font_size_default": ("ASS_FONT_SIZE_DEFAULT", int),
-    # --- 水印 ---
-    "watermark_enabled": ("WATERMARK_ENABLED", bool),
-    "watermark_text": ("WATERMARK_TEXT", str),
-    "watermark_opacity": ("WATERMARK_OPACITY", float),
-    # 水印字体文件（留空 = 自动探测中文字体）
-    "watermark_font": ("WATERMARK_FONT", str),
-}
+from core.settings_store import UPDATABLE_CONFIGS, save_settings
 
 
 def get_all_config() -> dict:
@@ -172,7 +108,7 @@ def update_config(data: dict) -> tuple:
             except (ValueError, TypeError) as e:
                 print(f"[Config] 忽略无效值: {key}={value} ({e})")
 
-    # 写回 config.py 文件
+    # 保存到独立设置文件，保留源码默认值和 config_local.py
     if updated:
         try:
             _write_config_file(updated)
@@ -185,32 +121,8 @@ def update_config(data: dict) -> tuple:
 
 
 def _write_config_file(updated_attrs: list):
-    """将配置变更写回 config.py 文件（逐行替换对应的赋值行）"""
-    config_path = os.path.join(config.BASE_DIR, "core", "config.py")
-    with open(config_path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
-    new_lines = []
-    for line in lines:
-        replaced = False
-        for attr in updated_attrs:
-            pattern = rf'^({attr}\s*=\s*)(.+)$'
-            m = re.match(pattern, line.rstrip())
-            if m:
-                val = getattr(config, attr)
-                if isinstance(val, str):
-                    new_val = f'"{val}"'
-                elif isinstance(val, bool):
-                    new_val = "True" if val else "False"
-                elif isinstance(val, float):
-                    new_val = str(val)
-                else:
-                    new_val = str(val)
-                new_lines.append(f'{attr} = {new_val}\n')
-                replaced = True
-                break
-        if not replaced:
-            new_lines.append(line)
-
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.writelines(new_lines)
+    """Persist UI preferences separately from code and machine-local Python."""
+    initial = {attr:getattr(config,attr) for attr,_ in UPDATABLE_CONFIGS.values()
+               if hasattr(config,attr)}
+    updated = {attr:getattr(config,attr) for attr in updated_attrs}
+    save_settings(config.SETTINGS_FILE,updated,initial=initial)

@@ -112,11 +112,11 @@ def native_analysis_signature(audio_hash, worker):
         runtime = version("pyannote.audio")
     except PackageNotFoundError:
         runtime = "unavailable"
-    cache = Path(os.environ.get("HF_HUB_CACHE", str(Path.home()/".cache/huggingface/hub")))
-    snapshots = cache/"models--pyannote--speaker-diarization-community-1"/"snapshots"
-    revisions = sorted(p.name for p in snapshots.iterdir()) if snapshots.is_dir() else []
+    from pipeline.model_runtime import model_snapshots
+    revisions = [str(p) for p in model_snapshots()]
     return canonical_hash({"schema":1,"audio_sha256":audio_hash,
-        "worker_sha256":file_sha256(worker),"runtime":runtime,"cached_revisions":revisions,
+        "worker_sha256":file_sha256(worker),"runtime":runtime,
+        "runtime_helper":file_sha256(os.path.join(os.path.dirname(worker),"..","pipeline","model_runtime.py")),"cached_revisions":revisions,
         "model":os.environ.get("BILIMIX_DIARIZATION_MODEL","pyannote/speaker-diarization-community-1")})
 
 

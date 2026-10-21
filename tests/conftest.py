@@ -13,6 +13,7 @@ def pytest_configure(config):
         path = os.path.join(root.name, "data", "" if key == "DATA_DIR" else leaf)
         os.makedirs(path, exist_ok=True)
         setattr(settings, key, path)
+    settings.SETTINGS_FILE = os.path.join(root.name, "settings.json")
     database.DB_PATH = settings.DB_PATH = os.path.join(root.name, "test.sqlite")
     database._local = __import__("threading").local()
     database.setup_database()

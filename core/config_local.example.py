@@ -3,7 +3,7 @@
 #
 # 用法：
 #   1. 推荐：运行 ./setup.sh，会自动从本文件生成 core/config_local.py
-#      并替换 __BILIMIX_PYTHON__ / __CONFUCIUS_ROOT__ 为检测到的路径。
+#      默认复用当前 Python 和同级 TTS 源码目录，无需写死机器路径。
 #   2. 手动：cp core/config_local.example.py core/config_local.py 然后编辑。
 #
 # 本文件提交到仓库；core/config_local.py 被 .gitignore 忽略，不会提交。
@@ -19,7 +19,7 @@ WHISPERX_COMPUTE_TYPE = "int8"      # int8=CPU 推荐；float16=GPU
 WHISPERX_LANGUAGE = "en"
 WHISPERX_THREADS = 8                # CPU 核数
 WHISPERX_BATCH_SIZE = 10
-WHISPERX_DIARIZE = False            # 设 True 并配置 HF_TOKEN 启用说话人分离
+WHISPERX_DIARIZE = True            # 设 True 并配置 HF_TOKEN 启用说话人分离
 
 # --- Demucs 人声分离 ---
 # demucs 子进程超时（秒）。CPU 推理长音频可能需要 20-40 分钟。
@@ -33,11 +33,11 @@ LLM_BATCH_SIZE = 5
 LLM_NUM_PREDICT = 4096
 
 # --- Confucius4-TTS ---
-# setup.sh 替换为 ../Confucius4-TTS-CPU 的绝对路径
-CONFUCIUS4_TTS_ROOT = "__CONFUCIUS_ROOT__"
-# setup.sh 替换为 bilimix env 的 python（即 sys.executable）
+# 留空使用同级 ../Confucius4-TTS-CPU；或设置 BILIMIX_TTS_ROOT
+CONFUCIUS4_TTS_ROOT = ""
+# 留空使用当前服务解释器；也可设置 BILIMIX_TTS_PYTHON
 # 留空也会 fallback 到 sys.executable
-CONFUCIUS4_TTS_PYTHON = "__BILIMIX_PYTHON__"
+CONFUCIUS4_TTS_PYTHON = ""
 CONFUCIUS4_TTS_DEVICE = "cpu"
 CONFUCIUS4_TTS_N_TIMESTEPS = 15     # CPU 推荐 15；GPU 可设 25
 CONFUCIUS4_TTS_NUM_WORKERS = 1      # CPU 单 worker；GPU 可设 2-4

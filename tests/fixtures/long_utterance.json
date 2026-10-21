@@ -1,0 +1,4 @@
+{
+  "text_en": "So the only thing it's really good at, which indeed is a magic trick, is going from exponential time algorithm, which is integer factorization or elliptic curve discrete log problem, which I want to mention a little later, shout out to the ECDLP problem. The quantum computers can do those in polynomial time, which is remarkable.",
+  "text_zh": "它真正擅长的那件事，确实像变魔术：把整数分解或椭圆曲线离散对数问题，从指数时间变成多项式时间。这当然很了不起。椭圆曲线离散对数问题，也就是 ECDLP，我稍后还想专门提一下。"
+}

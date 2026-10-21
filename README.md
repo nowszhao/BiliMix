@@ -138,3 +138,10 @@ MIT
 
 
 精翻配音的完整人物绑定、自然话语与音频优先工作流见 [音频优先协议](docs/audio-first-dubbing.md)。
+
+
+## 通用 Code Agent 客户端与字幕分页
+
+两份可分发 skill 位于 `skills/nows-ytb-bilingualex` 和 `skills/nows-ytb-bmxtask`，不依赖某个 Agent 或用户目录。用 `python scripts/install_skills.py --destination <Agent技能目录>` 安装，或运行 `python scripts/package_skills.py --output dist/skills` 生成 ZIP。客户端只装轻量 SDK；模型依赖在服务端。
+
+字幕显示与完整话语 TTS 解耦，默认总共最多 4 行、文字高度预算 25%；整片/分块/独立字幕共享布局逻辑。环境发现、跨服务器状态恢复、配置项、依赖约束和测试说明见 [通用工作流](docs/portable-workflow.md)。

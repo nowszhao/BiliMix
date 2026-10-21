@@ -2,6 +2,7 @@
 Task Query Blueprint - list, status, result, delete endpoints.
 """
 import os
+import json
 import shutil
 import sys
 import traceback
@@ -235,6 +236,16 @@ def get_task_result(task_id):
     translations = task.get("translations", {})
     sentence_pairs = task.get("sentence_pairs", [])
     video_result = task.get("video_result") or _load_video_result_from_disk(task)
+    if video_result and video_result.get("srt_path"):
+        layout_path = video_result["srt_path"]+".layout.json"
+        if os.path.isfile(layout_path):
+            try:
+                with open(layout_path, encoding="utf-8") as stream:
+                    layout = json.load(stream)
+                video_result = {**video_result, "subtitle_layout":{
+                    k:v for k,v in layout.items() if k != "pages"}}
+            except (OSError, ValueError):
+                video_result = {**video_result, "subtitle_layout":{"status":"INVALID"}}
     step_timing = _load_step_timing_from_disk(task)
 
     return jsonify({

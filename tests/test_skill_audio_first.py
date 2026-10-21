@@ -9,12 +9,9 @@ import pytest
 from pipeline.dubbing_plan import validate_manifest
 from tests.test_audio_first import analysis_fixture
 
-_candidates = [Path(os.environ.get('BILIMIX_SKILLS_DIR', '__not_configured__')),
-               Path(__file__).resolve().parents[2], Path.home()/'.workbuddy/skills',
-               Path.home()/'.codex/skills']
-SKILLS = next((p for p in _candidates if (p/'nows-ytb-bilingualex/scripts').is_dir()), None)
-if SKILLS is None:
-    pytest.skip('Companion skills unavailable; set BILIMIX_SKILLS_DIR', allow_module_level=True)
+SKILLS = Path(os.environ.get('BILIMIX_SKILLS_DIR', str(Path(__file__).resolve().parents[1]/'skills')))
+if not (SKILLS/'nows-ytb-bilingualex/scripts').is_dir():
+    raise RuntimeError('Bundled skills missing; restore repository skills/ or set BILIMIX_SKILLS_DIR')
 SCRIPTS = SKILLS/'nows-ytb-bilingualex/scripts'
 
 

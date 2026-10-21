@@ -2,17 +2,17 @@
 import argparse,json,math,os,sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from pipeline.model_runtime import configure_diarization_environment
 from pipeline.speaker_verification import utterance_spans,context_bounds,confident
 
 
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('audio');ap.add_argument('asr');ap.add_argument('analysis');ap.add_argument('output');args=ap.parse_args()
-    os.environ.setdefault('HF_HUB_OFFLINE','1')
+    model=configure_diarization_environment()
     import torch,numpy as np,soundfile as sf
     from scipy.signal import resample_poly
     from pyannote.audio import Pipeline
     torch.set_num_threads(min(6,os.cpu_count() or 1))
-    model=os.environ.get('BILIMIX_DIARIZATION_MODEL','pyannote/speaker-diarization-community-1')
     pipeline=Pipeline.from_pretrained(model,token=os.environ.get('HF_TOKEN') or None)
     embedding=pipeline._embedding
     analysis=json.load(open(args.analysis));asr=json.load(open(args.asr))

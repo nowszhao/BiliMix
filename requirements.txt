@@ -1,3 +1,4 @@
+-c constraints-speech.txt
 # ============================================================
 # BiliMix 主项目依赖
 # 一次性安装：./setup.sh  或  pip install -r requirements.txt
@@ -20,9 +21,11 @@ demucs>=4.0
 
 # ---- Whisper 转录 ----
 # WhisperX 通过 subprocess 调用 whisperx 二进制，不是 import
-# 但仍然需要 torch / torchaudio 用于 demucs 和 TTS
-torch>=2.0
-torchaudio>=2.0
+# 版本由 constraints-speech.txt 与 TTS/pyannote 共同约束
+whisperx
+pyannote.audio
+torch
+torchaudio
 
 # ---- ffmpeg（用 subprocess 调用 ffmpeg 命令行）----
 # 系统依赖，需用 brew/apt 安装：brew install ffmpeg

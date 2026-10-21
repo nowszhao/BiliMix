@@ -180,29 +180,18 @@ if ! ffmpeg -encoders 2>/dev/null | grep -q libx264; then
     fi
 fi
 
-# ---------- 4. 主 Python 依赖 ----------
-info "安装主 Python 依赖 (requirements.txt) ..."
-_pip install -r requirements.txt
-ok "主依赖安装完成"
-
-# ---------- 5. WhisperX ----------
-info "安装 WhisperX ..."
-_pip install whisperx
-ok "WhisperX 安装完成"
-
-# ---------- 6. torch 对齐 ----------
-info "对齐 torch/torchaudio 版本到 2.7.0（与 Confucius4-TTS-CPU 对齐）..."
+# ---------- 4-7. 一组兼容的语音运行时 ----------
+# WhisperX 3.8 requires Torch 2.8 and NumPy 2.1+; never downgrade them later.
+info "安装已验证的 Torch 2.8 / TorchCodec 0.7 运行时 ..."
 if [ "$OS" = "Linux" ] && [ "$ARCH" = "x86_64" ]; then
-    _pip install --upgrade torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cpu
+    _pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 torchcodec==0.7.0 --index-url https://download.pytorch.org/whl/cpu
 else
-    _pip install --upgrade torch==2.7.0 torchaudio==2.7.0
+    _pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 torchcodec==0.7.0
 fi
-ok "torch 版本对齐完成"
-
-# ---------- 7. TTS 依赖 ----------
-info "安装 TTS 依赖 (requirements-tts.txt) ..."
-_pip install -r requirements-tts.txt
-ok "TTS 依赖安装完成"
+info "安装主服务和 TTS 运行时（使用统一约束）..."
+_pip install -r requirements.txt -r requirements-tts.txt -c constraints-speech.txt
+_pip check
+ok "语音依赖一致性检查通过"
 
 # ---------- 8. clone Confucius4-TTS-CPU ----------
 if [ -d "$CONFUCIUS_DIR/.git" ]; then
@@ -210,6 +199,7 @@ if [ -d "$CONFUCIUS_DIR/.git" ]; then
 else
     info "clone Confucius4-TTS-CPU 到 $CONFUCIUS_DIR ..."
     git clone https://github.com/nowszhao/Confucius4-TTS-CPU.git "$CONFUCIUS_DIR"
+    git -C "$CONFUCIUS_DIR" checkout 4d3b3f7580153641a7c337ac08f1430add7aec0d
 fi
 ok "Confucius4-TTS-CPU 就绪"
 
@@ -223,11 +213,8 @@ else
     fi
     info "从模板生成 core/config_local.py ..."
     cp "$CONFIG_EXAMPLE" "$CONFIG_LOCAL"
-    # 替换占位符
-    CONFUCIUS_ABS="$(cd "$CONFUCIUS_DIR" && pwd)"
-    sed -i.bak "s|__BILIMIX_PYTHON__|$ENV_PYTHON|g" "$CONFIG_LOCAL"
-    sed -i.bak "s|__CONFUCIUS_ROOT__|$CONFUCIUS_ABS|g" "$CONFIG_LOCAL"
-    rm -f "$CONFIG_LOCAL.bak"
+    # Portable defaults use this interpreter and the sibling TTS source tree.
+    # Machine-specific overrides remain optional in core/config_local.py.
     ok "core/config_local.py 生成完成"
 fi
 

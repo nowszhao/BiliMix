@@ -17,5 +17,5 @@ BiliMix CLI — 面向 AI Agent 的命令行接口 SDK
 from .client import BiliMixClient, CLIError
 from .cli import main
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = ["BiliMixClient", "CLIError", "main"]

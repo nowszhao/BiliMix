@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 from core import config
+from pipeline.model_runtime import whisperx_command
 
 
 # 触发缺口补录的最小间隙（秒）：相邻 segment 之间超过此值才检查是否漏检
@@ -84,8 +85,7 @@ def _retranscribe_gap(audio_path: str, gap_start: float, gap_end: float) -> list
         if r.returncode != 0 or not os.path.exists(tmp_audio):
             return []
 
-        bin_cmd = config.WHISPERX_BIN if isinstance(config.WHISPERX_BIN, list) \
-                  else [config.WHISPERX_BIN]
+        bin_cmd = whisperx_command(config.WHISPERX_BIN, getattr(config, "WHISPERX_PYTHON", "") or sys.executable)
         gap_model = getattr(config, "WHISPERX_GAP_FILL_MODEL", "large-v3")
         cmd = bin_cmd + [tmp_audio,
             "--model", gap_model,
@@ -215,8 +215,7 @@ def transcribe(audio_path: str, output_dir: str = None, diarize=None) -> dict:
     # 调用 WhisperX 进行转录
     # WHISPERX_BIN 支持 str（单二进制）或 list（如 [python, wrapper.py]）
     print(f"[Step1] 开始转录音频: {audio_path}")
-    bin_cmd = config.WHISPERX_BIN if isinstance(config.WHISPERX_BIN, list) \
-              else [config.WHISPERX_BIN]
+    bin_cmd = whisperx_command(config.WHISPERX_BIN, getattr(config, "WHISPERX_PYTHON", "") or sys.executable)
     cmd = bin_cmd + [audio_path,
         "--model", config.WHISPERX_MODEL,
         "--device", config.WHISPERX_DEVICE,

@@ -12,6 +12,7 @@ Step 5: 视频组装模块
 from __future__ import annotations
 
 import os
+import json
 import re
 import subprocess
 import shutil
@@ -22,6 +23,7 @@ from typing import Optional, List, Dict
 
 from core import config
 from pipeline.timeline_plan import video_chains, caption_entries
+from pipeline.subtitle_layout import SubtitleLayout, wrap_lines, ass_document
 
 # 限制 ffmpeg 使用的线程数（避免抢占所有 CPU 核心导致系统卡顿）
 _FFMPEG_THREADS_CAP = getattr(config, "FFMPEG_THREADS_CAP", 4)
@@ -76,89 +78,12 @@ def _detect_encoders() -> dict:
 # 字幕渲染
 # ============================================================
 
-# CJK 文本按宽度预换行的辅助断点（标点优先处断行，避免硬切破坏语义）
-_CJK_BREAK_CHARS = set("，。！？；：、 ,.!?;:")
+def _wrap_cjk_to_width(text, font_size, max_width_px):
+    return "\\N".join(wrap_lines(text, font_size, max_width_px))
 
 
-def _wrap_cjk_to_width(text: str, font_size: int, max_width_px: int) -> str:
-    """按宽度对 CJK 文本预换行，返回带 ``\\N`` 的 ASS 文本。
-
-    字符宽度近似（CJK 统一表意及之后 = 1 em、ASCII ≈ 0.55 em、空格 ≈ 0.3 em）。
-    优先在标点处断行；无标点时强制按宽度断行。配合 ``\\q2`` 使用，
-    让手动换行绝对生效，避免 libass 对超长 CJK 的 smart wrap 不可靠问题。
-    """
-    if not text or max_width_px <= 0 or font_size <= 0:
-        return text
-
-    def char_w(ch: str) -> float:
-        if ord(ch) > 0x2E80:  # CJK 统一表意符号及之后（含全角标点）
-            return font_size
-        if ch == " ":
-            return font_size * 0.3
-        return font_size * 0.55
-
-    lines: list[str] = []
-    line = ""
-    line_w = 0.0
-    last_break_idx = -1  # 当前行最后一个可断行字符的位置
-
-    for ch in text:
-        w = char_w(ch)
-        if line_w + w > max_width_px and line:
-            # 需要换行
-            if last_break_idx >= 0:
-                head = line[:last_break_idx + 1].rstrip()
-                tail = line[last_break_idx + 1:]
-                lines.append(head)
-                line = tail + ch
-                line_w = sum(char_w(c) for c in line)
-                last_break_idx = -1
-                for i, c in enumerate(line):
-                    if c in _CJK_BREAK_CHARS:
-                        last_break_idx = i
-            else:
-                lines.append(line)
-                line = ch
-                line_w = w
-                last_break_idx = 0 if ch in _CJK_BREAK_CHARS else -1
-        else:
-            line += ch
-            line_w += w
-            if ch in _CJK_BREAK_CHARS:
-                last_break_idx = len(line) - 1
-
-    if line:
-        lines.append(line)
-    return "\\N".join(lines)
-
-
-def _wrap_english_to_width(text: str, font_size: int, max_width_px: int) -> str:
-    """按词边界对英文文本预换行，返回带 ``\\N`` 的 ASS 文本。
-
-    英文按空格分词、贪心填行、不切断单词。字符宽度用保守估计
-    （CJK 字体渲染拉丁字形偏宽，字母按 0.55 em、空格按 0.3 em）。
-    配合 ``\\q2`` 使用，彻底不依赖 libass 的 smart wrap，
-    避免超长英文句的换行位置超出视频宽度。
-    """
-    if not text or max_width_px <= 0 or font_size <= 0:
-        return text
-
-    lines: list[str] = []
-    line = ""
-    line_w = 0.0
-    for word in text.split():
-        word_w = font_size * 0.55 * len(word)
-        gap_w = font_size * 0.3 if line else 0.0
-        if line and line_w + gap_w + word_w > max_width_px:
-            lines.append(line)
-            line = word
-            line_w = word_w
-        else:
-            line = line + " " + word if line else word
-            line_w += gap_w + word_w
-    if line:
-        lines.append(line)
-    return "\\N".join(lines)
+def _wrap_english_to_width(text, font_size, max_width_px):
+    return "\\N".join(wrap_lines(text, font_size, max_width_px))
 
 
 def _build_bilingual_ass_text(
@@ -168,8 +93,8 @@ def _build_bilingual_ass_text(
 ) -> str:
     """将中英文合并为一个 ASS 事件，并用样式重置固定上下顺序。"""
     return (
-        f"{{{wrap_tag}\\rChinese}}{chinese}"
-        f"\\N{{\\rEnglish}}{english}"
+        f"{{\\rChinese{wrap_tag}}}{chinese}"
+        f"\\N{{\\rEnglish{wrap_tag}}}{english}"
     )
 
 
@@ -281,74 +206,30 @@ def generate_bilingual_srt(
     margin_v_min = getattr(config, "ASS_MARGIN_V_MIN", 30)
     margin_v_ratio = getattr(config, "ASS_MARGIN_V_RATIO", 0.07)
     margin_v = max(margin_v_min, int(video_height * margin_v_ratio))
-    # 英文略小于中文（比例可配），视觉协调且不喧宾夺主
-    en_font_ratio = getattr(config, "ASS_EN_FONT_RATIO", 0.8)
-    en_font_size = max(1, int(font_size * en_font_ratio))
-    # 双语使用一个事件和显式换行，两个样式共享同一底部锚点。
-    margin_en = margin_v
-    margin_cn = margin_v
-    # 字幕左右边距（居中留白，避免字幕贴边）
-    margin_lr = getattr(config, "ASS_MARGIN_LR", 30)
-    # ASS V4+ 的 Outline 字段要求整数；浮点值会导致 libass 样式解析异常。
-    outline = max(0, int(round(float(getattr(config, "ASS_OUTLINE", 2)))))
-    style_lines = (
-        f"Style: English,Noto Sans CJK SC,{en_font_size},{_ASS_COLOR_ENGLISH},"
-        f"&H000000FF&,&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,"
-        f"{outline},{getattr(config, 'ASS_SHADOW', 0)},"
-        f"2,{margin_lr},{margin_lr},{margin_en},1\n"
-        f"Style: Chinese,Noto Sans CJK SC,{font_size},{_ASS_COLOR_CHINESE},"
-        f"&H000000FF&,&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,"
-        f"{outline},{getattr(config, 'ASS_SHADOW', 0)},"
-        f"2,{margin_lr},{margin_lr},{margin_cn},1\n"
-    )
-
-    header = f"""[Script Info]
-ScriptType: v4.00+
-PlayResX: {video_width}
-PlayResY: {video_height}
-ScaledBorderAndShadow: yes
-WrapStyle: 0
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-{style_lines}
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-
-    # 中英文优先保持单行，英文仅在字号超过阈值时才按词预换行。
-    max_text_width = max(1, video_width - 2 * margin_lr - 20)
-    # 字号较小时信任 libass 的 q0 smart wrap；字号过大时英文使用显式词边界换行。
-    en_manual_wrap = font_size > getattr(config, "ASS_EN_WRAP_THRESHOLD", 40)
-    en_qtag = "\\q2" if en_manual_wrap else "\\q0"
-    lines = [header]
-    for e in entries:
-        speaker = str(e.get("speaker", "")).replace(",", "_").replace("\n", " ").replace("\r", " ")
-        start_ts = _seconds_to_ass_time(e["start"])
-        end_ts = _seconds_to_ass_time(e["end"])
-        eng_text = e["english"].replace("\\N", " ").replace("\n", " ").strip()
-        chn_text = e["chinese"].replace("\\N", " ").replace("\n", " ").strip()
-        # 中文仅在实际超出可用宽度时按字符/标点换行，正常内容保持单行。
-        if chn_text:
-            chn_text = _wrap_cjk_to_width(chn_text, font_size, max_text_width)
-        if eng_text and en_manual_wrap:
-            eng_text = _wrap_english_to_width(eng_text, en_font_size, max_text_width)
-        if subtitle_mode == "bilingual" and eng_text and chn_text:
-            # 合并为一个事件：ASS 会以整个文本块为锚点，确保中文永远在上、英文永远在下。
-            text = _build_bilingual_ass_text(chn_text, eng_text, en_qtag)
-            lines.append(
-                f"Dialogue: 0,{start_ts},{end_ts},English,{speaker},0,0,0,,{text}")
-        elif chn_text:
-            lines.append(
-                f"Dialogue: 0,{start_ts},{end_ts},Chinese,{speaker},0,0,0,,{{\\q0}}{chn_text}")
-        elif eng_text:
-            lines.append(
-                f"Dialogue: 0,{start_ts},{end_ts},English,{speaker},0,0,0,,"
-                f"{{{en_qtag}}}{eng_text}")
-
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-    print(f"[Step5] 生成 ASS 字幕: {len(entries)} 条 → {output_path}")
+    layout = SubtitleLayout(video_width, video_height, font_size,
+        english_ratio=getattr(config, "ASS_EN_FONT_RATIO", .75),
+        margin_lr=getattr(config, "ASS_MARGIN_LR", 30),
+        max_lines=getattr(config, "ASS_MAX_LINES", 4),
+        max_language_lines=getattr(config, "ASS_MAX_LANGUAGE_LINES", 2),
+        max_height_ratio=getattr(config, "ASS_MAX_HEIGHT_RATIO", .25),
+        bilingual=subtitle_mode == "bilingual",
+        outline=max(0, int(round(float(getattr(config, "ASS_OUTLINE", 2))))))
+    visible = []
+    for entry in entries:
+        display = dict(entry)
+        if subtitle_mode != "bilingual" and display.get("chinese"):
+            display["english"] = ""
+        visible.append(display)
+    if subtitle_mode == "none":
+        visible = []
+    document, report = ass_document(visible, layout, margin_v=margin_v,
+        font_family=getattr(config, "ASS_FONT_FAMILY", "Noto Sans CJK SC"),
+        shadow=getattr(config, "ASS_SHADOW", 0))
+    with open(output_path, "w", encoding="utf-8") as stream:
+        stream.write(document)
+    with open(output_path+".layout.json", "w", encoding="utf-8") as stream:
+        json.dump(report, stream, ensure_ascii=False, indent=2)
+    print(f"[Step5] 生成 ASS 字幕: {len(entries)} 条来源 → {report['display_pages']} 页 → {output_path}")
     return output_path
 
 # ============================================================
@@ -580,7 +461,7 @@ def _build_filter_graph(
 
     n = len(parts)
     concat_inputs = "".join(f"[v{i}]" for i in range(n))
-    concat_part = f"{concat_inputs}concat=n={n}:v=1:a=0"
+    concat_part = f"{concat_inputs}concat=n={n}:v=1:a=0,setpts=N/({fps:.9f}*TB)"
 
     # 可选字幕烧录
     if srt_path and os.path.isfile(srt_path):
@@ -620,7 +501,7 @@ def _build_block_filter_graph(tts_entries, ass_path=None, include_trailing_gap=T
 
     n = len(parts)
     ci = "".join(f"[v{i}]" for i in range(n))
-    cp = f"{ci}concat=n={n}:v=1:a=0"
+    cp = f"{ci}concat=n={n}:v=1:a=0,setpts=N/({fps:.9f}*TB)"
     if ass_path and os.path.isfile(ass_path):
         ea = _escape_path_for_filter(ass_path)
         graph = ";\n".join(parts) + f";\n{cp},ass=filename='{ea}'[outv]"
@@ -631,6 +512,17 @@ def _build_block_filter_graph(tts_entries, ass_path=None, include_trailing_gap=T
     with os.fdopen(fd, "w") as f:
         f.write(graph)
     return gp, n
+
+
+def _validate_video_frames(path, expected):
+    """Reject an incomplete encode even when ffmpeg exits successfully."""
+    raw = subprocess.check_output([
+        "ffprobe", "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=nb_frames", "-of", "json", path,
+    ], text=True, timeout=60)
+    actual = int(json.loads(raw)["streams"][0]["nb_frames"])
+    if actual != expected:
+        raise RuntimeError(f"Video frame count mismatch: expected {expected}, got {actual}: {path}")
 
 
 def _run_one_block(video_path, chunk_audio_path, filter_graph_path, out_path,
@@ -659,6 +551,8 @@ def _run_one_block(video_path, chunk_audio_path, filter_graph_path, out_path,
         raise RuntimeError(f"ffmpeg block failed: {err}")
     if not os.path.isfile(out_path):
         raise RuntimeError(f"Block output missing: {out_path}")
+    if frames is not None:
+        _validate_video_frames(out_path, frames)
     return out_path
 
 
@@ -780,7 +674,7 @@ def _assemble_video_blocks(
         # 注意: 分块模式下字幕需在 filter graph 中通过 ass= 滤镜烧录
         # 由于 generate_bilingual_srt 需要 segments/translations，这里用简化的
         # ASS 构建逻辑（从 time_mapping 中直接取 chinese 字段）
-        if blk["sub_entries"]:
+        if blk["sub_entries"] and subtitle_mode != "none":
             asp = os.path.join(bd, "subs.ass")
             _build_block_ass(blk["sub_entries"], blk["audio_start"], asp,
                              video_height=video_height, video_width=video_width,
@@ -846,7 +740,10 @@ def _assemble_video_blocks(
         size_mb = os.path.getsize(output_path) / (1024 * 1024)
         final_dur = _probe_video_duration(output_path)
         print(f"[Step5] 组装完成: {os.path.basename(output_path)} ({size_mb:.1f} MB, {final_dur:.2f}s)")
-        return _apply_watermark(output_path)
+        result = _apply_watermark(output_path)
+        expected = round(tts_entries[-1]["mixed_end"]*fps)-round(tts_entries[0]["mixed_start"]*fps)
+        _validate_video_frames(result, expected)
+        return result
     return ""
 
 
@@ -859,104 +756,19 @@ def _build_block_ass(tts_entries, time_offset, out_path, video_height=720,
     In bilingual mode, English text is read from segments, Chinese from translations/time_mapping.
     font_size: user-specified size (None = auto-calculate from video_height).
     """
-    if video_width is None:
-        video_width = int(video_height * 16 / 9)
-    entries = []
-    for e in tts_entries:
-        si = e.get("segment_index", -1)
-        if si < 0:
+    selected, translated, mapping = [], {}, []
+    for entry in tts_entries:
+        source_index = entry.get("segment_index", -1)
+        if source_index < 0:
             continue
-        ms = max(0, e["mixed_start"] - time_offset)
-        me = max(0, e["mixed_end"] - time_offset)
-        if me <= ms:
-            continue
-        chn = e.get("chinese", "").strip()
-        if not chn and translations and si in translations:
-            chn = str(translations[si]).strip()
-        eng = ""
-        if subtitle_mode == "bilingual" and segments and 0 <= si < len(segments):
-            eng = segments[si].get("text", "").strip()
-        if not chn and not eng:
-            continue
-        seg = segments[si] if segments and 0 <= si < len(segments) else {}
-        entries.extend(caption_entries(seg, ms, me, eng, chn))
-
-    if not entries:
-        return None
-
-    if font_size is not None:
-        fs = int(font_size)
-        fs = max(getattr(config, "ASS_FONT_SIZE_USER_MIN", 14), fs)
-        fs = min(fs, getattr(config, "ASS_FONT_SIZE_USER_MAX", 120))
-    else:
-        fs = min(max(getattr(config, "ASS_FONT_SIZE_MIN", 28),
-                     min(video_width, video_height) // 22),
-                 getattr(config, "ASS_FONT_SIZE_MAX", 80))
-    mv = max(getattr(config, "ASS_MARGIN_V_MIN", 30),
-             int(video_height * getattr(config, "ASS_MARGIN_V_RATIO", 0.07)))
-    sh = getattr(config, "ASS_SHADOW", 0)
-    use_bilingual = subtitle_mode == "bilingual"
-    # 字幕左右边距（居中留白，避免字幕贴边）
-    m_lr = getattr(config, "ASS_MARGIN_LR", 30)
-    # 英文略小于中文（比例可配）
-    en_fs = max(1, int(fs * getattr(config, "ASS_EN_FONT_RATIO", 0.8)))
-    # ASS V4+ 的 Outline 字段要求整数；浮点值会导致 libass 样式解析异常。
-    outline = max(0, int(round(float(getattr(config, "ASS_OUTLINE", 2)))))
-    # 双语使用一个事件和显式换行，两个样式共享同一底部锚点。
-    m_en = mv
-    m_cn = mv
-
-    styles = (
-        f"Style: Chinese,Noto Sans CJK SC,{fs},&H0000D7FF&,&H000000FF&,&H00000000&,"
-        f"&H40000000&,0,0,0,0,100,100,0,0,3,{outline},{sh},2,{m_lr},{m_lr},{m_cn},1\n"
-    )
-    if use_bilingual:
-        styles += (
-            f"Style: English,Noto Sans CJK SC,{en_fs},&H00E6E6E6&,&H000000FF&,"
-            f"&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,{outline},{sh},2,{m_lr},{m_lr},{m_en},1\n"
-        )
-
-    hdr = f"""[Script Info]
-ScriptType: v4.00+
-PlayResX: {video_width}
-PlayResY: {video_height}
-ScaledBorderAndShadow: yes
-WrapStyle: 0
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-""" + styles + """
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-    # 中英文优先保持单行，英文仅在字号超过阈值时才按词预换行。
-    max_text_width = max(1, video_width - 2 * m_lr - 20)
-    en_manual_wrap = fs > getattr(config, "ASS_EN_WRAP_THRESHOLD", 40)
-    en_qtag = "\\q2" if en_manual_wrap else "\\q0"
-    lines = [hdr]
-    for ent in entries:
-        speaker = str(ent.get("speaker", "")).replace(",", "_").replace("\n", " ").replace("\r", " ")
-        ts = _seconds_to_ass_time(ent["start"])
-        te = _seconds_to_ass_time(ent["end"])
-        eng = ent["english"].replace("\\N", " ").replace("\n", " ").strip()
-        chn = ent["chinese"].replace("\\N", " ").replace("\n", " ").strip()
-        # 中文仅在实际超出可用宽度时按字符/标点换行，正常内容保持单行。
-        if chn:
-            chn = _wrap_cjk_to_width(chn, fs, max_text_width)
-        if eng and en_manual_wrap:
-            eng = _wrap_english_to_width(eng, en_fs, max_text_width)
-        if use_bilingual and eng and chn:
-            # 合并为一个事件：ASS 会以整个文本块为锚点，确保中文永远在上、英文永远在下。
-            text = _build_bilingual_ass_text(chn, eng, en_qtag)
-            lines.append(fr"Dialogue: 0,{ts},{te},Chinese,{speaker},0,0,0,,{text}")
-        elif chn:
-            lines.append(fr"Dialogue: 0,{ts},{te},Chinese,{speaker},0,0,0,,{{\q0}}{chn}")
-        elif eng:
-            lines.append(fr"Dialogue: 0,{ts},{te},English,{speaker},0,0,0,,{{{en_qtag}}}{eng}")
-
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-    return out_path
+        source = segments[source_index] if segments and source_index < len(segments) else {}
+        index = len(selected)
+        selected.append({**source, "speaker":source.get("speaker", entry.get("speaker", ""))})
+        translated[index] = entry.get("chinese") or (translations or {}).get(source_index, "")
+        mapping.append({**entry, "segment_index":index})
+    return generate_bilingual_srt(selected, translated, mapping, out_path,
+        subtitle_mode=subtitle_mode, video_width=video_width, video_height=video_height,
+        time_offset=time_offset, subtitle_font_size=font_size)
 
 
 def assemble_video(
@@ -999,7 +811,7 @@ def assemble_video(
 
     # ---- 尝试生成逐句变速 filter graph ----
     filter_graph_path = None
-    if time_mapping and has_srt:
+    if time_mapping:
         # 检测是否超过 concat 阈值，自动切换分块并行模式
         tts_count = len([
             e for e in time_mapping
@@ -1016,7 +828,7 @@ def assemble_video(
                 subtitle_mode=subtitle_mode, subtitle_font_size=subtitle_font_size,
                 video_width=video_width, video_height=video_height,
             )
-        filter_graph_path = _build_filter_graph(time_mapping, srt_path, fps=_probe_video_fps(video_path))
+        filter_graph_path = _build_filter_graph(time_mapping, srt_path if has_srt and subtitle_mode != "none" else None, fps=_probe_video_fps(video_path))
 
     encoders = _detect_encoders()
     video_enc = encoders.get("video")
@@ -1099,5 +911,11 @@ def assemble_video(
         size_mb = os.path.getsize(output_path) / (1024 * 1024)
         final_dur = _probe_video_duration(output_path)
         print(f"[Step5] 组装完成: {os.path.basename(output_path)} ({size_mb:.1f} MB, {final_dur:.2f}s)")
-        return _apply_watermark(output_path)
+        result = _apply_watermark(output_path)
+        if filter_graph_path:
+            entries = [e for e in time_mapping if e.get("type") == "tts_chinese"
+                       and e.get("orig_end", 0) > e.get("orig_start", 0)]
+            expected = round(entries[-1]["mixed_end"]*output_fps)-round(entries[0]["mixed_start"]*output_fps)
+            _validate_video_frames(result, expected)
+        return result
     return ""

@@ -35,11 +35,16 @@ def video_chains(entries, fps=25, include_trailing_gap=False):
             return
         if source_duration <= 0 or target_duration <= 0:
             raise ValueError("Invalid source/output video span")
-        chain = (f"[0:v]trim=start={start:.3f}:duration={source_duration:.3f},"
+        # A positive source span shorter than one frame may contain no frame.
+        # Include the nearest following frame, then bound the output by count.
+        source_duration = max(source_duration, 1 / fps + .000001)
+        chain = (f"[0:v]trim=start={start:.6f}:duration={source_duration:.6f},"
                  f"setpts=PTS-STARTPTS,setpts={target_duration/source_duration:.9f}*PTS")
         if hold > 0:
             chain += f",tpad=stop_mode=clone:stop_duration={hold:.6f}"
-        chain += (f",fps={fps:.9f},tpad=stop_mode=clone:stop_duration=1,"
+        chain += (# eof_action=pass retains the sole frame of a compressed short gap.
+                  # Padding by the requested count covers even a long new pause.
+                  f",fps={fps:.9f}:eof_action=pass,tpad=stop_mode=clone:stop={frames},"
                   f"trim=end_frame={frames},setpts=PTS-STARTPTS,format=yuv420p[v{len(parts)}]")
         parts.append(chain)
 

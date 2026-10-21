@@ -2373,11 +2373,11 @@ if __name__ == "__main__":
     if orphaned:
         print(f"🧹 已标记 {orphaned} 个中断任务（服务重启导致）")
     # 支持命令行传入端口号，默认 5000
-    _port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
+    _port = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get("BILIMIX_PORT", "5000"))
 
     print(f"📋 已加载 {len(_index)} 条历史任务记录")
     print("=" * 50)
     print("🎧 BiliMix Web App")
     print(f"📡 http://localhost:{_port}")
     print("=" * 50)
-    app.run(host="0.0.0.0", port=_port, debug=False, threaded=True)
+    app.run(host=os.environ.get("BILIMIX_HOST", "0.0.0.0"), port=_port, debug=False, threaded=True)

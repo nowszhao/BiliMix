@@ -13,7 +13,7 @@ import os
 # BASE_DIR 指向项目根目录（core/ 的父目录）
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 统一数据目录
-DATA_DIR = os.path.join(BASE_DIR, "data")
+DATA_DIR = os.path.abspath(os.path.expanduser(os.environ.get("BILIMIX_DATA_DIR", os.path.join(BASE_DIR, "data"))))
 OUTPUT_DIR = os.path.join(DATA_DIR, "transcripts")
 TTS_CACHE_DIR = os.path.join(DATA_DIR, "tts_cache")
 RESULT_DIR = os.path.join(DATA_DIR, "results")
@@ -49,8 +49,8 @@ WHISPERX_THREADS = 8
 # 需要: conda 环境中安装 pyannote.audio
 #       设置 HF_TOKEN 环境变量或下方 WHISPERX_HF_TOKEN
 WHISPERX_DIARIZE = True
-# HuggingFace Token（需同意 pyannote/speaker-diarization-3.1 模型协议）
-# https://huggingface.co/pyannote/speaker-diarization-3.1
+# HuggingFace Token（需同意 pyannote/speaker-diarization-community-1 模型协议）
+# https://huggingface.co/pyannote/speaker-diarization-community-1
 WHISPERX_HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
 # 在 core/config_local.py 或环境变量 HF_TOKEN 中设置你的 HF Token
@@ -341,6 +341,11 @@ ASS_OUTLINE = 2
 # 字幕阴影深度
 ASS_SHADOW = 0
 
+# Display-only subtitle budget; never split TTS to satisfy these limits.
+ASS_MAX_LINES = 4
+ASS_MAX_LANGUAGE_LINES = 2
+ASS_MAX_HEIGHT_RATIO = 0.25
+
 # ========================
 # 本地配置覆盖（不影响服务端默认值）
 # ========================
@@ -350,3 +355,20 @@ try:
     from core.config_local import *  # noqa: F403, E402
 except ImportError:
     pass
+
+# Web preferences are data, not source edits; model paths/tokens stay in local
+# config or environment. The whitelist is shared with the configuration API.
+from core.settings_store import load_settings as _load_settings
+SETTINGS_FILE = os.path.abspath(os.path.expanduser(os.environ.get(
+    "BILIMIX_SETTINGS_FILE", os.path.join(DATA_DIR, "settings.json"))))
+globals().update(_load_settings(SETTINGS_FILE))
+
+# Explicit process settings take precedence over optional machine-local config.
+for _env_name, _setting in {
+    "BILIMIX_ASR_PYTHON":"WHISPERX_PYTHON",
+    "BILIMIX_WHISPERX_BIN":"WHISPERX_BIN",
+    "BILIMIX_TTS_PYTHON":"CONFUCIUS4_TTS_PYTHON",
+    "BILIMIX_TTS_ROOT":"CONFUCIUS4_TTS_ROOT",
+}.items():
+    if os.environ.get(_env_name):
+        globals()[_setting] = os.path.expanduser(os.environ[_env_name])
