@@ -115,7 +115,6 @@ def main():
     parser.add_argument('--duration')
     parser.add_argument('--subtitle-mode',choices=['bilingual','chinese_only','none'],default='bilingual')
     parser.add_argument('--subtitle-font-size',type=int,default=40)
-    parser.add_argument('--ref-select-mode',choices=['speaker_global','speaker_local','segment'],default='speaker_global')
     parser.add_argument('--keep-bgm',action='store_true')
     parser.add_argument('--no-submit',action='store_true')
     parser.add_argument('--dry-run',action='store_true')
@@ -163,7 +162,7 @@ def main():
             'manifest':file_hash(args.dub_manifest) if args.dub_manifest and not args.dry_run else None,
             'subtitle':file_hash(args.subtitle) if args.subtitle and not args.dry_run else None,
             'mode':args.subtitle_mode,'font_size':args.subtitle_font_size,'keep_bgm':args.keep_bgm,
-            'ref_select_mode':args.ref_select_mode,'title':args.title,'duration':args.duration}
+            'title':args.title,'duration':args.duration}
         request_hash = hashlib.sha256(json.dumps(request,sort_keys=True).encode()).hexdigest()
         receipt = load_json(receipt_path) if not args.dry_run else {}
         if not args.analyze_only and not args.no_submit and not args.new_task and receipt.get('request_hash') == request_hash:
@@ -212,7 +211,7 @@ def main():
             emit({'video_server_path':paths['video'],'subtitle_server_path':paths['subtitle'],'server':server});return 0
         command = ['task','submit','--type','video','--server-path',paths['video'],
             '--subtitle-path',paths['subtitle'],'--subtitle-mode',args.subtitle_mode,
-            '--subtitle-font-size',str(args.subtitle_font_size),'--ref-select-mode',args.ref_select_mode,
+            '--subtitle-font-size',str(args.subtitle_font_size),
             '--title',args.title or video.stem]
         if manifest:
             command += ['--dub-manifest',str(Path(args.dub_manifest).resolve()),'--analysis-id',manifest['analysis_id']]

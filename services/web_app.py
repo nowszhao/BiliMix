@@ -58,10 +58,8 @@ from services.tts_api import tts_bp
 
 from pipeline.step1_transcribe import transcribe, extract_full_text
 from pipeline.speaker_analysis import analyze_source, extract_reference_pool
-from pipeline.dubbing_plan import validate_manifest, bind_legacy_segments, file_sha256
-# step2_identify_difficult_words removed (word_replace mode deleted)
+from pipeline.dubbing_plan import validate_manifest, file_sha256
 from pipeline.step3_tts_confucius import synthesize_sentences_with_confucius_tts
-# step4_audio_editor removed (word_replace mode deleted)
 from pipeline.step2b_translate_sentences import (
     select_sentences_to_translate,
     translate_sentences,
@@ -69,24 +67,12 @@ from pipeline.step2b_translate_sentences import (
 from pipeline.step4b_sentence_mixer import mix_sentence_audio, build_segments_with_mixed_time
 from pipeline.step_vocal_separation import separate_vocals
 from pipeline.step0_video_prepare import prepare_video
-from pipeline.step5_video_assemble import generate_bilingual_srt, assemble_video, _probe_video_size
-from pipeline.ref_audio_utils import (
-    extract_ref_audio_for_segments,
-    extract_ref_audio_speaker_local,
-    extract_ref_audio_speaker_global,
-)
+from pipeline.step5_video_assemble import generate_bilingual_ass, assemble_video, _probe_video_size
 
 # Flask 静态文件目录使用绝对路径（web_app.py 已移至 services/ 子目录）
 _web_dir = os.path.join(config.BASE_DIR, "web")
 app = Flask(__name__, static_folder=_web_dir, static_url_path="")
 app.secret_key = getattr(config, "SECRET_KEY", "bilimix-secret-key-change-me")
-
-# 参考音频提取策略 dispatch map
-_REF_EXTRACTORS = {
-    "speaker_global": extract_ref_audio_speaker_global,
-    "speaker_local": extract_ref_audio_speaker_local,
-    "segment": extract_ref_audio_for_segments,
-}
 
 # ── Register extracted Blueprints ──
 app.register_blueprint(auth_bp)
@@ -479,57 +465,26 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
         subtitle_path = task_pre.get("_subtitle_path", "")
         external_subtitle_used = False
 
-        if task_pre.get("_dub_manifest") or (subtitle_path and os.path.isfile(subtitle_path)):
-            print(f"[Subtitle] 检测到外部字幕文件: {subtitle_path}")
-            from pipeline.subtitle_parser import parse_ass_subtitle
-            if task_pre.get("_dub_manifest"):
-                parsed_segments = validate_manifest(task_pre["_dub_manifest"], task_pre["_speaker_analysis"])
-                parsed_translations = {i: u["text_zh"] for i, u in enumerate(parsed_segments)}
-                parsed_indices = list(parsed_translations)
-            else:
-                parsed_segments, parsed_translations, parsed_indices = parse_ass_subtitle(subtitle_path)
-
-            if parsed_segments and parsed_translations:
-                print(f"[Subtitle] 解析成功: {len(parsed_segments)} 段, "
-                      f"{len(parsed_indices)} 条双语，跳过转录和翻译")
-                manifest = task_pre.get("_dub_manifest")
-                analysis = task_pre.get("_speaker_analysis")
-                if not analysis:
-                    media_source = task_pre.get("url", "").removeprefix("file://")
-                    if not os.path.isfile(media_source):
-                        media_source = task_pre.get("_video_path") or audio_path
-                    analysis = analyze_source(transcribe_audio_path, media_source,
-                                              os.path.join(result_dir, "source_analysis"), task_id=task_id)
-                if manifest:
-                    segments = validate_manifest(manifest, analysis)
-                    translations_from_plan = {i: u["text_zh"] for i, u in enumerate(segments)}
-                    parsed_translations = translations_from_plan
-                    parsed_indices = list(translations_from_plan)
-                else:
-                    segments = bind_legacy_segments(parsed_segments, analysis)
-                update_task(task_id, _speaker_analysis=analysis, segments=segments)
-                translations = parsed_translations
-                translated_indices = parsed_indices
-                full_text = " ".join(s["text"] for s in segments)
-                external_subtitle_used = True
-                serialized_segments = [dict(s) for s in segments]
-                update_task(task_id, status="processing", step="synthesize",
-                            progress=30,
-                            message="Step 3/4: 使用外部字幕，跳过转录和翻译...",
-                            segments=serialized_segments,
-                            translations=translations,
-                            translated_indices=translated_indices,
-                            transcription_text=full_text)
-                save_task_result_to_disk(result_dir, {
-                    "task_id": task_id, "status": "processing",
-                    "process_mode": "sentence_translate",
-                    "transcription_text": full_text,
-                    "segments": serialized_segments,
-                    "translations": translations,
-                    "translated_indices": translated_indices,
-                })
-            else:
-                raise ValueError("外部精翻字幕为空或无法解析；请修复后重试，禁止回退到服务端翻译")
+        if task_pre.get("_dub_manifest") is not None or subtitle_path:
+            manifest = task_pre.get("_dub_manifest")
+            analysis = task_pre.get("_speaker_analysis")
+            if not manifest or not analysis or not os.path.isfile(subtitle_path):
+                raise ValueError("外部精翻需要工作 ASS、dub_manifest 和已完成的人物分析；禁止回退到服务端翻译")
+            segments = validate_manifest(manifest, analysis)
+            translations = {i: unit["text_zh"] for i, unit in enumerate(segments)}
+            translated_indices = list(translations)
+            full_text = " ".join(segment["text"] for segment in segments)
+            external_subtitle_used = True
+            update_task(task_id, status="processing", step="synthesize", progress=30,
+                        message="使用精翻话语合成中文配音...", segments=segments,
+                        translations=translations, translated_indices=translated_indices,
+                        transcription_text=full_text)
+            save_task_result_to_disk(result_dir, {
+                "task_id": task_id, "status": "processing",
+                "process_mode": "sentence_translate", "transcription_text": full_text,
+                "segments": segments, "translations": translations,
+                "translated_indices": translated_indices,
+            })
 
         if not external_subtitle_used:
             # ---- Step 1: 转录 ----
@@ -749,25 +704,16 @@ def _build_confucius_ref_map(task_id: str, segments: list,
     confucius_ref_dir = os.path.join(result_dir, "tts_confucius_cache", "ref_audio")
     os.makedirs(confucius_ref_dir, exist_ok=True)
 
-    pseudo_replacements = [
-        {"segment_index": idx}
-        for idx in translated_indices if idx < len(segments)
-    ]
-
     analysis = task.get("_speaker_analysis")
-    if analysis:
-        pool = extract_reference_pool(ref_audio_source, analysis, confucius_ref_dir)
-        missing = {segments[i].get("speaker") for i in translated_indices if segments[i].get("speaker") not in pool}
-        if missing:
-            raise ValueError(f"Insufficient clean same-speaker reference: {sorted(missing)}")
-        ref_map = {i: pool[segments[i]["speaker"]]["path"] for i in translated_indices}
-        update_task(task_id, _reference_manifest=pool, _ref_select_mode="speaker_global")
-    else:
-        ref_mode = task.get("_ref_select_mode", "") or "speaker_global"
-        extractor = _REF_EXTRACTORS.get(ref_mode)
-        if not extractor:
-            raise ValueError("Unsupported reference selection mode")
-        ref_map, _, _ = extractor(ref_audio_source, segments, pseudo_replacements, confucius_ref_dir)
+    if not analysis:
+        raise ValueError("Source speaker analysis required for voice cloning")
+    pool = extract_reference_pool(ref_audio_source, analysis, confucius_ref_dir)
+    missing = {segments[i].get("speaker") for i in translated_indices
+               if segments[i].get("speaker") not in pool}
+    if missing:
+        raise ValueError(f"Insufficient clean same-speaker reference: {sorted(missing)}")
+    ref_map = {i: pool[segments[i]["speaker"]]["path"] for i in translated_indices}
+    update_task(task_id, _reference_manifest=pool)
     return ref_map
 
 
@@ -1049,13 +995,13 @@ def _run_video_post_process(task_id):
         segments = task.get("segments", [])
         translations = task.get("translations", {})
         time_mapping = task.get("time_mapping", [])
-        srt_path = os.path.join(result_dir, f"{basename}.ass")
+        subtitle_path = os.path.join(result_dir, f"{basename}.ass")
         video_w, video_h = _probe_video_size(video_path)
-        srt_result = generate_bilingual_srt(
-            segments, translations, time_mapping, srt_path,
+        subtitle_result = generate_bilingual_ass(
+            segments, translations, time_mapping, subtitle_path,
             subtitle_mode=mode, video_height=video_h, video_width=video_w,
             subtitle_font_size=sub_font_size)
-        if not srt_result:
+        if not subtitle_result:
             print(f"[Video] 字幕生成失败")
             update_task(task_id, status="error", message="字幕生成失败")
             return False
@@ -1070,7 +1016,7 @@ def _run_video_post_process(task_id):
             except Exception:
                 pass
         assembled = assemble_video(
-            video_path, mixed_audio, srt_path, output_video,
+            video_path, mixed_audio, subtitle_path, output_video,
             time_mapping=time_mapping, segments=segments,
             translations=translations, subtitle_mode=mode,
             subtitle_font_size=sub_font_size,
@@ -1084,9 +1030,9 @@ def _run_video_post_process(task_id):
         # 存储视频结果
         video_result = {
             "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",
-            "srt_url": f"/api/audio/{basename}/{basename}.ass",
+            "subtitle_url": f"/api/audio/{basename}/{basename}.ass",
             "video_path": assembled,
-            "srt_path": srt_path,
+            "subtitle_path": subtitle_path,
         }
         update_task(task_id, status="completed", step="done", progress=100,
                     message="视频配音完成！",
@@ -1211,7 +1157,7 @@ def submit_task():
         subtitle_mode = data.get("subtitle_mode", "bilingual")
         subtitle_font_size = data.get("subtitle_font_size", -1)
     else:
-        # 音频任务（兼容旧版无 type 字段）
+        # 音频任务
         if not local_path and not audio_url:
             return jsonify({"error": "请提供音频URL或上传本地文件"}), 400
         if local_path:
@@ -1254,7 +1200,13 @@ def submit_task():
     analysis = None
     manifest = data.get("dub_manifest")
     analysis_id = data.get("analysis_id", "")
+    if bool(subtitle_path) != (manifest is not None):
+        return jsonify({"error": "外部精翻必须同时提供工作 ASS 和 dub_manifest"}), 400
     if manifest is not None:
+        from pipeline.subtitle_parser import parse_ass_subtitle
+        parsed, translations, indices = parse_ass_subtitle(subtitle_path)
+        if not parsed or len(indices) != len(parsed):
+            return jsonify({"error": "工作 ASS 必须包含完整的 EN || ZH 双语行"}), 400
         previous = get_task(analysis_id) or restore_task_from_disk(analysis_id)
         analysis = ((previous or {}).get("result") or {}).get("analysis")
         if not analysis or (previous or {}).get("status") != "completed":
@@ -1299,7 +1251,6 @@ def submit_task():
             "_subtitle_mode": subtitle_mode,
             "_subtitle_font_size": subtitle_font_size,
             "keep_bgm": bool(data.get("keep_bgm", False)),
-            "_ref_select_mode": data.get("ref_select_mode", ""),
             "_subtitle_path": data.get("subtitle_path", ""),
             "_analysis_id": analysis_id,
             "_dub_manifest": manifest,
@@ -2054,16 +2005,16 @@ def _synthesis_resume(task_id):
             sub_font_size = task.get("_subtitle_font_size", None)
             if sub_font_size is not None and sub_font_size <= 0:
                 sub_font_size = None  # -1/0 表示自动计算
-            srt_path = os.path.join(result_dir, f"{basename}.ass")
+            subtitle_path = os.path.join(result_dir, f"{basename}.ass")
             video_w, video_h = _probe_video_size(video_path)
 
             update_task(task_id, step="subtitle", progress=93,
                         message="断点续传: 正在生成字幕...")
-            srt_result = generate_bilingual_srt(
-                segments, translations, time_mapping, srt_path,
+            subtitle_result = generate_bilingual_ass(
+                segments, translations, time_mapping, subtitle_path,
                 subtitle_mode=mode, video_height=video_h, video_width=video_w,
                 subtitle_font_size=sub_font_size)
-            if srt_result:
+            if subtitle_result:
                 update_task(task_id, step="assemble", progress=96,
                             message="断点续传: 正在合成视频...")
                 output_video = os.path.join(result_dir, f"{basename}_dubbed.mp4")
@@ -2073,7 +2024,7 @@ def _synthesis_resume(task_id):
                     except Exception:
                         pass
                 assembled = assemble_video(
-                    video_path, output_path, srt_path, output_video,
+                    video_path, output_path, subtitle_path, output_video,
                     time_mapping=time_mapping, segments=segments,
                     translations=translations, subtitle_mode=mode,
                     subtitle_font_size=sub_font_size,
@@ -2081,9 +2032,9 @@ def _synthesis_resume(task_id):
                 if assembled and os.path.exists(assembled):
                     video_result_data = {
                         "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",
-                        "srt_url": f"/api/audio/{basename}/{basename}.ass",
+                        "subtitle_url": f"/api/audio/{basename}/{basename}.ass",
                         "video_path": assembled,
-                        "srt_path": srt_path,
+                        "subtitle_path": subtitle_path,
                     }
                     print(f"[SynthesisResume] 视频组装完成: {assembled}")
                 else:
@@ -2229,16 +2180,16 @@ def retry_sentence_synthesis(task_id):
             sub_font_size = task.get("_subtitle_font_size", None)
             if sub_font_size is not None and sub_font_size <= 0:
                 sub_font_size = None  # -1/0 表示自动计算
-            srt_path = os.path.join(result_dir, f"{basename}.ass")
+            subtitle_path = os.path.join(result_dir, f"{basename}.ass")
             video_w, video_h = _probe_video_size(video_path)
 
             update_task(task_id, step="subtitle", progress=93,
                         message="重试: 正在生成字幕...")
-            srt_result = generate_bilingual_srt(
-                segments, translations, time_mapping, srt_path,
+            subtitle_result = generate_bilingual_ass(
+                segments, translations, time_mapping, subtitle_path,
                 subtitle_mode=mode, video_height=video_h, video_width=video_w,
                 subtitle_font_size=sub_font_size)
-            if srt_result:
+            if subtitle_result:
                 update_task(task_id, step="assemble", progress=96,
                             message="重试: 正在合成视频...")
                 output_video = os.path.join(result_dir, f"{basename}_dubbed.mp4")
@@ -2248,7 +2199,7 @@ def retry_sentence_synthesis(task_id):
                     except Exception:
                         pass
                 assembled = assemble_video(
-                    video_path, output_audio_path, srt_path, output_video,
+                    video_path, output_audio_path, subtitle_path, output_video,
                     time_mapping=time_mapping, segments=segments,
                     translations=translations, subtitle_mode=mode,
                     subtitle_font_size=sub_font_size,
@@ -2256,9 +2207,9 @@ def retry_sentence_synthesis(task_id):
                 if assembled and os.path.exists(assembled):
                     video_result_data = {
                         "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",
-                        "srt_url": f"/api/audio/{basename}/{basename}.ass",
+                        "subtitle_url": f"/api/audio/{basename}/{basename}.ass",
                         "video_path": assembled,
-                        "srt_path": srt_path,
+                        "subtitle_path": subtitle_path,
                     }
                     print(f"[RetrySynthesis] 视频组装完成: {assembled}")
                 else:

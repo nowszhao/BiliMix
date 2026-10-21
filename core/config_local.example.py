@@ -36,7 +36,6 @@ LLM_NUM_PREDICT = 4096
 # 留空使用同级 ../Confucius4-TTS-CPU；或设置 BILIMIX_TTS_ROOT
 CONFUCIUS4_TTS_ROOT = ""
 # 留空使用当前服务解释器；也可设置 BILIMIX_TTS_PYTHON
-# 留空也会 fallback 到 sys.executable
 CONFUCIUS4_TTS_PYTHON = ""
 CONFUCIUS4_TTS_DEVICE = "cpu"
 CONFUCIUS4_TTS_N_TIMESTEPS = 15     # CPU 推荐 15；GPU 可设 25

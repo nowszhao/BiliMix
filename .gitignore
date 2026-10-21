@@ -50,12 +50,10 @@ core/config_local.py
 .venv_whisperx
 scripts/whisperx_run.py
 .claude
-docs/*
-!docs/audio-first-dubbing.md
-
-!docs/portable-workflow.md
 .bilimix-tools/
 
 # Private persisted Web preferences (may contain authentication settings)
 data/settings.json
 data/.bilimix-settings-*.json
+
+.pytest_cache/

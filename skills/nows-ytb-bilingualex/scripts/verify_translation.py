@@ -1,19 +1,8 @@
 #!/usr/bin/env python3
-"""verify_translation.py — post-translation CONTENT-ALIGNMENT check.
+"""Validate translated rows against their source English by index.
 
-Catches "off-by-one block shift" failures where a translation agent merges /
-drops / shifts lines inside a chunk (observed 2026-08: one agent merged line N
-into line N-1, then shifted every following line up by one and duplicated the
-last line; assemble_final.py only caught it line-by-line over 3 iterations).
-
-This script compares each trans line's corrected EN against the SOURCE line's
-EN (transcript.txt) by token overlap, so a shifted block is reported in ONE
-pass, with the exact idx range of the corruption.
-
-Usage:
-    python3 verify_translation.py --workdir . [--min-ratio 0.25]
-
-Exit codes: 0 ok, 1 mismatches found.
+Detect omitted, duplicated or shifted rows before assembling bilingual ASS.
+Usage: python verify_translation.py --workdir <directory> [--min-ratio 0.25]
 """
 import argparse
 import glob

@@ -122,25 +122,7 @@ CONFUCIUS4_TTS_INFERENCE_CFG_RATE = 0.9
 # 并行 Worker 数量（利用多核并行合成，1 = 串行，建议 2-3）
 CONFUCIUS4_TTS_NUM_WORKERS = 2
 
-# --- 参考音频选取配置（声音克隆） ---
-# 参考音频选取模式: "speaker_local" | "segment"
-#   speaker_local: 每句优先用自身原声；自身过短时向同说话人相邻 segment 扩展边界
-#                  （单次 ffmpeg 提取覆盖 [首段.start, 末段.end]），保证音色一致 +
-#                  情绪/节奏随原句自然变化（推荐）
-#   segment: 每句仅用自身原声，不扩展（旧行为，短句易音色漂移）
-REF_SELECT_MODE = "speaker_local"
-# 参考音频最小时长阈值（秒）：segment 自身时长低于此值触发扩展/fallback
-REF_MIN_DURATION = 2
-# 参考音频目标时长（秒）：过短 segment 扩展时的目标累计时长
-REF_TARGET_DURATION = 5
-# 参考音频最大硬上限（秒）：超过则以目标句为中心截取
-REF_MAX_DURATION = 15
-# 同说话人判定间隔（秒）：segment 间隙 <= 此值视为同一说话人连续说话
-# 用于参考音频扩展时校验 speaker 一致性，杜绝跨说话人音色污染
-SAME_SPEAKER_GAP = 0.8
-# 极长 segment 截取硬上限（秒）：当 segment 超过此值时，截取中间部分作为参考
-# 防止数十分钟的长段作为参考导致 ffmpeg 处理缓慢
-REF_EXTREME_CLIP_SECONDS = 60
+# 同一人物固定参考由源人物分析选择，合格连续语音范围为 2–10 秒。
 # ffmpeg 提取参考音频子进程超时（秒）
 REF_EXTRACT_TIMEOUT = 120
 
@@ -328,14 +310,10 @@ ASS_FONT_SIZE_DEFAULT = 40
 ASS_MARGIN_V_MIN = 20
 # 底部边距比例（相对视频高度）
 ASS_MARGIN_V_RATIO = 0.03
-# 旧版英文 margin 配置，保留以兼容外部配置；双语位置由字号和底部边距动态计算
 # 字幕左右边距（像素，居中留白，避免字幕贴边铺满画面）
 ASS_MARGIN_LR = 30
 # 英文字号相对中文的比例（英文明显小于中文，40px 中文对应 30px 英文）
 ASS_EN_FONT_RATIO = 0.75
-# 英文换行阈值：字号超过该值时 libass 对 CJK 字体渲染英文测量易失准，
-# 改用手动预换行 + \q2；否则信任 libass \q0 自然换行（尽量单行铺满）
-ASS_EN_WRAP_THRESHOLD = 40
 # 字幕描边宽度（ASS 样式字段要求整数）
 ASS_OUTLINE = 2
 # 字幕阴影深度

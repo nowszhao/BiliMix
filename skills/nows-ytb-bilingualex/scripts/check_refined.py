@@ -1,17 +1,10 @@
 #!/usr/bin/env python3
-"""Pre-apply drift check for refined_NN.txt (2026-08 lesson: FULL-mode agents
-delete filler words -> word-stream match fails -> timeline collapse).
+"""Validate refined source word coverage, order and speaker ownership.
 
-Checks every refine_part_NN.txt / refined_NN.txt pair in <workdir>/refine_parts:
-  1. WORD SET  — Counter equality (case/punct ignored). Any missing/extra word
-                 means the chunk must be re-dispatched (NEVER fix by mechanical
-                 insertion — it corrupts word order and still collapses).
-  2. SEQUENCE  — greedy LCS order-match ratio of refined words vs source words.
-                 Must be >= 0.995. Lower means the agent reordered words
-                 (common when it "cleans" uh/um by moving them).
+Compare each source/refined chunk before applying timestamps. Missing, extra or
+reordered words must be resolved in the model output.
 
-Usage: python3 check_refined.py --workdir <dir> [--mode full|b]
-Exit 0 = all pass, 1 = drift found (fix before running refine_srt.py apply).
+Usage: python check_refined.py --workdir <directory> [--mode full|b]
 """
 import argparse
 import collections

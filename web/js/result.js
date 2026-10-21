@@ -104,10 +104,10 @@ async function renderVideoResult(data) {
         dlVideoBtn.download = (data.title || 'dubbed_video') + '.mp4';
     }
 
-    const dlSrtBtn = document.getElementById('download-srt-btn');
-    if (dlSrtBtn && videoResult.srt_url) {
-        dlSrtBtn.href = videoResult.srt_url;
-        dlSrtBtn.download = (data.title || 'subtitles') + '.srt';
+    const dlSrtBtn = document.getElementById('download-subtitles-btn');
+    if (dlSrtBtn && videoResult.subtitle_url) {
+        dlSrtBtn.href = videoResult.subtitle_url;
+        dlSrtBtn.download = (data.title || 'subtitles') + '.ass';
     }
 
     // 双语字幕渲染
@@ -185,21 +185,7 @@ function renderResult(data) {
 
     timeMappingData = data.time_mapping || [];
 
-    // 兼容老数据：sentence_pairs 缺失时，从 translations + translated_indices 现场重建
-    let sentencePairs = data.sentence_pairs || [];
-    if (sentencePairs.length === 0 && data.translations && data.translated_indices) {
-        const segments = data.segments || [];
-        const sortedIdx = [...data.translated_indices].sort((a, b) => a - b);
-        sentencePairs = sortedIdx
-            .filter(idx => idx < segments.length && data.translations[idx])
-            .map(idx => ({
-                index: idx,
-                english: (segments[idx].text || '').trim(),
-                chinese: data.translations[idx],
-                start: segments[idx].start || 0,
-                end: segments[idx].end || 0,
-            }));
-    }
+    const sentencePairs = data.sentence_pairs || [];
 
     const translatedCount = result?.translated_segments || sentencePairs.length;
 
@@ -222,7 +208,7 @@ function renderResult(data) {
         const container = document.getElementById('transcript-container');
         if (container) {
             container.innerHTML = '<p style="color:var(--text-tertiary);padding:24px 0;">'
-                + '⚠️ 此任务无翻译数据（可能为旧任务或翻译失败）。<br>'
+                + '⚠️ 此任务没有可用的翻译内容。<br>'
                 + '请在历史记录中重新提交或使用「重试」按钮重新处理。'
                 + '</p>';
         }

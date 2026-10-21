@@ -2,7 +2,7 @@
 
 `python -m pip install <仓库>/sdk` 安装 CLI 和 Python SDK。`bmx` 与 `python -m bilimix_cli` 等价；后者不依赖 shell PATH。下面可把 `bmx` 替换为该模块调用。
 
-服务地址优先级：`--server` > `BILIMIX_SERVER` > SDK 本地配置 > `http://localhost:5000`。配置目录可用 `BILIMIX_HOME` 指定，默认用户自己的 `.bilimix`。会话按服务器隔离；升级到 1.1 后旧的无归属 session 不会自动发送给服务器，需要按服务器登录一次。
+服务地址优先级：`--server` > `BILIMIX_SERVER` > SDK 本地配置 > `http://localhost:5000`。配置目录可用 `BILIMIX_HOME` 指定，默认用户自己的 `.bilimix`。登录会话按服务器隔离。
 
 ```text
 bmx --server <URL> api --field dubbing_protocol
@@ -25,7 +25,7 @@ bmx --server <URL> task result <分析ID>
 
 ```text
 bmx --server <URL> subtitle parse <工作ASS的服务端路径>
-bmx --server <URL> task submit --type video --server-path <MP4路径> --subtitle-path <工作ASS路径> --dub-manifest <本地manifest.json> --analysis-id <分析ID> --ref-select-mode speaker_global --subtitle-mode bilingual --subtitle-font-size 40
+bmx --server <URL> task submit --type video --server-path <MP4路径> --subtitle-path <工作ASS路径> --dub-manifest <本地manifest.json> --analysis-id <分析ID> --subtitle-mode bilingual --subtitle-font-size 40
 ```
 
 工作 ASS 每行用 `EN || ZH` 保留导入契约。`count == bilingual_count > 0` 才通过。无效文件明确失败，不回退服务端翻译；字幕不代替原声人物分析。
@@ -39,7 +39,7 @@ bmx --server <URL> task status <task_id>
 bmx --server <URL> task wait <task_id>
 bmx --server <URL> task result <task_id>
 bmx --server <URL> video download --task-id <task_id> -o dubbed.mp4
-bmx --server <URL> video download-srt --task-id <task_id> -o dubbed.ass
+bmx --server <URL> video download-subtitles --task-id <task_id> -o dubbed.ass
 ```
 
 `task result` 的 segments 是预览，完整 units/翻译/时间映射及计数用于核对。工作 ASS 保留源时间，下载的最终 ASS 对应配音时间，不能互换。

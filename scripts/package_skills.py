@@ -31,7 +31,10 @@ def package(destination):
                     continue
                 # Only maintained source/docs belong in a redistributable skill.
                 if relative == Path('SKILL.md') or (relative.parts[0] in ('scripts','references') and path.suffix in ('.py','.md')):
-                    archive.write(path,str(Path(name)/relative))
+                    member = zipfile.ZipInfo((Path(name)/relative).as_posix(), date_time=(1980,1,1,0,0,0))
+                    member.compress_type = zipfile.ZIP_DEFLATED
+                    member.external_attr = 0o100644 << 16
+                    archive.writestr(member,path.read_bytes())
         result.append({'path':str(output),'sha256':hashlib.sha256(output.read_bytes()).hexdigest()})
     return result
 

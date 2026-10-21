@@ -115,3 +115,20 @@ def test_environment_prefers_runtime_downloader_over_old_path_binary(tmp_path, m
     monkeypatch.setattr(sys,'executable',str(runtime/'python'))
     monkeypatch.setenv('PATH',str(old))
     assert module['probe_yt_dlp'](str(tmp_path/'venv'))==str(runtime/'yt-dlp')
+
+
+def test_reanchor_validates_all_rows_before_updating_without_history(tmp_path):
+    (tmp_path / 'parts').mkdir()
+    (tmp_path / 'subtitle_meta.json').write_text(json.dumps({'events': [
+        {'start': '00:00:01,000', 'end': '00:00:03,000'}]}))
+    translated = tmp_path / 'parts/trans_01.txt'
+    translated.write_text('1\twrong\twrong\tHello\t你好。\n', encoding='utf-8')
+    run('reanchor_timestamps.py', '--workdir', tmp_path)
+    assert translated.read_text().startswith('1\t00:00:01,000\t00:00:03,000')
+    assert sorted(p.name for p in (tmp_path / 'parts').iterdir()) == ['trans_01.txt']
+    translated.write_text('2\twrong\twrong\tHello\t你好。\n', encoding='utf-8')
+    before = translated.read_bytes()
+    result = subprocess.run([sys.executable, str(SCRIPTS / 'reanchor_timestamps.py'),
+                             '--workdir', str(tmp_path)], capture_output=True, timeout=15)
+    assert result.returncode != 0
+    assert translated.read_bytes() == before

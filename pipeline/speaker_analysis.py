@@ -241,7 +241,6 @@ def analyze_source(audio_path, media_path, output_dir, task_id=None):
 
 
 def extract_reference_pool(audio_path, analysis, output_dir):
-    from pipeline.ref_audio_utils import _extract_audio_clip
     os.makedirs(output_dir, exist_ok=True)
     pool = {}
     for speaker, ref in analysis["references"].items():
@@ -252,3 +251,22 @@ def extract_reference_pool(audio_path, analysis, output_dir):
             _extract_audio_clip(audio_path, int(ref["start"]*1000), int(ref["end"]*1000), path)
         pool[speaker] = {**ref, "path": path, "sha256": file_sha256(path)}
     return pool
+
+
+def _extract_audio_clip(audio_path, start_ms, end_ms, output_path):
+    """Extract a bounded reference; failed FFmpeg output is never cached."""
+    from core import config
+    import subprocess
+    import tempfile
+    from pathlib import Path
+    if end_ms <= start_ms:
+        raise ValueError('Reference audio interval must be positive')
+    target = Path(output_path)
+    with tempfile.TemporaryDirectory(prefix='.reference-', dir=target.parent) as temporary:
+        output = Path(temporary) / 'reference.wav'
+        subprocess.run([
+            'ffmpeg', '-y', '-loglevel', 'error', '-ss', str(start_ms / 1000),
+            '-i', str(audio_path), '-t', str((end_ms - start_ms) / 1000),
+            '-acodec', 'pcm_s16le', str(output),
+        ], check=True, capture_output=True, timeout=config.REF_EXTRACT_TIMEOUT)
+        os.replace(output, target)

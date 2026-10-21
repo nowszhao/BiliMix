@@ -148,7 +148,6 @@ def test_client_auth_sessions_are_isolated_by_server(tmp_path,monkeypatch):
     sys.path.insert(0,str(ROOT/'sdk'))
     from bilimix_cli import cli
     monkeypatch.setattr(cli,'SESSION_DIR',tmp_path)
-    (tmp_path/'session.json').write_text('{"session":"legacy-unowned"}',encoding='utf-8')
     first=cli.BiliMixClient('https://one.invalid')
     assert not first.session.cookies
     first.session.cookies.set('session','one');first._save_cookies()
@@ -165,7 +164,10 @@ def test_packages_install_in_an_arbitrary_directory_with_no_local_state(tmp_path
     check=target/'nows-ytb-bilingualex/scripts/check_env.py'
     output=subprocess.run([sys.executable,str(check),'--help'],cwd=tmp_path,capture_output=True,text=True,timeout=10)
     assert output.returncode==0
-    backup=install(target,True)['backup'];assert Path(backup).is_dir()
+    (target/'nows-ytb-bmxtask/obsolete.txt').write_text('obsolete')
+    install(target,True)
+    assert not (target/'nows-ytb-bmxtask/obsolete.txt').exists()
+    assert sorted(p.name for p in target.iterdir())==sorted(['nows-ytb-bilingualex','nows-ytb-bmxtask'])
     package=runpy.run_path(str(ROOT/'scripts/package_skills.py'))['package']
     archives=package(tmp_path/'distributable')
     import zipfile
@@ -246,3 +248,22 @@ def test_downloader_uses_selected_ffmpeg_without_browser_or_wrong_video(tmp_path
         assert status==0 and json.loads((tmp_path/'manifest.json').read_text(encoding='utf-8'))['video_path'].endswith('New Video_newid.mp4')
     else:
         assert status!=0 and not (tmp_path/'manifest.json').exists()
+
+
+def test_skill_update_rolls_back_both_skills_on_install_failure(tmp_path, monkeypatch):
+    module = runpy.run_path(str(ROOT / 'scripts/install_skills.py'))
+    install = module['install']
+    destination = tmp_path / 'skills'
+    install(destination)
+    for name in module['SKILLS']:
+        (destination / name / 'installed.txt').write_text('original')
+    original = os.replace
+    def replace(source, target):
+        if Path(source).name == 'nows-ytb-bmxtask' and '.bilimix-install-' in str(source):
+            raise OSError('installation interrupted')
+        return original(source, target)
+    monkeypatch.setattr(os, 'replace', replace)
+    with pytest.raises(OSError, match='installation interrupted'):
+        install(destination, True)
+    assert all((destination / name / 'installed.txt').read_text() == 'original' for name in module['SKILLS'])
+    assert sorted(p.name for p in destination.iterdir()) == sorted(module['SKILLS'])

@@ -296,12 +296,14 @@ async function submitAudioTask(btn) {
             type: 'audio',
             keep_bgm: keepBgm,
         };
-        const refModeEl = document.getElementById('audio-ref-select-mode');
-        if (refModeEl && refModeEl.value) {
-            body.ref_select_mode = refModeEl.value;
-        }
-        if (currentSubtitlePath) {
+        if (currentSubtitlePath || currentDubManifest) {
+            if (!currentSubtitlePath || !currentDubManifest) {
+                throw new Error('精翻配音需同时选择工作 ASS 和配音计划 JSON');
+            }
             body.subtitle_path = currentSubtitlePath;
+            body.dub_manifest = currentDubManifest;
+            body.analysis_id = currentDubManifest.analysis_id;
+            if (!localPath) throw new Error('精翻配音请选择与人物分析相同的本地媒体文件');
         }
         if (localPath) {
             body.local_path = localPath;
@@ -328,7 +330,7 @@ async function submitAudioTask(btn) {
         showToast('✅ 任务已提交');
         if (typeof loadHistory === 'function') loadHistory();
     } catch (err) {
-        alert('网络错误: ' + err.message);
+        alert(err.message || '提交失败，请重试');
         btn.disabled = false;
         btn.querySelector('.btn-text').textContent = '开始生成';
     }
@@ -388,12 +390,14 @@ async function submitVideoTask(btn) {
             subtitle_font_size: parseInt(fontSize),
             keep_bgm: keepBgm,
         };
-        const refModeEl = document.getElementById('ref-select-mode');
-        if (refModeEl && refModeEl.value) {
-            body.ref_select_mode = refModeEl.value;
-        }
-        if (currentSubtitlePath) {
+        if (currentSubtitlePath || currentDubManifest) {
+            if (!currentSubtitlePath || !currentDubManifest) {
+                throw new Error('精翻配音需同时选择工作 ASS 和配音计划 JSON');
+            }
             body.subtitle_path = currentSubtitlePath;
+            body.dub_manifest = currentDubManifest;
+            body.analysis_id = currentDubManifest.analysis_id;
+            if (!localPath) throw new Error('精翻配音请选择与人物分析相同的本地媒体文件');
         }
         if (localPath) {
             body.local_path = localPath;
@@ -420,7 +424,7 @@ async function submitVideoTask(btn) {
         showToast('✅ 视频任务已提交');
         if (typeof loadHistory === 'function') loadHistory();
     } catch (err) {
-        alert('网络错误: ' + err.message);
+        alert(err.message || '提交失败，请重试');
         btn.disabled = false;
         btn.querySelector('.btn-text').textContent = '开始配音';
     }
@@ -457,7 +461,7 @@ async function cancelTask() {
             showCancelledUI();
         }, 500);
     } catch (err) {
-        alert('网络错误: ' + err.message);
+        alert(err.message || '提交失败，请重试');
         btn.disabled = false;
         btn.querySelector('.btn-text').textContent = '终止任务';
     }
@@ -665,10 +669,12 @@ function onModeChange() {
 // ============================================================
 
 let currentSubtitlePath = '';
+let currentDubManifest = null;
 
 async function handleSubtitleFile(input) {
     const file = input.files[0];
     if (!file) return;
+    currentSubtitlePath = '';
 
     // 判断是视频面板还是音频面板触发的
     const isAudio = input.id === 'audio-subtitle-file-input';
@@ -703,7 +709,7 @@ async function handleSubtitleFile(input) {
         });
         const parseData = await parseResp.json();
 
-        if (parseData.ok && parseData.bilingual_count > 0) {
+        if (parseData.ok && parseData.count > 0 && parseData.bilingual_count === parseData.count) {
             currentSubtitlePath = subtitlePath;
             resultEl.textContent = `✅ ${parseData.count} 条字幕，${parseData.bilingual_count} 条双语（将跳过转录和翻译）`;
             resultEl.style.color = 'var(--success-color, #22c55e)';
@@ -719,6 +725,13 @@ async function handleSubtitleFile(input) {
 
 function clearSubtitleFile() {
     currentSubtitlePath = '';
+    currentDubManifest = null;
+    for (const prefix of ['', 'audio-']) {
+        const manifestInput = document.getElementById(prefix + 'dub-manifest-input');
+        const manifestName = document.getElementById(prefix + 'dub-manifest-name');
+        if (manifestInput) manifestInput.value = '';
+        if (manifestName) manifestName.textContent = '';
+    }
     for (const prefix of ['', 'audio-']) {
         const input = document.getElementById(prefix + 'subtitle-file-input');
         const name = document.getElementById(prefix + 'subtitle-file-name');
@@ -728,5 +741,26 @@ function clearSubtitleFile() {
         if (name) name.textContent = '';
         if (result) result.textContent = '';
         if (clearBtn) clearBtn.style.display = 'none';
+    }
+}
+
+async function handleDubManifest(input) {
+    currentDubManifest = null;
+    const file = input.files[0];
+    const prefix = input.id.startsWith('audio-') ? 'audio-' : '';
+    const label = document.getElementById(prefix + 'dub-manifest-name');
+    if (!file) { label.textContent = ''; return; }
+    try {
+        const plan = JSON.parse(await file.text());
+        if (plan.schema_version !== 1 || !plan.analysis_id || !plan.source_media_sha256 ||
+            !Array.isArray(plan.units) || !plan.units.length) {
+            throw new Error('配音计划需包含人物分析、源文件校验和完整话语');
+        }
+        currentDubManifest = plan;
+        label.textContent = file.name;
+    } catch (error) {
+        input.value = '';
+        label.textContent = '';
+        showToast(error.message || '无法读取配音计划');
     }
 }

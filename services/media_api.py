@@ -167,8 +167,10 @@ def api_save_config():
     if not data:
         return jsonify({"error": "请提供配置数据"}), 400
     try:
-        update_config(data)
-        return jsonify({"ok": True, "message": "配置已保存"})
+        updated = update_config(data)
+        return jsonify({"ok": True, "updated": updated, "message": "配置已保存"})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"保存失败: {str(e)}"}), 500
 
@@ -451,7 +453,7 @@ def api_index():
                       "params": {"local_path": "上传媒体路径", "video_url": "或视频URL"}})
     return jsonify({
         "name": "BiliMix API",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "description": "中英混合播客/视频学习工具",
         "dubbing_protocol": 1,
         "total_endpoints": len(endpoints),

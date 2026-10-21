@@ -3,7 +3,7 @@
 # BiliMix 服务管理脚本
 #
 # 用法:
-#   ./bin/bilimix start         启动服务（默认端口 5001）
+#   ./bin/bilimix start         启动服务（默认端口 5000）
 #   ./bin/bilimix stop          停止服务
 #   ./bin/bilimix restart       重启服务（清空旧日志）
 #   ./bin/bilimix status        查看服务状态
@@ -12,7 +12,7 @@
 #   ./bin/bilimix tail          同 logs
 #
 # 环境变量:
-#   BILIMIX_PORT    服务端口（默认 5001）
+#   BILIMIX_PORT    服务端口（默认 5000）
 #   BILIMIX_LOG     日志文件路径（默认 /tmp/bilimix.log）
 #   BILIMIX_PYTHON  Python 解释器（默认自动检测 python3 / python）
 # ============================================================
@@ -20,7 +20,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PORT="${BILIMIX_PORT:-5001}"
+PORT="${BILIMIX_PORT:-5000}"
 LOG_FILE="${BILIMIX_LOG:-/tmp/bilimix.log}"
 PID_FILE="/tmp/bilimix.pid"
 
@@ -62,7 +62,6 @@ _detect_python() {
     return 1
 }
 PYTHON_BIN=$(_detect_python)
-PYTHON_BIN=/root/miniconda3/envs/whisperx_new/bin/python
 
 # 颜色
 RED='\033[0;31m'
@@ -250,7 +249,7 @@ case "$CMD" in
         echo "  logs -n 50     查看最近 50 行日志"
         echo ""
         echo "环境变量:"
-        echo "  BILIMIX_PORT   服务端口 (默认 5001)"
+        echo "  BILIMIX_PORT   服务端口 (默认 5000)"
         echo "  BILIMIX_LOG    日志文件路径 (默认 /tmp/bilimix.log)"
         ;;
     *)

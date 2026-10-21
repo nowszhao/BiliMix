@@ -57,7 +57,9 @@ def test_queued_analysis_manifest_submission_and_persistence(tmp_path,monkeypatc
     analysis=client.get(f'/api/task/{aid}/result').get_json()['result']['analysis']
     assert analysis['analysis_id']==aid
     manifest,_=manifest_fixture();manifest['analysis_id']=aid;manifest['source_media_sha256']=file_sha256(media)
-    response=client.post('/api/submit',json=dict(type='video',local_path=str(media),dub_manifest=manifest,analysis_id=aid))
+    subtitle=tmp_path/'work.ass'
+    subtitle.write_text('[Events]\nDialogue: 0,0:00:00.00,0:00:01.00,Default,A,0,0,0,,Hello || 你好。\n',encoding='utf-8')
+    response=client.post('/api/submit',json=dict(type='video',local_path=str(media),subtitle_path=str(subtitle),dub_manifest=manifest,analysis_id=aid))
     assert response.status_code==200,response.get_json()
     tid=response.get_json()['task_id'];task=wait_for(wa,tid,{'completed','error'})
     assert task['status']=='completed',task
@@ -145,3 +147,39 @@ def test_failed_analysis_retries_analysis_without_server_translation(tmp_path,mo
     assert client.post(f'/api/task/{tid}/retry',json={'refresh_analysis':True}).status_code==200
     assert wait_for(wa,tid,{'completed','error'})['status']=='completed'
     assert len(calls)==4
+
+
+def test_external_ass_requires_manifest_before_task_creation(tmp_path, monkeypatch):
+    from services import web_app as wa
+    monkeypatch.setattr(config, 'AUTH_ENABLED', False)
+    media = tmp_path / 'source.mp4'
+    media.write_bytes(b'media')
+    subtitle = tmp_path / 'work.ass'
+    subtitle.write_text('[Events]\nDialogue: 0,0:00:00.00,0:00:01.00,Default,A,0,0,0,,Hello || 你好。\n', encoding='utf-8')
+    before = set(wa.tasks)
+    response = wa.app.test_client().post('/api/submit', json={
+        'type': 'video', 'local_path': str(media), 'subtitle_path': str(subtitle)})
+    assert response.status_code == 400
+    assert '同时提供' in response.get_json()['error']
+    assert set(wa.tasks) == before
+
+def test_failed_setting_save_keeps_runtime_and_reports_api_failure(tmp_path, monkeypatch):
+    from core import config_manager
+    from services import web_app as wa
+    monkeypatch.setattr(config, 'AUTH_ENABLED', False)
+    monkeypatch.setattr(config, 'WATERMARK_TEXT', 'current')
+    def fail(*args, **kwargs):
+        raise OSError('disk unavailable')
+    monkeypatch.setattr(config_manager, 'save_settings', fail)
+    response = wa.app.test_client().post('/api/config', json={'watermark_text': 'unsaved'})
+    assert response.status_code == 500
+    assert config.WATERMARK_TEXT == 'current'
+
+
+def test_setting_api_rejects_unknown_keys_and_false_as_string(monkeypatch):
+    from services import web_app as wa
+    monkeypatch.setattr(config, 'AUTH_ENABLED', False)
+    client = wa.app.test_client()
+    for body in ({'watermark_enabled': 'false'}, {'unknown_option': 1},
+                 {'sub_font_size_default': 1.5}, {'watermark_opacity': float('nan')}):
+        assert client.post('/api/config', json=body).status_code == 400

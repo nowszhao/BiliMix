@@ -1,39 +1,10 @@
 #!/usr/bin/env python3
-"""Aggregate a fragmented rolling-window SRT (from YouTube's transcript panel
-or the timedtext fallback) into sentence-level SRT.
+"""Aggregate rolling-window source SRT into bounded sentence-level SRT.
 
-Why this exists (verified 2026-08): YouTube's current transcript panel and the
-timedtext data it mirrors are NOT sentence-aggregated — the panel renders the
-same pre-aggregation rolling-window fragments as the ASR captions (e.g. lines
-`0:00 Hi, my guest today needs almost no` / `0:03 introduction in the data
-world. He` with ~2-3s overlapping windows). Feeding those straight into
-split/translate/assemble produces half-sentences that look wrong in any player.
-This script merges consecutive fragments into ~5-9s sentences, keeping each
-sentence's start timestamp (= the true speech onset of the first fragment).
+Preserve source starts, merge nearby fragments, split at punctuation or speaker
+markers, and end each sentence at the next start to prevent overlapping display.
 
-Aggregation rules:
-- Merge consecutive captions while the inter-caption silence is <= MAX_GAP_MS,
-  the running group is <= MAX_GROUP_MS, and the running word count is <=
-  MAX_WORDS (a hard cap per line — the safety net that guarantees no delivered
-  line ever grows unboundedly long even when punctuation and silence never fire;
-  default 26).
-- Split a group early when a caption ENDS with a sentence terminator
-  (. ? !) and the group already has >= MIN_TERM_MS of content (avoids making
-  one-word "No." groups), or when the caption STARTS with ">>" (speaker change),
-  or when a > MAX_GAP_MS silence occurs.
-- The LAST caption's end is extended +2s so the final line has a visible window.
-- **De-overlap (CRITICAL)**: the rolling-window source means a merged sentence's
-  last fragment END extends past the next sentence's start. After aggregation
-  each sentence's END is set to the NEXT sentence's START (same convention the
-  transcript panel uses), so the output SRT is strictly non-overlapping. If this
-  is skipped, overlapping windows leak into the final .ass (observed 2026-08:
-  3844 overlapping pairs across a 14-video batch).
-- Timestamps are inherited from the source, never recomputed. Starts are NEVER
-  pushed forward, so audio alignment is preserved by construction.
-
-Usage:
-    python3 aggregate_srt.py <fragmented.srt> <sentence_level.srt> [--max-gap 700]
-                             [--max-group 7500] [--min-term 1200] [--max-words 26]
+Usage: python aggregate_srt.py input.srt output.srt [--max-gap 700]
 """
 import argparse
 import re
@@ -136,7 +107,7 @@ def main():
     # De-overlap: YouTube ASR is a rolling window, so each fragment's end can
     # extend past the next fragment's start. The aggregated sentence inherited
     # end = last fragment's end, which OVERLAPS the next sentence — that leaked
-    # into the final .ass (3844 overlapping pairs observed 2026-08). Fix by
+    # into the final ASS. Prevent this by
     # setting each sentence's end = next sentence's start (the same convention
     # the transcript panel uses). Starts are never touched (audio alignment).
     for i in range(len(sentences) - 1):

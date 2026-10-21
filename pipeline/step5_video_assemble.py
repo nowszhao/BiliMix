@@ -127,7 +127,7 @@ _ASS_COLOR_ENGLISH = "&H00E6E6E6&"   # 浅灰白：英文原文
 _ASS_COLOR_CHINESE = "&H0000D7FF&"   # 金黄色：中文翻译，与英文形成区分
 
 
-def generate_bilingual_srt(
+def generate_bilingual_ass(
     segments: list[dict],
     translations: dict[int, str],
     time_mapping: list[dict],
@@ -139,8 +139,7 @@ def generate_bilingual_srt(
     subtitle_font_size: Optional[int] = None,
 ) -> str:
     """
-    生成 ASS 字幕文件（尽管函数名/参数保留 srt 命名以兼容旧调用方，
-    实际输出内容为 ASS 格式，支持行内颜色标签 + 精确对齐控制）。
+    生成具有显示分页和文字高度约束的双语 ASS 字幕。
 
     英文行使用浅灰白色，中文行使用金黄色，视觉上清晰区分两种语言。
     字幕固定底部居中对齐（Alignment=2），边距按视频高度百分比计算，
@@ -424,7 +423,7 @@ def _apply_watermark(video_path: str) -> str:
 
 def _build_filter_graph(
     time_mapping: list,
-    srt_path: str = None,
+    subtitle_path: str = None,
     fps: float = 25,
 ) -> str:
     """
@@ -441,7 +440,7 @@ def _build_filter_graph(
 
     Args:
         time_mapping: mix_sentence_audio 返回的 time_mapping 列表
-        srt_path: ASS 字幕文件路径，None 则不烧录字幕
+        subtitle_path: ASS 字幕文件路径，None 则不烧录字幕
 
     Returns:
         str: filter graph 临时文件路径
@@ -464,8 +463,8 @@ def _build_filter_graph(
     concat_part = f"{concat_inputs}concat=n={n}:v=1:a=0,setpts=N/({fps:.9f}*TB)"
 
     # 可选字幕烧录
-    if srt_path and os.path.isfile(srt_path):
-        escaped_ass = _escape_path_for_filter(srt_path)
+    if subtitle_path and os.path.isfile(subtitle_path):
+        escaped_ass = _escape_path_for_filter(subtitle_path)
         graph = ";\n".join(parts) + f";\n{concat_part},ass=filename='{escaped_ass}'[outv]"
     else:
         graph = ";\n".join(parts) + f";\n{concat_part}[outv]"
@@ -559,7 +558,7 @@ def _run_one_block(video_path, chunk_audio_path, filter_graph_path, out_path,
 def _assemble_video_blocks(
     video_path: str,
     mixed_audio_path: str,
-    srt_path: str,
+    subtitle_path: str,
     output_path: str,
     time_mapping: list,
     timeout: int,
@@ -647,8 +646,6 @@ def _assemble_video_blocks(
     # ---- 需要 segments + translations 用于字幕 ----
     # 此处依赖调用方提供，但 assemble_video 接口不含 segments/translations
     # 需要从 time_mapping 反向构建
-    # 处理: 优先从 time_mapping 取 chinese 字段，segments 信息从 task 获取较复杂
-    # 简化: 使用已有的 srt_path 为每块切出子字幕
 
     base_dir = os.path.dirname(output_path)
     block_outputs = [None] * n_blocks
@@ -672,8 +669,7 @@ def _assemble_video_blocks(
 
         # 3. 生成字幕（有 ASS 滤镜的场景）
         # 注意: 分块模式下字幕需在 filter graph 中通过 ass= 滤镜烧录
-        # 由于 generate_bilingual_srt 需要 segments/translations，这里用简化的
-        # ASS 构建逻辑（从 time_mapping 中直接取 chinese 字段）
+        # 分块使用与整片一致的分页布局。
         if blk["sub_entries"] and subtitle_mode != "none":
             asp = os.path.join(bd, "subs.ass")
             _build_block_ass(blk["sub_entries"], blk["audio_start"], asp,
@@ -766,7 +762,7 @@ def _build_block_ass(tts_entries, time_offset, out_path, video_height=720,
         selected.append({**source, "speaker":source.get("speaker", entry.get("speaker", ""))})
         translated[index] = entry.get("chinese") or (translations or {}).get(source_index, "")
         mapping.append({**entry, "segment_index":index})
-    return generate_bilingual_srt(selected, translated, mapping, out_path,
+    return generate_bilingual_ass(selected, translated, mapping, out_path,
         subtitle_mode=subtitle_mode, video_width=video_width, video_height=video_height,
         time_offset=time_offset, subtitle_font_size=font_size)
 
@@ -774,7 +770,7 @@ def _build_block_ass(tts_entries, time_offset, out_path, video_height=720,
 def assemble_video(
     video_path: str,
     mixed_audio_path: str,
-    srt_path: str,
+    subtitle_path: str,
     output_path: str,
     subtitle_style: Optional[str] = None,
     timeout: Optional[int] = None,
@@ -804,10 +800,10 @@ def assemble_video(
         except Exception:
             pass
 
-    dialogue_count = _parse_ass_dialogue_count(srt_path)
+    dialogue_count = _parse_ass_dialogue_count(subtitle_path)
     video_duration = _probe_video_duration(video_path)
     mixed_duration = _probe_video_duration(mixed_audio_path)
-    has_srt = dialogue_count > 0
+    has_subtitles = dialogue_count > 0
 
     # ---- 尝试生成逐句变速 filter graph ----
     filter_graph_path = None
@@ -820,15 +816,15 @@ def assemble_video(
         max_concat = getattr(config, "VIDEO_MAX_CONCAT_SEGMENTS", 200)
         if tts_count > max_concat:
             print(f"[Step5] 检测到长视频 ({tts_count} 句 > {max_concat})，启用分块并行模式")
-            # 注意: 分块模式内部自行生成字幕，不依赖外部 srt_path
+            # 注意: 分块模式内部自行生成字幕，不依赖外部 subtitle_path
             return _assemble_video_blocks(
-                video_path, mixed_audio_path, srt_path,
+                video_path, mixed_audio_path, subtitle_path,
                 output_path, time_mapping, timeout,
                 segments=segments, translations=translations,
                 subtitle_mode=subtitle_mode, subtitle_font_size=subtitle_font_size,
                 video_width=video_width, video_height=video_height,
             )
-        filter_graph_path = _build_filter_graph(time_mapping, srt_path if has_srt and subtitle_mode != "none" else None, fps=_probe_video_fps(video_path))
+        filter_graph_path = _build_filter_graph(time_mapping, subtitle_path if has_subtitles and subtitle_mode != "none" else None, fps=_probe_video_fps(video_path))
 
     encoders = _detect_encoders()
     video_enc = encoders.get("video")
@@ -871,8 +867,8 @@ def assemble_video(
         elif diff > diff_tolerance:
             print(f"[Step5] 视频 > 混音 -> 截断")
 
-        if has_srt:
-            escaped_ass = _escape_path_for_filter(srt_path)
+        if has_subtitles:
+            escaped_ass = _escape_path_for_filter(subtitle_path)
             vf_parts.append(f"ass=filename='{escaped_ass}'")
         vf_parts.append("format=yuv420p")
 

@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pydub import AudioSegment
 from core import config
-from pipeline.step5_video_assemble import generate_bilingual_srt, assemble_video
+from pipeline.step5_video_assemble import generate_bilingual_ass, assemble_video
 
 
 def main():
@@ -33,7 +33,7 @@ def main():
     translations = {i:'完整的一句话。' for i in range(20)}
     audio = str(root/'audio.wav')
     AudioSegment.silent(duration=17450).export(audio,format='wav')
-    ass = generate_bilingual_srt(segments,translations,entries,str(root/'captions.ass'),
+    ass = generate_bilingual_ass(segments,translations,entries,str(root/'captions.ass'),
                                  video_height=180,video_width=320)
     results = {}
     for name, limit in [('regular',200),('blocks',5)]:

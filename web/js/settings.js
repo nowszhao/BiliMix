@@ -732,9 +732,6 @@ function _renderTaskDetailPanel(task) {
     else if (subMode === 'chinese_only') metaParts.push('仅中文');
     const fontSize = task._subtitle_font_size;
     if (fontSize != null && fontSize !== -1) metaParts.push(`字号 ${fontSize}px`);
-    const refMode = task._ref_select_mode || '';
-    if (refMode === 'speaker_local') metaParts.push('每段独立克隆');
-    else if (refMode === 'speaker_global') metaParts.push('每人最优克隆');
     if (task._subtitle_path) metaParts.push('使用外部字幕');
     if (task.skip_confirmation === false) metaParts.push('需确认翻译');
 
@@ -998,9 +995,6 @@ function renderTaskDetailPage(data) {
     else if (subMode === 'chinese_only') configParts.push('仅中文');
     const fontSize = data._subtitle_font_size;
     if (fontSize != null && fontSize !== -1) configParts.push('字号 ' + fontSize + 'px');
-    const refMode = data._ref_select_mode || '';
-    if (refMode === 'speaker_local') configParts.push('每段独立克隆');
-    else if (refMode === 'speaker_global') configParts.push('每人最优克隆');
     if (data._subtitle_path) configParts.push('使用外部字幕');
     if (data.skip_confirmation === false) configParts.push('需确认翻译');
     const configEl = document.getElementById('meta-config');
@@ -1145,7 +1139,7 @@ function _switchPanelSource(src) {
     if (url) { ve.src = url; ve.load(); }
 }
 
-// --- 完整详情页（旧版：task-detail-view）仍保留，以下为其专用函数 ---
+// 完整任务详情页
 
 function switchDetailSource(src) {
     const data = window._taskDetailData; if (!data) return;
@@ -1165,7 +1159,7 @@ function switchDetailSource(src) {
         if (url) { ve.src = url; ve.load(); }
         dl.style.display = (src==='dubbed'&&url) ? '' : 'none';
         dl.href = url || '#';
-        ds.href = (src==='dubbed'&&(data.video_result||{}).srt_url) ? (data.video_result||{}).srt_url : '#';
+        ds.href = (src==='dubbed'&&(data.video_result||{}).subtitle_url) ? (data.video_result||{}).subtitle_url : '#';
     } else {
         var r = data.result||{}; var bn = r.basename||data.basename||'';
         var path = '';
@@ -1339,11 +1333,6 @@ async function cancelTaskInline(taskId) {
         const detailEl = document.getElementById(`task-detail-${taskId}`);
         if (detailEl) renderTaskDetail(detailEl, task);
     } catch (e) {}
-}
-
-async function viewHistoryTask(taskId, url) {
-    // 兼容旧调用：直接展开任务
-    toggleTaskDetail(taskId, url);
 }
 
 // 切换到任务页时停止轮询
@@ -1555,16 +1544,7 @@ function renderSettingsForm(cfg) {
                             value="${cfg.sentence_full_gap_ms}" min="0" max="2000" step="50">
                     </div>
                 </div>
-                <div class="settings-item">
-                    <div class="settings-item-label">
-                        <span class="settings-item-name">说话人间隔阈值</span>
-                        <span class="settings-item-desc">同说话人最大间隔（秒），单人演讲建议 0.8</span>
-                    </div>
-                    <div class="settings-item-control">
-                        <input type="number" class="settings-input" id="cfg-same_speaker_gap"
-                            value="${cfg.same_speaker_gap}" min="0.1" max="3.0" step="0.1">
-                    </div>
-                </div>
+
             </div>
         </div>
 
@@ -1647,46 +1627,15 @@ function renderSettingsForm(cfg) {
                 <div class="settings-item">
                     <div class="settings-item-label">
                         <span class="settings-item-name">选取模式</span>
-                        <span class="settings-item-desc">speaker_local: 优先自身原声，过短时扩展相邻段；segment: 仅用自身原声</span>
+                        <span class="settings-item-desc">合格原声不足时会停止任务，请先检查人物分析</span>
                     </div>
                     <div class="settings-item-control">
-                        <select class="settings-select" id="cfg-ref_select_mode">
-                            <option value="speaker_local" ${cfg.ref_select_mode === 'speaker_local' ? 'selected' : ''}>speaker_local（推荐）</option>
-                            <option value="speaker_global" ${cfg.ref_select_mode === 'speaker_global' ? 'selected' : ''}>speaker_global</option>
-                            <option value="segment" ${cfg.ref_select_mode === 'segment' ? 'selected' : ''}>segment</option>
-                        </select>
+                        <span>每位人物全片使用固定参考音频</span>
                     </div>
                 </div>
-                <div class="settings-item">
-                    <div class="settings-item-label">
-                        <span class="settings-item-name">最短参考时长（秒）</span>
-                        <span class="settings-item-desc">segment 自身时长低于此值触发扩展/fallback</span>
-                    </div>
-                    <div class="settings-item-control">
-                        <input type="number" class="settings-input" id="cfg-ref_min_duration"
-                            value="${cfg.ref_min_duration}" min="1" max="10" step="1">
-                    </div>
-                </div>
-                <div class="settings-item">
-                    <div class="settings-item-label">
-                        <span class="settings-item-name">目标参考时长（秒）</span>
-                        <span class="settings-item-desc">过短 segment 扩展时的目标累计时长</span>
-                    </div>
-                    <div class="settings-item-control">
-                        <input type="number" class="settings-input" id="cfg-ref_target_duration"
-                            value="${cfg.ref_target_duration}" min="3" max="30" step="1">
-                    </div>
-                </div>
-                <div class="settings-item">
-                    <div class="settings-item-label">
-                        <span class="settings-item-name">最大参考时长（秒）</span>
-                        <span class="settings-item-desc">参考音频硬上限，超过则以目标句为中心截取</span>
-                    </div>
-                    <div class="settings-item-control">
-                        <input type="number" class="settings-input" id="cfg-ref_max_duration"
-                            value="${cfg.ref_max_duration}" min="5" max="60" step="1">
-                    </div>
-                </div>
+
+
+
             </div>
         </div>
 
@@ -2208,7 +2157,6 @@ async function saveSettings() {
         confucius_tts_repetition_penalty: getValue('cfg-confucius_tts_repetition_penalty'),
         confucius_tts_n_timesteps: getValue('cfg-confucius_tts_n_timesteps'),
         confucius_tts_inference_cfg_rate: getValue('cfg-confucius_tts_inference_cfg_rate'),
-        same_speaker_gap: getValue('cfg-same_speaker_gap'),
         auto_retry_max: getValue('cfg-auto_retry_max'),
         auth_enabled: getValue('cfg-auth_enabled'),
         auth_username: getValue('cfg-auth_username'),
@@ -2218,10 +2166,6 @@ async function saveSettings() {
         sentence_cn_ratio: getValue('cfg-sentence_cn_ratio'),
         sentence_tts_voice_clone: getValue('cfg-sentence_tts_voice_clone'),
         // 参考音频
-        ref_select_mode: getValue('cfg-ref_select_mode'),
-        ref_min_duration: getValue('cfg-ref_min_duration'),
-        ref_target_duration: getValue('cfg-ref_target_duration'),
-        ref_max_duration: getValue('cfg-ref_max_duration'),
         // LLM
         llm_num_predict: getValue('cfg-llm_num_predict'),
         llm_translate_temperature: getValue('cfg-llm_translate_temperature'),
@@ -2334,16 +2278,6 @@ async function initPageConfig() {
         if (audioBgm && cfg.keep_bgm !== undefined) audioBgm.checked = cfg.keep_bgm;
         const videoBgm = document.getElementById('keep-bgm-checkbox');
         if (videoBgm && cfg.keep_bgm !== undefined) videoBgm.checked = cfg.keep_bgm;
-
-        // 应用参考音频策略默认值（新建任务弹窗预填全局设置值）
-        const audioRefMode = document.getElementById('audio-ref-select-mode');
-        if (audioRefMode && cfg.ref_select_mode !== undefined) {
-            audioRefMode.value = cfg.ref_select_mode;
-        }
-        const videoRefMode = document.getElementById('ref-select-mode');
-        if (videoRefMode && cfg.ref_select_mode !== undefined) {
-            videoRefMode.value = cfg.ref_select_mode;
-        }
 
         // 应用字幕字号默认值（仅视频任务有该项；-1/0 由后端按视频高度自动计算）
         const subFontSize = document.getElementById('sub-font-size');

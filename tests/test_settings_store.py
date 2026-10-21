@@ -21,8 +21,8 @@ def test_web_settings_do_not_modify_source_or_machine_local_config(tmp_path,monk
     value='中文 "quoted" \\ path\nsecond line'
     monkeypatch.setattr(config,'WATERMARK_TEXT','before')
     before=defaults.read_bytes(),local.read_bytes()
-    updated,error=config_manager.update_config({'watermark_text':value})
-    assert error is None and 'WATERMARK_TEXT' in updated
+    updated=config_manager.update_config({'watermark_text':value})
+    assert 'WATERMARK_TEXT' in updated
     assert (defaults.read_bytes(),local.read_bytes())==before
     assert load_settings(target)['WATERMARK_TEXT']==value
     if os.name!='nt':assert target.stat().st_mode&0o777==0o600
@@ -38,14 +38,15 @@ def test_persisted_settings_load_in_a_fresh_python_process(tmp_path):
     assert json.loads(result.stdout)==value
 
 
-def test_concurrent_setting_fields_are_merged_and_unknown_fields_do_not_execute(tmp_path):
+def test_concurrent_fields_merge_and_unknown_settings_are_rejected(tmp_path):
     target=tmp_path/'settings.json'
     values={'WATERMARK_TEXT':'first','ASS_FONT_SIZE_DEFAULT':36}
     threads=[threading.Thread(target=save_settings,args=(target,{k:v}))for k,v in values.items()]
     for thread in threads:thread.start()
     for thread in threads:thread.join()
     assert load_settings(target)==values
-    save_settings(target,{'WHISPERX_HF_TOKEN':'never-persist-this','BASE_DIR':'not-an-api-preference'})
+    with pytest.raises(ValueError,match='Unknown persisted setting'):
+        save_settings(target,{'WHISPERX_HF_TOKEN':'never-persist-this'})
     assert 'never-persist-this' not in target.read_text(encoding='utf-8')
     assert load_settings(target)==values
 

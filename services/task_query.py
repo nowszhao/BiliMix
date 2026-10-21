@@ -236,8 +236,8 @@ def get_task_result(task_id):
     translations = task.get("translations", {})
     sentence_pairs = task.get("sentence_pairs", [])
     video_result = task.get("video_result") or _load_video_result_from_disk(task)
-    if video_result and video_result.get("srt_path"):
-        layout_path = video_result["srt_path"]+".layout.json"
+    if video_result and video_result.get("subtitle_path"):
+        layout_path = video_result["subtitle_path"]+".layout.json"
         if os.path.isfile(layout_path):
             try:
                 with open(layout_path, encoding="utf-8") as stream:
@@ -276,7 +276,6 @@ def get_task_result(task_id):
         "_video_path": task.get("_video_path", ""),
         "_subtitle_mode": task.get("_subtitle_mode", ""),
         "_subtitle_font_size": task.get("_subtitle_font_size", -1),
-        "_ref_select_mode": task.get("_ref_select_mode", ""),
         "_subtitle_path": task.get("_subtitle_path", ""),
         "dubbing_protocol": 1,
         "analysis_id": task.get("_analysis_id", ""),

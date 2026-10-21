@@ -46,7 +46,6 @@ except ImportError:
 
 DEFAULT_SERVER = "http://localhost:5000"
 SESSION_DIR = Path(os.environ.get("BILIMIX_HOME", str(Path.home() / ".bilimix")))
-SESSION_FILE = SESSION_DIR / "session.json"
 CONFIG_FILE = SESSION_DIR / "config.json"
 
 EXIT_OK = 0
@@ -144,8 +143,6 @@ class BiliMixClient:
     # ---- cookie 持久化 ----
     def _load_cookies(self):
         source = self.session_file
-        # Legacy session.json has no server identity. Never send it to a host
-        # inferred from a newly changed CLI/config value; sign in once per server.
         if source.exists():
             try:
                 with open(source, "r", encoding="utf-8") as f:
@@ -364,9 +361,6 @@ def cmd_task_submit(args, client):
             body["dub_manifest"] = json.load(stream)
         body["analysis_id"] = getattr(args, "analysis_id", None) or body["dub_manifest"].get("analysis_id")
 
-    # ref_select_mode: 参考音频选取模式（声音克隆）
-    if getattr(args, 'ref_select_mode', None):
-        body["ref_select_mode"] = args.ref_select_mode
 
     # keep_bgm: 保留原音频背景音乐
     if getattr(args, 'keep_bgm', False):
@@ -625,7 +619,7 @@ def _resolve_video_path(client, task_id, mode):
     """从视频任务结果解析文件的 URL 路径
 
     Args:
-        mode: "video" 解析 video_url, "srt" 解析 srt_url
+        mode: "video" 解析 video_url, "subtitle" 解析 subtitle_url
     """
     result = client.get(f"/api/task/{task_id}/result")
     video_result = result.get("video_result")
@@ -633,13 +627,13 @@ def _resolve_video_path(client, task_id, mode):
         raise CLIError(f"任务结果中未找到视频结果（可能不是视频任务），"
                        f"任务状态: {result.get('status')}")
 
-    key = "video_url" if mode == "video" else "srt_url"
+    key = "video_url" if mode == "video" else "subtitle_url"
     path = video_result.get(key)
     if not path:
         label = "视频" if mode == "video" else "字幕"
         raise CLIError(f"任务结果中未找到{label}路径")
 
-    # video_url / srt_url 已是 /api/audio/... 格式，直接使用
+    # video_url / subtitle_url 已是 /api/audio/... 格式，直接使用
     return path
 
 
@@ -658,16 +652,16 @@ def cmd_video_download(args, client):
     return EXIT_OK
 
 
-def cmd_video_download_srt(args, client):
+def cmd_video_download_subtitles(args, client):
     if args.path:
         path = args.path
     elif args.task_id:
-        path = _resolve_video_path(client, args.task_id, mode="srt")
+        path = _resolve_video_path(client, args.task_id, mode="subtitle")
     else:
         raise CLIError("必须提供 --path 或 --task-id")
 
     output = args.output or os.path.basename(path) or "subtitle.ass"
-    downloaded = _download_file(client, path, output, label="srt", quiet=args.quiet)
+    downloaded = _download_file(client, path, output, label="subtitle", quiet=args.quiet)
     emit({"ok": True, "path": output, "size_bytes": downloaded},
          pretty=args.pretty, field=args.field)
     return EXIT_OK
@@ -1240,9 +1234,6 @@ def build_parser():
                         "提供后跳过转录和翻译，直接用字幕生成配音")
     p.add_argument("--dub-manifest", help="本地精翻配音计划 JSON（协议 v1）")
     p.add_argument("--analysis-id", help="已完成源人物分析 task ID")
-    p.add_argument("--ref-select-mode",
-                   choices=["speaker_global", "speaker_local", "segment"],
-                   help="参考音频选取模式 (声音克隆, 默认服务端配置)")
     p.add_argument("--wait", action="store_true", help="提交后阻塞等待完成")
     p.add_argument("--poll-interval", type=float, default=2.0,
                    help="轮询间隔秒数 (默认 2.0)")
@@ -1355,12 +1346,12 @@ def build_parser():
     p.add_argument("-o", "--output", help="输出文件名")
     p.set_defaults(func=cmd_video_download)
 
-    p = add_cmd(vid_sub, "download-srt", help="下载字幕文件")
+    p = add_cmd(vid_sub, "download-subtitles", help="下载字幕文件")
     g = p.add_mutually_exclusive_group(required=True)
-    g.add_argument("--task-id", help="通过任务 ID 解析 SRT 路径")
-    g.add_argument("--path", help="直接指定 SRT URL 路径")
+    g.add_argument("--task-id", help="通过任务 ID 解析 ASS 字幕路径")
+    g.add_argument("--path", help="直接指定 ASS 字幕 URL 路径")
     p.add_argument("-o", "--output", help="输出文件名")
-    p.set_defaults(func=cmd_video_download_srt)
+    p.set_defaults(func=cmd_video_download_subtitles)
 
     # ---- subtitle ----
     p_sub = add_cmd(sub, "subtitle", help="字幕文件")

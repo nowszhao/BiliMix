@@ -1,10 +1,7 @@
 """
 SQLite 数据库模块
 统一管理任务索引、播客收藏、RSS 订阅、搜索历史等持久化数据。
-替代之前的 tasks_index.json 方案，性能更好且支持并发读写。
 """
-import json
-import os
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -74,27 +71,11 @@ def get_db():
         raise
 
 
-def _backfill_episode_timestamps(conn):
-    """
-    为历史遗留数据（published_at_ts 为 0 但 published_at 有值）回填解析后的时间戳。
-    仅在新增 published_at_ts 列后，对老数据做一次性修复。
-    """
-    rows = conn.execute(
-        "SELECT id, published_at FROM episodes "
-        "WHERE (published_at_ts IS NULL OR published_at_ts = 0) AND published_at != ''"
-    ).fetchall()
-    for row in rows:
-        ts = _parse_published_at_ts(row["published_at"])
-        if ts:
-            conn.execute("UPDATE episodes SET published_at_ts = ? WHERE id = ?",
-                         (ts, row["id"]))
-
-
 def init_db():
     """初始化数据库表结构"""
     with get_db() as conn:
         conn.executescript("""
-            -- 任务索引表（替代 tasks_index.json）
+            -- 任务索引表
             CREATE TABLE IF NOT EXISTS tasks (
                 task_id       TEXT PRIMARY KEY,
                 url           TEXT DEFAULT '',
@@ -169,102 +150,6 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_episodes_status ON episodes(status);
             CREATE INDEX IF NOT EXISTS idx_episodes_rss_url ON episodes(rss_url);
         """)
-        # 向已有的 tasks 表添加 title 列（兼容旧数据库）
-        try:
-            conn.execute("ALTER TABLE tasks ADD COLUMN title TEXT DEFAULT ''")
-        except sqlite3.OperationalError:
-            pass  # 列已存在，忽略
-        # 向已有的 tasks 表添加 type 列（兼容旧数据库）
-        try:
-            conn.execute("ALTER TABLE tasks ADD COLUMN type TEXT DEFAULT 'audio'")
-        except sqlite3.OperationalError:
-            pass  # 列已存在，忽略
-        # 向已有的 tasks 表添加 step 列（兼容旧数据库）
-        try:
-            conn.execute("ALTER TABLE tasks ADD COLUMN step TEXT DEFAULT ''")
-        except sqlite3.OperationalError:
-            pass  # 列已存在，忽略
-        # 向已有的 tasks 表添加 keep_bgm 列（兼容旧数据库）
-        try:
-            conn.execute("ALTER TABLE tasks ADD COLUMN keep_bgm INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass  # 列已存在，忽略
-        # 向已有的 tasks 表添加 queue_order 列（兼容旧数据库）
-        try:
-            conn.execute("ALTER TABLE tasks ADD COLUMN queue_order INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass  # 列已存在，忽略
-        # 向已有的 episodes 表添加 published_at_ts 列（兼容旧数据库）
-        try:
-            conn.execute("ALTER TABLE episodes ADD COLUMN published_at_ts REAL DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass  # 列已存在，忽略
-        # episodes 索引（兼容旧数据库，CREATE INDEX IF NOT EXISTS 已是幂等，但这里是给老库）
-        try:
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_published_at_ts ON episodes(published_at_ts)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_status ON episodes(status)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_rss_url ON episodes(rss_url)")
-        except sqlite3.OperationalError:
-            pass
-        _backfill_episode_timestamps(conn)
-
-
-# ============================================================
-# 数据迁移：从 tasks_index.json 导入已有数据
-# ============================================================
-
-def migrate_from_json():
-    """将旧的 tasks_index.json 数据导入 SQLite（仅首次运行时执行）"""
-    json_path = os.path.join(config.BASE_DIR, "tasks_index.json")
-    if not os.path.exists(json_path):
-        return
-
-    try:
-        with open(json_path, "r", encoding="utf-8") as f:
-            index = json.load(f)
-    except Exception:
-        return
-
-    if not index:
-        return
-
-    with get_db() as conn:
-        # 检查是否已经有任务数据（避免重复导入）
-        row = conn.execute("SELECT COUNT(*) as cnt FROM tasks").fetchone()
-        if row["cnt"] > 0:
-            return
-
-        for task_id, summary in index.items():
-            conn.execute("""
-                INSERT OR IGNORE INTO tasks
-                (task_id, url, title, difficulty, process_mode, status, progress,
-                 message, created_at, basename, total_words,
-                 total_replacements, original_duration, mixed_duration)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                summary.get("task_id", task_id),
-                summary.get("url", ""),
-                summary.get("title", ""),
-                summary.get("difficulty", ""),
-                summary.get("process_mode", "sentence_translate"),
-                summary.get("status", ""),
-                summary.get("progress", 0),
-                summary.get("message", ""),
-                summary.get("created_at", ""),
-                summary.get("basename", ""),
-                summary.get("total_words", 0),
-                summary.get("total_replacements", 0),
-                summary.get("original_duration", 0),
-                summary.get("mixed_duration", 0),
-            ))
-
-    # 迁移成功后，重命名旧文件作为备份
-    backup_path = json_path + ".bak"
-    try:
-        os.rename(json_path, backup_path)
-        print(f"[DB] 已将 tasks_index.json 迁移到 SQLite，旧文件备份为 {backup_path}")
-    except Exception:
-        pass
 
 
 # ============================================================
@@ -272,7 +157,7 @@ def migrate_from_json():
 # ============================================================
 
 def load_tasks_index() -> dict:
-    """加载全部任务索引（兼容旧接口）"""
+    """加载全部任务索引"""
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM tasks").fetchall()
     result = {}
@@ -718,9 +603,8 @@ def update_episode_status_by_task(task_id: str, status: str):
 # ============================================================
 
 def setup_database():
-    """数据库初始化总入口：建表 + 迁移旧数据"""
+    """创建当前数据库表结构与索引"""
     init_db()
-    migrate_from_json()
     task_count = len(load_tasks_index())
     sub_count = len(get_subscriptions())
     print(f"[DB] SQLite 数据库就绪: {task_count} 条任务, {sub_count} 个订阅")

@@ -9,7 +9,6 @@ from pydub import AudioSegment
 from core import config
 from pipeline.dubbing_plan import validate_manifest
 from pipeline.speaker_analysis import build_analysis
-from pipeline import ref_audio_utils as refs
 from pipeline.step4b_sentence_mixer import mix_sentence_audio
 from pipeline import step5_video_assemble as video
 from pipeline.tts_cache import synthesis_key
@@ -88,26 +87,6 @@ def test_ass_preserves_name_and_text_commas(tmp_path):
     segments, translations, _ = parse_ass_subtitle(str(ass))
     assert segments[0]['speaker'] == 'A'
     assert segments[0]['text'] == 'Hello, world'
-
-
-@pytest.mark.parametrize('labels', [('', ''), ('A', 'B')])
-def test_short_answer_never_borrows_other_speaker(tmp_path, monkeypatch, labels):
-    monkeypatch.setattr(refs, '_get_audio_duration_ms', lambda _: 10000)
-    clips = []
-    monkeypatch.setattr(refs, '_extract_audio_clip', lambda *a: clips.append(a))
-    segments = [dict(start=0, end=1, speaker=labels[0]), dict(start=1, end=6, speaker=labels[1])]
-    with pytest.raises(ValueError):
-        refs.extract_ref_audio_speaker_local('x', segments, [{'segment_index': 0}], str(tmp_path))
-    assert not clips
-
-
-def test_same_speaker_fallback_crop_stays_inside_reference(tmp_path, monkeypatch):
-    monkeypatch.setattr(refs, '_get_audio_duration_ms', lambda _: 60000)
-    clips = []
-    monkeypatch.setattr(refs, '_extract_audio_clip', lambda _, s, e, p: clips.append((s,e)))
-    refs.extract_ref_audio_speaker_local('x', [dict(start=0,end=1,speaker='A'),
-        dict(start=20,end=50,speaker='A')], [{'segment_index':0}], str(tmp_path))
-    assert 20000 <= clips[0][0] < clips[0][1] <= 50000
 
 
 def test_reference_content_invalidates_cache(tmp_path):
@@ -189,7 +168,7 @@ def test_final_caption_splits_preserve_speaker_name(tmp_path):
     segment=dict(start=0,end=2,speaker='A',text='A whole sentence.',
                  captions=[dict(text_zh='完整'),dict(text_zh='句子。')])
     mapping=[dict(type='tts_chinese',segment_index=0,mixed_start=0,mixed_end=3)]
-    path=video.generate_bilingual_srt([segment],{0:'完整句子。'},mapping,str(tmp_path/'final.ass'))
+    path=video.generate_bilingual_ass([segment],{0:'完整句子。'},mapping,str(tmp_path/'final.ass'))
     dialogues=[line for line in Path(path).read_text().splitlines() if line.startswith('Dialogue:')]
     assert len(dialogues)==2
     assert all(line.split(',')[4]=='A' for line in dialogues)
@@ -337,3 +316,48 @@ def test_successful_encode_with_missing_frames_is_rejected(monkeypatch):
     monkeypatch.setattr(subprocess, 'check_output', lambda *a, **k: '{"streams":[{"nb_frames":"4"}]}')
     with pytest.raises(RuntimeError, match='expected 5, got 4'):
         video._validate_video_frames('short.mp4', 5)
+
+
+def test_voice_clone_requires_source_analysis(tmp_path, monkeypatch):
+    from services import web_app as wa
+    monkeypatch.setattr(config, 'SENTENCE_TTS_VOICE_CLONE', True)
+    monkeypatch.setattr(config, 'RESULT_DIR', str(tmp_path))
+    monkeypatch.setattr(wa, 'get_task', lambda _: {'_basename': 'test'})
+    monkeypatch.setattr(wa, '_ensure_vocals_for_tts', lambda _: 'source.wav')
+    with pytest.raises(ValueError, match='Source speaker analysis required'):
+        wa._build_confucius_ref_map('test', [{'speaker': 'A'}], [0])
+
+
+def test_reference_pool_extracts_only_selected_source_interval(tmp_path):
+    import shutil
+    import wave
+    from pipeline.speaker_analysis import extract_reference_pool
+    if not shutil.which('ffmpeg'):
+        pytest.skip('FFmpeg required')
+    source = tmp_path / 'source.wav'
+    with wave.open(str(source), 'wb') as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(16000)
+        stream.writeframes(b'\x00\x00' * (16000 * 5))
+    analysis = {'analysis_id': 'analysis', 'references': {
+        'A': {'speaker': 'A', 'start': 1, 'end': 4, 'text': 'qualified reference'}}}
+    pool = extract_reference_pool(str(source), analysis, str(tmp_path / 'references'))
+    with wave.open(pool['A']['path'], 'rb') as stream:
+        assert stream.getnframes() / stream.getframerate() == 3
+    assert pool['A']['speaker'] == 'A'
+    assert len(pool['A']['sha256']) == 64
+
+
+def test_reference_extraction_failure_leaves_no_cache_file(tmp_path, monkeypatch):
+    import subprocess
+    from pipeline.speaker_analysis import _extract_audio_clip
+    def fail(command, **kwargs):
+        Path(command[-1]).write_bytes(b'partial output')
+        raise subprocess.CalledProcessError(1, command)
+    monkeypatch.setattr(subprocess, 'run', fail)
+    target = tmp_path / 'reference.wav'
+    with pytest.raises(subprocess.CalledProcessError):
+        _extract_audio_clip('source.wav', 0, 3000, target)
+    assert not target.exists()
+    assert not list(tmp_path.glob('.reference-*'))

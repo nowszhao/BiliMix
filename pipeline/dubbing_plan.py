@@ -79,27 +79,6 @@ def validate_manifest(manifest, analysis):
     return output
 
 
-def bind_legacy_segments(segments, analysis):
-    """Legacy ASS is accepted only when an utterance belongs to one real speaker.
-
-    A mixed utterance cannot be repaired by assigning its longest-overlap speaker.
-    Requiring a manifest in that case preserves translation instead of redoing it.
-    """
-    result = []
-    for i, seg in enumerate(segments):
-        hits = [w for w in analysis["words"]
-                if min(seg["end"], w["end"]) - max(seg["start"], w["start"]) > 0.02]
-        speakers = {w["speaker"] for w in hits}
-        if len(speakers) != 1 or not all(known_speaker(s) for s in speakers):
-            raise ValueError(f"ASS row {i+1}: mixed/unknown speaker; provide a refined dub manifest")
-        speaker = next(iter(speakers))
-        if seg.get("speaker") and seg["speaker"] != speaker:
-            raise ValueError(f"ASS row {i+1}: Name disagrees with source speaker analysis")
-        result.append({**seg, "speaker": speaker, "unit_id": f"legacy_{i+1}",
-                       "boundary_after": "sentence_end"})
-    return result
-
-
 def canonical_hash(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
                                      separators=(",", ":")).encode()).hexdigest()

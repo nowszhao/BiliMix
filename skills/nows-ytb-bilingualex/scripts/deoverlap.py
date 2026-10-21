@@ -1,29 +1,9 @@
 #!/usr/bin/env python3
-"""
-deoverlap.py — Minimal fix for subtitle lines that have NO visible window.
+"""Give fully hidden ASS events a minimum visible interval.
 
-Why this exists (and what it does NOT do):
-
-YouTube ASR subtitles are a "rolling window": each line is a 2-5s window that
-starts while the previous line is still on screen. That overlap is NORMAL — the
-start timestamps are aligned to the audio (verified: audio speech onset 16.318s
-vs. first caption start 16.32s). Therefore this script NEVER pushes a line's
-start forward to de-overlap it: doing so would break lip-sync (the subtitle
-would appear 1-2s after the words are spoken).
-
-The only real defect is a line whose ENTIRE window is inside the previous
-line's (end <= previous end): it has no time of its own, so a player shows it
-for 0 seconds. This script gives those rare lines a minimum visible window by
-EXTENDING their end forward (start is never touched). The audio-alignment
-of every other line is preserved exactly.
-
-Only the timestamps change; text/style/layer are untouched; line count is
-unchanged.
-
-Usage:
-    python3 deoverlap.py <input.ass> [--out <output.ass>] [--min-duration 0.5]
-
-If --out is omitted, the input file is modified in place.
+Preserve start times, text, style and event count. Extend only end times of
+hidden events; use render_subtitles.py for final display pagination.
+Usage: python deoverlap.py input.ass [--out output.ass] [--min-duration 0.5]
 """
 
 import argparse

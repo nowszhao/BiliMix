@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install ./sdk pytest
+      - run: python -m pip install ./sdk pytest setuptools wheel
       - run: python scripts/sync_skill_layout.py --check
       - run: python -m pytest tests/test_portable_clients.py tests/test_subtitle_layout.py tests/test_settings_store.py -q
-      - run: python scripts/package_skills.py --output dist/skills
+      - run: python scripts/release.py --output dist

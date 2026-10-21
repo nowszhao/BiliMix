@@ -43,16 +43,6 @@ def load_tasks_index() -> dict:
         return {}
 
 
-def save_tasks_index(index: dict):
-    """将任务索引写入 SQLite（兼容旧接口：全量写入）"""
-    try:
-        for task_id, summary in index.items():
-            summary["task_id"] = task_id
-            save_task_to_index(task_id, summary)
-    except Exception as e:
-        print(f"[WARN] 保存任务索引失败: {e}")
-
-
 def save_task_result_to_disk(result_dir: str, data: dict):
     """将完整任务结果持久化到磁盘（供重启后恢复）"""
     try:
@@ -83,7 +73,7 @@ def save_task_result_to_disk(result_dir: str, data: dict):
         task_id = data.get("task_id", "")
         current = tasks.get(task_id, {})
         for key in ("_analysis_id", "_dub_manifest", "_speaker_analysis", "_reference_manifest",
-                    "_ref_select_mode", "_audio_path", "_video_path", "_raw_segments",
+                    "_audio_path", "_video_path", "_raw_segments",
                     "_subtitle_mode", "_subtitle_font_size"):
             if key in current and key not in data:
                 data[key] = current[key]
@@ -300,7 +290,7 @@ def restore_task_from_disk(task_id: str) -> dict:
                 "_subtitle_path": saved.get("_subtitle_path", ""),
             }
             for key in ("_analysis_id", "_dub_manifest", "_speaker_analysis", "_reference_manifest",
-                        "_ref_select_mode", "_audio_path", "_raw_segments"):
+                        "_audio_path", "_raw_segments"):
                 if key in saved:
                     task[key] = saved[key]
             # 恢复翻译/识词批次的断点数据

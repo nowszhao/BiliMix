@@ -1,4 +1,4 @@
-> 音频优先协议 v1：本阶段仍逐行 1:1 保留来源校验，但显示行不是最终 TTS 单位。翻译完成必须运行 build_dub_manifest.py prepare，按人物和语义生成 dub_units_plan.json，再 apply。允许同人相邻行合并/自然重写成完整中文；source_indices 必须按顺序覆盖全部行各一次；禁止跨人合并或重排对话。可给完整话语设置多条 captions，仅影响显示，不分开合成。
+> 人物与话语约束：本阶段仍逐行 1:1 保留来源校验，但显示行不是最终 TTS 单位。翻译完成必须运行 build_dub_manifest.py prepare，按人物和语义生成 dub_units_plan.json，再 apply。允许同人相邻行合并/自然重写成完整中文；source_indices 必须按顺序覆盖全部行各一次；禁止跨人合并或重排对话。可给完整话语设置多条 captions，仅影响显示，不分开合成。
 
 # 翻译指令（Translation Prompt Template）
 
@@ -58,13 +58,13 @@
    - 输出行数 = 输入行数，顺序一致，不允许合并或拆分行；
    - **每行的内容必须对应当前 `idx` 的源行**。⚠️ 禁止把相邻源行的内容并进本行（合并）、
      跳过某行、或让某行内容整体对应到下一行源（这会造成整块偏移，且时间戳正确时
-     常规校验抓不到——实测发生过 2 次，后续用 verify_translation.py 才发现）。
+     需要运行 verify_translation.py 检查来源对应）。
      拿不准就保留源行原样，绝不删改行结构；
    - 任何字段内不允许出现制表符 `\t`；英文和中文内部都不允许出现 `||`；
    - 若某句英文为空或只是语气词（"uh"、"hmm"），中文可译为"嗯""呃"等对应语气词，
      保持该行存在，不得删除。
 
-## TTS 净化与纠错补充规范（真实项目实测沉淀）
+## TTS 文本与术语校正
 
 以下规则来自实际交付 review 的经验，违反会直接损害配音效果，优先级等同格式硬规则：
 
@@ -81,7 +81,7 @@
    ⚠️ 例外：若标题是台词中引用的真实内容——例如主持人引用他人演讲的题目
    （"I was hearing 'Why Startups Win During Technology Shifts'"）——这是台词本身，必须保留并译出。
 
-3. **ASR 纠错要全面，不只是同音词。** 常见实测错误模式：
+3. **ASR 纠错要全面，不只是同音词。** 常见错误类型：
    - 人名/品牌名：Sam Alman→Sam Altman、Peter Keel→Peter Thiel、ChachiBT→ChatGPT、Looped→Loopt、codeex→codex；
    - 指人误用 which→who（"join Stripe, who is Greg Brockman"）；
    - 整段乱码需按语义重建：如 "What are they claim What What's the claim blog?" → "What are they claiming? What's the claim, blah?"；

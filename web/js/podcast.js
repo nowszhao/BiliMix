@@ -509,7 +509,7 @@ async function _autoRefreshNewFeed(rssUrl) {
 // ============================================================
 
 async function loadSavedSubscriptions() {
-    // 新布局：订阅列表统一在左侧边栏展示，此函数保留兼容旧调用但不再渲染。
+    // 在 RSS 面板展示已订阅的播客。
     const panel = document.getElementById('rss-saved-subscriptions');
     if (!panel) return;
     try {

@@ -1,226 +1,67 @@
-# BiliMix CLI SDK
+# BiliMix SDK
 
-面向 AI Agent 的 BiliMix 命令行接口与 Python 客户端库。
-将 BiliMix Web App 的全部 REST API 包装为结构化、可脚本化的工具。
+Python 3.10+ 的命令行与 HTTP 客户端。CLI 默认将 JSON 写入 stdout，进度与诊断写入 stderr。
 
----
+## 安装与连接
 
-## 安装
-
-```bash
-cd sdk/
-pip install -e .
-
-bmx --help
+```text
+python -m pip install /path/to/BiliMix/sdk
+python -m bilimix_cli --server <服务URL> auth status
+bmx --server <服务URL> auth login --username <用户名> --password <密码>
 ```
 
-### Python SDK
+服务地址优先级：`--server` → `BILIMIX_SERVER` → 保存的配置 → `http://localhost:5000`。配置目录由 `BILIMIX_HOME` 指定，默认 `~/.bilimix`；登录会话按服务器隔离。
+
+客户端无需模型、Torch 或 Hugging Face token。环境与安装见 [安装说明](../docs/installation.md)。
+
+## 精翻配音
+
+```text
+bmx --server <服务URL> audio upload source.mp4 --field local_path
+bmx --server <服务URL> video analyze --server-path <媒体路径> --wait
+bmx --server <服务URL> audio upload refined.ass --field local_path
+bmx --server <服务URL> task submit --type video --server-path <媒体路径> --subtitle-path <ASS路径> --dub-manifest dub_manifest.json --analysis-id <分析ID>
+bmx --server <服务URL> task wait <task_id>
+bmx --server <服务URL> video download --task-id <task_id> -o dubbed.mp4
+bmx --server <服务URL> video download-subtitles --task-id <task_id> -o dubbed.ass
+```
+
+工作 ASS 和配音 manifest 必须同时提供，人物分析必须对应同一媒体。完整话语只合成一次，显示字幕独立分页。结果中的 `video_result.subtitle_url` 是最终 ASS，`subtitle_layout` 提供布局汇总。
+
+完整流程见 [精翻配音协议](../docs/audio-first-dubbing.md)。
+
+## 常用命令
+
+| 命令 | 用途 |
+|---|---|
+| `task list / status / result / wait` | 任务状态与结果 |
+| `task cancel / retry / redo / delete` | 任务操作 |
+| `audio upload / download` | 上传与音频下载 |
+| `subtitle parse <路径>` | 校验工作 ASS |
+| `config get / set` | 服务设置 |
+| `tts synth --ref-audio <WAV> --text <文本> --wait` | 独立声音克隆 |
+| `episodes / subscriptions / favorites` | 播客内容管理 |
+| `api` | 服务能力目录 |
+
+`--pretty` 美化 JSON；`--field <字段路径>` 提取嵌套字段；`--quiet` 隐藏进度。完整参数以 `bmx <命令> --help` 和 [命令参考](docs/cli.md) 为准。
+
+## Python 客户端
 
 ```python
-from bilimix_cli.client import BiliMixClient
+from bilimix_cli import BiliMixClient
 
-client = BiliMixClient("http://localhost:5050")
-client.post_json("/api/login", {"username": "admin", "password": "bilimix2024"})
-
-# 提交任务
-result = client.post_json("/api/submit", {
-    "url": "https://example.com/ep.mp3",
-    "title": "My Podcast",
-    "skip_confirmation": True,
-})
-task_id = result["task_id"]
-
-# 轮询进度
-import time
-while True:
-    task = client.get(f"/api/task/{task_id}")
-    if task["status"] in ("completed", "error", "cancelled"):
-        break
-    time.sleep(2)
+client = BiliMixClient("https://your-server.example")
+capabilities = client.get("/api")
+tasks = client.get("/api/tasks")
 ```
-
----
-
-## 环境变量
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `BILIMIX_SERVER` | `http://localhost:5000` | 服务地址 |
-| `BILIMIX_HOME` | `~/.bilimix` | session 存储目录 |
-
-## 认证
-
-```bash
-bmx auth login --username admin --password bilimix2024
-```
-
----
-
-## 命令速查
-
-### 订阅单集
-
-| 命令 | 说明 |
-|------|------|
-| `bmx episodes list [--status] [--time-range today\|week\|month\|all]` | 单集列表 |
-| `bmx episodes stats [--time-range]` | 统计 + 各订阅未读数 |
-| `bmx episodes update <id> --status {unread\|read\|transcribed\|dismissed}` | 更新状态 |
-| `bmx episodes mark-read [--rss-url] [--time-range]` | 批量已读 |
-| `bmx episodes refresh` | 刷新所有订阅源 |
-| `bmx episodes refresh-feed <rss_url>` | 刷新单个订阅源 |
-
-### 任务管理
-
-| 命令 | 说明 |
-|------|------|
-| `bmx task submit --url <URL> [--wait]` | 提交音频配音 |
-| `bmx task submit --url <URL> --type video [--subtitle-mode bilingual]` | 提交视频配音 |
-| `bmx task submit --local-path <FILE> [--keep-bgm]` | 提交本地文件，可选保留背景音 |
-| `bmx task submit ... [--subtitle-path <ASS>] [--ref-select-mode MODE]` | 提交任务，可指定外部字幕 / 参考音频模式 |
-| `bmx task list [--limit N]` | 任务列表（可限制返回条数） |
-| `bmx task status <id>` | 查询状态 |
-| `bmx task result <id>` | 获取完整结果 |
-| `bmx task cancel <id>` | 终止任务 |
-| `bmx task retry <id>` | 断点续传 |
-| `bmx task redo <id> [--wait]` | 完整重做（清除产物，从头执行） |
-| `bmx task reorder <id> --direction up\|down` | 调整排队顺序 |
-| `bmx task delete <id>` | 删除任务及文件 |
-| `bmx task wait <id> [--until STATUS]` | 阻塞等待 |
-| `bmx task confirm-sentences <id> --translations <JSON>` | 确认句子翻译 |
-| `bmx task retry-synthesis <id>` | 仅重试 TTS 合成 |
-
-### 播客 & 内容
-
-| 命令 | 说明 |
-|------|------|
-| `bmx podcast search <q>` | 搜索播客 |
-| `bmx podcast rss <url>` | 解析 RSS Feed |
-| `bmx subscriptions list / add / remove / refresh` | RSS 订阅管理 |
-| `bmx favorites list / add / remove / check` | 播客收藏管理 |
-
-### 音频 / 视频
-
-| 命令 | 说明 |
-|------|------|
-| `bmx audio upload <file>` | 上传音频/视频/字幕文件 |
-| `bmx audio download [--task-id\|--path] [--type mixed\|original] [-o FILE]` | 下载配音/原始音频 |
-| `bmx audio url [--task-id\|--path]` | 获取音频下载 URL |
-| `bmx video download [--task-id\|--path] [-o FILE]` | 下载配音视频 |
-| `bmx video download-srt [--task-id\|--path] [-o FILE]` | 下载字幕文件 (ASS) |
-| `bmx subtitle parse <local_path>` | 解析/校验服务端双语字幕文件 |
-| `bmx file download <path> [-o FILE] [--name NAME]` | 通用附件下载（支持自定义文件名） |
-
-### 翻译 & 工具
-
-| 命令 | 说明 |
-|------|------|
-| `bmx translate word <english> [--context]` | 翻译单词/短语 |
-| `bmx translate word-levels --words <...>` | 查询 BNC/COCA 词频等级 |
-| `bmx config get / set` | 配置管理 |
-| `bmx api` | API 端点目录 |
-
-### 独立语音合成（TTS）
-
-参考音频 + 文本 → 音频，零样本声音克隆，与翻译流水线完全解耦。
-
-| 命令 | 说明 |
-|------|------|
-| `bmx tts synth --ref-audio <FILE> --text <TEXT> [--wait] [-o FILE]` | 本地参考音频（自动上传）+ 文本合成 |
-| `bmx tts synth --ref-path <PATH> --text-file <FILE> [--lang auto]` | 用服务端参考音频批量合成（文本文件每行一条） |
-| `bmx tts list [--limit N] [--status S]` | 任务列表 |
-| `bmx tts status <job_id>` | 任务状态 |
-| `bmx tts result <job_id>` | 任务结果（含音频下载地址） |
-| `bmx tts download <job_id> [--index N] [-o FILE]` | 下载合成结果 |
-| `bmx tts wait <job_id> [-o FILE]` | 等待任务完成 |
-| `bmx tts cancel / retry / delete <job_id>` | 终止 / 重试 / 删除任务 |
-| `bmx tts languages` | 支持的合成语种 |
-
-`--lang`：`auto`(默认，按语种切分分别合成，中英混排中文更清楚) /
-`zh` / `en` / `ja` / `ko`(整段一套发音规则，语流更连贯)。
-参考音频必须位于服务端 `data/` 目录内。详见 `docs/cli.md`。
-
-### 全局选项
-
-- `--server URL` 服务地址
-- `--pretty` 美化 JSON 输出
-- `--field PATH` 提取嵌套字段，如 `result.mixed_audio`
-
----
-
-## 一行完成
-
-```bash
-# 音频配音：提交 + 等待完成 + 提取混合音频 URL
-bmx task submit --url https://example.com/ep.mp3 --wait --field result.mixed_audio
-
-# 音频配音：提交 + 等待 + 下载混合音频
-bmx task submit --url https://example.com/ep.mp3 --skip-confirm --wait
-bmx audio download --task-id <id> -o output.mp3
-
-# 视频配音：本地文件 + 双语字幕 + 等待完成
-bmx task submit --type video --local-path ./test.mp4 --subtitle-mode bilingual --wait
-
-# 下载配音视频 + 字幕
-bmx video download --task-id <id> -o dubbed.mp4
-bmx video download-srt --task-id <id> -o subtitles.ass
-
-# 完整重做失败的任务
-bmx task redo <task_id> --wait
-
-# 查今天新增的单集
-bmx episodes list --time-range today
-
-# 查看所有未读
-bmx episodes stats --time-range all
-
-# 用外部双语字幕直接生成配音视频（跳过转录/翻译）
-bmx audio upload ./subtitle.ass
-bmx task submit --type video --video-url "https://youtu.be/xxx" \
-    --subtitle-path "<local_path>" --wait
-```
-
----
 
 ## 退出码
 
 | 码 | 含义 |
-|----|------|
+|---|---|
 | 0 | 成功 |
-| 1 | API 错误 (HTTP 4xx/5xx) |
-| 2 | 未认证 (401) |
-| 3 | 请求超时 |
+| 1 | API/任务错误 |
+| 2 | 未认证 |
+| 3 | 超时 |
 | 4 | 网络错误 |
-
----
-
-## 目录结构
-
-```
-sdk/
-├── bilimix_cli/
-│   ├── cli.py            # CLI 主逻辑
-│   └── client.py         # Python SDK
-├── README.md
-├── requirements.txt
-└── setup.py
-```
-
----
-
-## License
-
-MIT
-
-
-## 精翻音频优先协议 v1
-
-`bmx video analyze --server-path <uploaded MP4> --wait` 获取 `result.analysis`。
-精翻后用 `bmx task submit --type video --server-path <same MP4> --dub-manifest <local JSON> --analysis-id <analysis task id> --ref-select-mode speaker_global` 提交完整中文话语。
-`bmx api --field dubbing_protocol` 应返回1。manifest作为结构化JSON请求发送，显示字幕切分不会拆开合成。完整契约见 `docs/audio-first-dubbing.md`。
-
-
-### Portable Agent clients (1.1)
-
-Use Python 3.10+ and `python -m pip install /path/to/BiliMix/sdk`; `python -m bilimix_cli` avoids PATH assumptions. Server selection is `--server` > `BILIMIX_SERVER` > saved configuration > localhost:5000. `BILIMIX_HOME` selects the configuration directory. Authentication sessions are now scoped per server; log in once per authenticated server after upgrading from an unscoped 1.0 session. `auth status` includes the actual `server` URL.
-
-The repository includes two provider-independent skills and an explicit-destination installer. See [portable workflow](../docs/portable-workflow.md). No model packages or remote credentials are needed on the client.
+| 5 | 依赖错误 |

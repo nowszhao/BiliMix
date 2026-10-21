@@ -70,7 +70,7 @@ def test_whole_and_block_export_use_identical_display_layout(tmp_path):
     translations={0:FIXTURE['text_zh']}
     mapping=[dict(type='tts_chinese',segment_index=0,orig_start=0,orig_end=10,
                   mixed_start=0,mixed_end=15,chinese=FIXTURE['text_zh'],speaker='A')]
-    whole=video.generate_bilingual_srt(segments,translations,mapping,str(tmp_path/'whole.ass'),
+    whole=video.generate_bilingual_ass(segments,translations,mapping,str(tmp_path/'whole.ass'),
         video_width=1280,video_height=720,subtitle_font_size=40)
     block=video._build_block_ass(mapping,0,str(tmp_path/'block.ass'),video_width=1280,
         video_height=720,subtitle_mode='bilingual',font_size=40,segments=segments,translations=translations)
@@ -90,8 +90,8 @@ def test_sub_centisecond_pages_fail_instead_of_becoming_invisible():
 
 
 def test_none_mode_writes_no_visible_dialogue(tmp_path):
-    from pipeline.step5_video_assemble import generate_bilingual_srt
-    path=generate_bilingual_srt([dict(start=0,end=2,text='Source',speaker='A')],{0:'完整句子。'},
+    from pipeline.step5_video_assemble import generate_bilingual_ass
+    path=generate_bilingual_ass([dict(start=0,end=2,text='Source',speaker='A')],{0:'完整句子。'},
         [dict(type='tts_chinese',segment_index=0,mixed_start=0,mixed_end=3)],
         str(tmp_path/'none.ass'),subtitle_mode='none',video_width=1280,video_height=720)
     assert not any(line.startswith('Dialogue:')for line in Path(path).read_text(encoding='utf-8').splitlines())

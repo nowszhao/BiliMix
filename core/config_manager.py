@@ -7,7 +7,10 @@ from core import config
 
 
 # 可更新的配置项映射: { json_key: (config_attr, type_converter) }
-from core.settings_store import UPDATABLE_CONFIGS, save_settings
+from core.settings_store import UPDATABLE_CONFIGS, save_settings, validate_settings
+from threading import RLock
+
+_UPDATE_LOCK = RLock()
 
 
 def get_all_config() -> dict:
@@ -39,7 +42,6 @@ def get_all_config() -> dict:
         "output_format": getattr(config, "OUTPUT_FORMAT", "mp3"),
         "output_bitrate": getattr(config, "OUTPUT_BITRATE", "192k"),
         # Qwen3-TTS
-        "same_speaker_gap": getattr(config, "SAME_SPEAKER_GAP", 0.8),
         # Confucius4-TTS-CPU
         "confucius_tts_device": getattr(config, "CONFUCIUS4_TTS_DEVICE", "cpu"),
         "confucius_tts_temperature": getattr(config, "CONFUCIUS4_TTS_TEMPERATURE", 0.8),
@@ -59,10 +61,6 @@ def get_all_config() -> dict:
         # 默认保留背景音乐
         "keep_bgm": getattr(config, "KEEP_BGM", False),
         # 参考音频配置
-        "ref_select_mode": getattr(config, "REF_SELECT_MODE", "speaker_local"),
-        "ref_min_duration": getattr(config, "REF_MIN_DURATION", 2),
-        "ref_target_duration": getattr(config, "REF_TARGET_DURATION", 5),
-        "ref_max_duration": getattr(config, "REF_MAX_DURATION", 15),
         # 句子翻译
         "sentence_tts_voice_clone": getattr(config, "SENTENCE_TTS_VOICE_CLONE", True),
         # LLM 翻译
@@ -87,42 +85,20 @@ def get_all_config() -> dict:
     }
 
 
-def update_config(data: dict) -> tuple:
-    """
-    更新配置（内存 + 文件）。
-
-    Args:
-        data: {json_key: value} 配置项
-
-    Returns:
-        (updated_attrs, error_msg): 成功更新的属性列表, 错误信息(None 表示无错误)
-    """
-    updated = []
-    for key, value in data.items():
-        if key in UPDATABLE_CONFIGS:
-            attr, converter = UPDATABLE_CONFIGS[key]
-            try:
-                converted = converter(value)
-                setattr(config, attr, converted)
-                updated.append(attr)
-            except (ValueError, TypeError) as e:
-                print(f"[Config] 忽略无效值: {key}={value} ({e})")
-
-    # 保存到独立设置文件，保留源码默认值和 config_local.py
-    if updated:
-        try:
-            _write_config_file(updated)
-            print(f"[Config] 已更新 {len(updated)} 项: {', '.join(updated)}")
-        except Exception as e:
-            print(f"[Config] 写入文件失败: {e}")
-            return updated, f"配置已更新到内存，但写入文件失败: {str(e)}"
-
-    return updated, None
-
-
-def _write_config_file(updated_attrs: list):
-    """Persist UI preferences separately from code and machine-local Python."""
-    initial = {attr:getattr(config,attr) for attr,_ in UPDATABLE_CONFIGS.values()
-               if hasattr(config,attr)}
-    updated = {attr:getattr(config,attr) for attr in updated_attrs}
-    save_settings(config.SETTINGS_FILE,updated,initial=initial)
+def update_config(data: dict) -> list:
+    """Validate and persist a complete update before exposing it to the process."""
+    if not isinstance(data, dict):
+        raise ValueError('Configuration must be an object')
+    unknown = set(data) - UPDATABLE_CONFIGS.keys()
+    if unknown:
+        raise ValueError('Unknown configuration fields: ' + ', '.join(sorted(unknown)))
+    changed = validate_settings({UPDATABLE_CONFIGS[key][0]: value for key, value in data.items()})
+    if not changed:
+        return []
+    with _UPDATE_LOCK:
+        initial = {attr: getattr(config, attr) for attr, _ in UPDATABLE_CONFIGS.values()
+                   if hasattr(config, attr)}
+        save_settings(config.SETTINGS_FILE, changed, initial=initial)
+        for attr, value in changed.items():
+            setattr(config, attr, value)
+    return list(changed)

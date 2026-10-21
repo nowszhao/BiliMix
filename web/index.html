@@ -465,11 +465,7 @@
                                         <span class="option-row-desc">声音克隆的参考音频选择方式</span>
                                     </div>
                                 </div>
-                                <select id="audio-ref-select-mode" class="settings-select" style="width:180px;">
-                                    <option value="">使用全局设置</option>
-                                    <option value="speaker_local">每段独立克隆</option>
-                                    <option value="speaker_global">每人最清晰克隆</option>
-                                </select>
+                                <span class="option-row-desc">同一人物全片固定声线</span>
                             </div>
                             <div class="option-row">
                                 <div class="option-row-left">
@@ -478,17 +474,20 @@
                                     </span>
                                     <div class="option-row-text">
                                         <span class="option-row-title">外部字幕（可选）</span>
-                                        <span class="option-row-desc">上传双语 ASS 字幕文件，跳过转录和翻译</span>
+                                        <span class="option-row-desc">选择精翻工作 ASS 和配音计划，使用原人物声线配音</span>
                                     </div>
                                 </div>
                                 <div class="file-upload-wrapper" style="flex:1;max-width:200px;">
-                                    <input type="file" id="audio-subtitle-file-input" accept=".ass,.srt" onchange="handleSubtitleFile(this)" style="display:none;">
+                                    <input type="file" id="audio-subtitle-file-input" accept=".ass" onchange="handleSubtitleFile(this)" style="display:none;">
                                     <button class="file-upload-btn" onclick="document.getElementById('audio-subtitle-file-input').click(); return false;">选择文件</button>
                                     <span id="audio-subtitle-file-name" style="margin-left:8px;font-size:12px;color:var(--text-secondary);"></span>
                                     <span id="audio-subtitle-parse-result" style="margin-left:8px;font-size:12px;"></span>
                                     <button id="audio-subtitle-clear-btn" class="file-upload-clear" onclick="clearSubtitleFile()" title="移除字幕" style="display:none;">
                                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                     </button>
+                                <input type="file" id="audio-dub-manifest-input" accept=".json" onchange="handleDubManifest(this)" style="display:none;">
+                                    <button class="file-upload-btn" onclick="document.getElementById('audio-dub-manifest-input').click(); return false;">选择配音计划</button>
+                                    <span id="audio-dub-manifest-name" class="file-upload-name"></span>
                                 </div>
                             </div>
                             <div class="option-row">
@@ -612,17 +611,20 @@
                                     </span>
                                     <div class="option-row-text">
                                         <span class="option-row-title">外部字幕（可选）</span>
-                                        <span class="option-row-desc">上传双语 ASS 字幕文件，跳过转录和翻译</span>
+                                        <span class="option-row-desc">选择精翻工作 ASS 和配音计划，使用原人物声线配音</span>
                                     </div>
                                 </div>
                                 <div class="file-upload-wrapper" style="flex:1;max-width:200px;">
-                                    <input type="file" id="subtitle-file-input" accept=".ass,.srt" onchange="handleSubtitleFile(this)" style="display:none;">
+                                    <input type="file" id="subtitle-file-input" accept=".ass" onchange="handleSubtitleFile(this)" style="display:none;">
                                     <button class="file-upload-btn" onclick="document.getElementById('subtitle-file-input').click(); return false;">选择文件</button>
                                     <span id="subtitle-file-name" style="margin-left:8px;font-size:12px;color:var(--text-secondary);"></span>
                                     <span id="subtitle-parse-result" style="margin-left:8px;font-size:12px;"></span>
                                     <button id="subtitle-clear-btn" class="file-upload-clear" onclick="clearSubtitleFile()" title="移除字幕" style="display:none;">
                                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                     </button>
+                                <input type="file" id="dub-manifest-input" accept=".json" onchange="handleDubManifest(this)" style="display:none;">
+                                    <button class="file-upload-btn" onclick="document.getElementById('dub-manifest-input').click(); return false;">选择配音计划</button>
+                                    <span id="dub-manifest-name" class="file-upload-name"></span>
                                 </div>
                             </div>
                             <div class="option-row">
@@ -647,11 +649,7 @@
                                         <span class="option-row-desc">声音克隆的参考音频选择方式</span>
                                     </div>
                                 </div>
-                                <select id="ref-select-mode" class="settings-select" style="width:180px;">
-                                    <option value="">使用全局设置</option>
-                                    <option value="speaker_local">每段独立克隆</option>
-                                    <option value="speaker_global">每人最清晰克隆</option>
-                                </select>
+                                <span class="option-row-desc">同一人物全片固定声线</span>
                             </div>
                             <div class="option-row">
                                 <div class="option-row-left">
@@ -671,7 +669,7 @@
                         </div>
                     </div>
 
-                    <!-- 兼容隐藏字段 -->
+                    <!-- 任务处理模式 -->
                     <div id="mode-hint" class="hint-banner" style="display:none;">
                         <span id="mode-hint-text"></span>
                     </div>

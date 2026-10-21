@@ -1,15 +1,13 @@
 ---
 name: nows-ytb-bilingualex
 description: Download a YouTube video and produce refined English–Chinese subtitles and complete Chinese dubbing units. Use for YouTube bilingual precision translation and natural spoken Chinese, including the BiliMix audio-first dubbing workflow.
-metadata:
-  agent_created: "true"
 ---
 
-# YouTube 精翻与完整话语（音频优先 v1）
+# YouTube 精翻与完整话语
 
 保留精翻和语义重组：同一人的多个字幕碎片可合并成完整话语。中文自然语速优先，画面随后变速适配。人物身份、配音话语、显示字幕分别保存；字幕切换不得触发额外 TTS 或句内停顿。
 
-翻译与中文话语重组由本地本 skill 的模型执行；BiliMix 服务端负责原声分析、声线绑定、配音与音画合成。提交 manifest 后不再调用服务端翻译覆盖精翻。
+翻译与中文话语重组由本地当前 Agent 的模型执行；BiliMix 服务端负责原声分析、声线绑定、配音与音画合成。提交 manifest 后不再调用服务端翻译覆盖精翻。
 
 ## 可移植环境
 

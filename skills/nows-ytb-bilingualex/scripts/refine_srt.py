@@ -404,14 +404,8 @@ def match_sentence(sentence_words: list[str], stream: list[tuple[str, int, int]]
     Returns (end_pos, unmatched) where unmatched counts sentence words absent
     from the remaining stream (model reworded / added content).
 
-    Robustness fixes (2026-09):
-    - A hyphenated refined word ("open-source") is matched against its
-      components ("open", "source") so ASR-corrected hyphenation does not
-      desync the matcher.
-    - If a token cannot be found in the remaining stream it is skipped in place
-      (unmatched += 1) WITHOUT fast-forwarding `end` to stream end. The old
-      behaviour let a single unmatchable token collapse every later sentence
-      into one window; now a local miss only drops that one token.
+    Hyphenated words match their source components. Unmatched tokens are
+    counted without consuming the rest of the source stream.
     """
     end = pos
     unmatched = 0
@@ -617,7 +611,7 @@ def cmd_apply(args) -> int:
                 f"({pos}/{n_stream}); sentences may be missing")
 
     if total_unmatched:
-        problems.append(f"{total_unmatched} unmatched words: refusing estimated/collapsed legacy timeline")
+        problems.append(f"{total_unmatched} unmatched words: source word sequence must be preserved")
     if any(anchored[i][0] <= anchored[i-1][0] for i in range(1, len(anchored))):
         problems.append("Repeated/decreasing start timestamps: use aligned source analysis")
     if problems:
