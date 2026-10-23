@@ -94,7 +94,8 @@ def init_db():
                 original_duration  REAL DEFAULT 0,
                 mixed_duration     REAL DEFAULT 0,
                 keep_bgm           INTEGER DEFAULT 0,
-                queue_order        INTEGER DEFAULT 0
+                queue_order        INTEGER DEFAULT 0,
+                tts_reference_mode TEXT NOT NULL DEFAULT 'speaker'
             );
 
             -- RSS 订阅管理表
@@ -151,6 +152,10 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_episodes_rss_url ON episodes(rss_url);
         """)
 
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+        if "tts_reference_mode" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN tts_reference_mode TEXT NOT NULL DEFAULT 'speaker'")
+
 
 # ============================================================
 # 任务索引 CRUD
@@ -171,7 +176,7 @@ def save_task_to_index(task_id: str, summary: dict):
     """Insert a task or update only supplied fields, preserving its identity."""
     columns = ('url', 'title', 'difficulty', 'process_mode', 'type', 'step', 'status', 'progress',
                'message', 'created_at', 'basename', 'total_words', 'total_replacements',
-               'original_duration', 'mixed_duration', 'keep_bgm', 'queue_order')
+               'original_duration', 'mixed_duration', 'keep_bgm', 'queue_order', 'tts_reference_mode')
     updates = ', '.join(f'{name}=excluded.{name}' for name in columns if name in summary)
     conflict = 'DO UPDATE SET '+updates if updates else 'DO NOTHING'
     with get_db() as conn:
@@ -179,8 +184,8 @@ def save_task_to_index(task_id: str, summary: dict):
             INSERT INTO tasks
             (task_id, url, title, difficulty, process_mode, type, step, status, progress,
              message, created_at, basename, total_words,
-             total_replacements, original_duration, mixed_duration, keep_bgm, queue_order)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             total_replacements, original_duration, mixed_duration, keep_bgm, queue_order, tts_reference_mode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(task_id) """+conflict, (
             task_id,
             summary.get("url", ""),
@@ -200,6 +205,7 @@ def save_task_to_index(task_id: str, summary: dict):
             summary.get("mixed_duration", 0),
             1 if summary.get("keep_bgm") else 0,
             summary.get("queue_order", 0),
+            summary.get("tts_reference_mode", "speaker"),
         ))
 
 

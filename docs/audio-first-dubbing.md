@@ -65,3 +65,11 @@ WhisperX 提供词级定位；pyannote 提供人物分段和重叠发言区间�
 用户听原声并明确确认后，可用 `bmx video confirm-speakers --analysis-id ID --resolutions decisions.json` 提交 JSON 列表，例如 `[{"word_ids":[42],"speaker_id":"SPEAKER_01"}]`。对应 API 为 `POST /api/dubbing/ID/confirm-speakers`，请求 `{"resolutions":[...]}`。仅允许确认未知词，目标人物必须有合格参考；不能修改既有人物、原文或时间。响应包含最新 `analysis`。人工确认持久化且标记为 `human_confirmed`，不会伪装成声纹通过或进入参考池。
 
 刷新本地 analysis 后，统一入口按原词 ID 重新读取人物；ASS 和 manifest 可复用 language/units.json 重建。人物未确认或缺少同人参考时，客户端和服务端均拒绝配音。FULL 和中文精翻由当前 Agent 分两步处理，格式转换与提交由 workflow.py 统一执行。
+
+## 参考音频模式
+
+任务提交页的“分段复刻”默认关闭：同一 speaker 使用一段优质参考。开启后，每个精翻完整配音句通过 `source_word_ids` 定位其原声作为参考，尽量传递该句的语气和节奏。字幕显示行不决定参考范围或合成句子。API 参数为 `tts_reference_mode: "speaker" | "segment"`，CLI 为 `--tts-reference-mode segment`；模式在提交时固定，重试、重做和服务重启后保留。
+
+分段参考只使用已确认人物、符合参考资格的连续源词，拒绝重叠说话和跨人物区间。参考不足 2 秒、静音、严重削波或无法提取时回退同人物固定参考；超过 10 秒的句子在该句内部按词边界限制参考长度，中文完整合成句保持原样。声学检查不等同于噪声识别，跨语言的语气和节奏迁移效果仍需试听。
+
+结果的 `tts_reference_manifest` 提供每句 `unit_id`、`speaker`、`requested_mode`、`actual_mode`、`start/end`、实际参考 SHA256 和 `fallback_reason`；`bounded` 标记参考是否仅使用该句的一部分。切换模式及更换参考会使用不同合成缓存。

@@ -193,6 +193,7 @@ def api_index():
             "type": "audio 或 video",
             "title": "任务标题",
             "keep_bgm": "是否保留背景音乐",
+            "tts_reference_mode": "speaker（默认）：同人物固定参考；segment：每个完整配音句参考对应原声，不合格时回退同人物参考",
             "skip_confirmation": "是否跳过确认",
             "subtitle_mode": "bilingual|chinese_only|none (video only)",
             "subtitle_font_size": "字幕字号 (video only)",
@@ -456,9 +457,10 @@ def api_index():
                       "params": {"resolutions": "[{word_ids: [整数], speaker_id: 已有合格参考人物}]"}})
     return jsonify({
         "name": "BiliMix API",
-        "version": "2.0.1",
+        "version": "2.1.0",
         "description": "中英混合播客/视频学习工具",
         "dubbing_protocol": 1,
+        "tts_reference_modes": ["speaker", "segment"],
         "total_endpoints": len(endpoints),
         "endpoints": endpoints,
         "stats": {

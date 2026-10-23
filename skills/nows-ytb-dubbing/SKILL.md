@@ -7,7 +7,7 @@ description: 为 YouTube 或本地英文视频制作精翻双语字幕及中文�
 
 主流程：**视频 → 人物分析 → FULL 完整断句 → 中文精翻 → 服务端配音 → 交付**。
 
-翻译使用当前 Agent 的模型；BiliMix 负责人物分析、固定参考、TTS、混音和画面变速。需要能读写文件、执行 Python 3.10+ 命令的 Agent。客户端不需要模型或 Hugging Face token。
+翻译使用当前 Agent 的模型；BiliMix 负责人物分析、参考音频选择、TTS、混音和画面变速。需要能读写文件、执行 Python 3.10+ 命令的 Agent。客户端不需要模型或 Hugging Face token。
 
 ## 开始
 
@@ -19,6 +19,8 @@ python <skill>/scripts/workflow.py run --input <YouTube网址或本地视频> --
 ```
 
 已有 SDK 和工具可直接 `run`。服务器来自用户配置、环境变量或 SDK 配置，不猜 IP。需要登录时阅读 [连接与恢复](references/operations.md#connection)。默认 720p、关闭背景混音、字幕字号 40，可在首次 `run` 时覆盖。
+
+默认 `--tts-reference-mode speaker`，同一人物使用固定优质参考。用户选择分段复刻时，首次 `run` 传 `--tts-reference-mode segment`：按精翻完整配音句选择对应原声，尽量保留语气和节奏；太短、重叠或不合格参考回退同一人物固定参考，任务结果 `tts_reference_manifest` 记录实际选择。模式随项目保存，重试沿用；客户端和服务端均需支持此选项。
 
 分析和配音任务名称均使用 YouTube 原始视频标题；本地视频使用文件名（去扩展名）。内部项目 ID 不放进显示名称。
 

@@ -69,3 +69,5 @@ bmx video confirm-speakers --analysis-id <分析任务ID> --resolutions <用户�
 ```
 
 该接口只接受待确认词和有合格参考的现有人物，保留所有原词、时间和词 ID；人工确认标记与声纹通过标记分开。之后重新执行原 `bmx_video_task.py --analyze-only` 命令，刷新本地 `analysis.json`，不会创建新的已绑定分析任务。再运行 `assemble_final.py` 和 `build_dub_manifest.py prepare/apply`，按最新词归属生成 ASS Name 和 manifest；已有精翻可复用。如果原来的一行确认后涉及多人，只拆分该行及其中文内容。不能修改 manifest 来绕过服务端人物校验。缺少合格同人参考时停止配音并报告，不借用其他人物声线。
+
+配音默认使用同一人物固定参考。用户选择分段复刻时，提交脚本或 `bmx task submit` 传 `--tts-reference-mode segment`（固定参考为 `speaker`）；服务端按完整配音句提取对应原声，不按显示字幕行切分。任务结果 `tts_reference_manifest` 提供实际参考时间和回退原因。

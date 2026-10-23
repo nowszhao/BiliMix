@@ -108,3 +108,5 @@ bmx --server <服务URL> task result <分析ID> --field result.analysis
 ```
 
 刷新本地 analysis 后重建 ASS 与 manifest，可复用既有翻译。确认前不得修改 manifest 强行认领未知词；人工确认不会成为克隆参考。
+
+配音参考模式通过 `bmx task submit --tts-reference-mode speaker|segment` 选择，默认 `speaker`（同人物固定参考）。`segment` 使用每个完整配音句对应的原声，尽量保留语气和节奏；不合格片段回退到同人物固定参考。该选项随任务保存，重试和重做沿用。`bmx task result <task_id>` 的 `tts_reference_manifest.units` 记录每句的实际模式、原声范围和回退原因；服务端需在 `bmx api` 中声明 `tts_reference_modes` 包含 `segment`。

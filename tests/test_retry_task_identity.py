@@ -85,7 +85,8 @@ def test_missing_video_never_falls_back_to_an_audio_resume(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize('video_success', [True, False])
-def test_resumed_video_requires_video_completion_and_retains_complete_checkpoint(tmp_path, monkeypatch, video_success):
+@pytest.mark.parametrize('reference_mode', ['speaker', 'segment'])
+def test_resumed_video_requires_video_completion_and_retains_complete_checkpoint(tmp_path, monkeypatch, video_success, reference_mode):
     from services import web_app as wa
     task_id = 'resume-video-'+str(video_success)
     audio = tmp_path/'audio.wav'; audio.write_bytes(b'audio')
@@ -94,10 +95,14 @@ def test_resumed_video_requires_video_completion_and_retains_complete_checkpoint
     mapping = [dict(segment_index=0, type='tts_chinese', mixed_start=0, mixed_end=1, orig_start=0, orig_end=1)]
     with tm.tasks_lock:
         tm.tasks[task_id] = dict(task_id=task_id, type='video', process_mode='video', status='processing',
+            tts_reference_mode=reference_mode,
             url='file://'+str(source), _video_path=str(source), _audio_path=str(audio), _basename=task_id,
             segments=segments, translations={0:'你好。'}, translated_indices=[0])
     monkeypatch.setattr(wa, '_build_confucius_ref_map', lambda *a:{0:str(audio)})
-    monkeypatch.setattr(wa, 'synthesize_sentences_with_confucius_tts', lambda *a,**k:{0:str(audio)})
+    def synth(*args, **kwargs):
+        assert kwargs['reference_mode'] == reference_mode
+        return {0:str(audio)}
+    monkeypatch.setattr(wa, 'synthesize_sentences_with_confucius_tts', synth)
     def mix(*args, **kwargs):
         Path(args[5]).write_bytes(b'complete audio')
         return dict(original_duration=1, mixed_duration=1, total_segments=1, translated_segments=1,
@@ -122,6 +127,7 @@ def test_resumed_video_requires_video_completion_and_retains_complete_checkpoint
     assert current['type'] == 'video'
     saved = json.loads((Path(config.RESULT_DIR)/task_id/'task_result.json').read_text())
     assert saved['type'] == saved['process_mode'] == 'video'
+    assert saved['tts_reference_mode'] == reference_mode
     assert saved['status'] == current['status']
     assert saved['result']['mixed_audio'] == current['result']['mixed_audio']
     assert saved['time_mapping'] == mapping

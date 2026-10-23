@@ -10,7 +10,7 @@
 
 需要认证时，使用项目 `.tools/bin/python`（Windows `.tools/Scripts/python.exe`）调用 `-m bilimix_cli --server <URL> auth login --username <用户名> --password <密码>`；已有环境则用其解释器。只使用用户明确提供的账户，避免把实际密码写进共享文件、Skill、项目 JSON 或回复。SDK 会话保存在用户自己的配置目录，按服务器隔离。
 
-首次 run 可指定：--quality 720p/best、--font-size 40、--keep-bgm、--width/--height，以及用户允许的 --cookies-browser 或 --cookies-file。这些选项固定在该项目中，之后用不带重复配置的 run 恢复。公开视频默认不使用浏览器 cookies；登录下载只在需要且用户允许时使用。
+首次 run 可指定：--quality 720p/best、--font-size 40、--keep-bgm、--tts-reference-mode speaker/segment、--width/--height，以及用户允许的 --cookies-browser 或 --cookies-file。这些选项固定在该项目中，之后用不带重复配置的 run 恢复。公开视频默认不使用浏览器 cookies；登录下载只在需要且用户允许时使用。
 
 ## Speakers
 

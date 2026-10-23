@@ -37,7 +37,8 @@ def initialize(work, args):
                        mode=args.mode or 'dubbing', server=canonical_server(args.server) if args.server else None,
                        source_subtitles=str(Path(args.source_subtitles).expanduser().resolve()) if args.source_subtitles else None,
                        settings=dict(quality=args.quality or '720', font_size=args.font_size or 40,
-                                     keep_bgm=bool(args.keep_bgm), cookies_browser=args.cookies_browser,
+                                     keep_bgm=bool(args.keep_bgm), tts_reference_mode=args.tts_reference_mode or 'speaker',
+                                     cookies_browser=args.cookies_browser,
                                      chunk_words=args.chunk_words or 650,
                                      cookies_file=str(Path(args.cookies_file).expanduser().resolve()) if args.cookies_file else None,
                                      dimensions=[args.width, args.height] if args.width and args.height else None))
@@ -57,7 +58,7 @@ def initialize(work, args):
                 raise ValueError('Use a different workdir for another input')
         options = {'quality': args.quality, 'font_size': args.font_size, 'keep_bgm': args.keep_bgm,
                    'cookies_browser': args.cookies_browser, 'cookies_file': args.cookies_file,
-                   'chunk_words': args.chunk_words}
+                   'chunk_words': args.chunk_words, 'tts_reference_mode': args.tts_reference_mode}
         if args.cookies_file:
             options['cookies_file'] = str(Path(args.cookies_file).expanduser().resolve())
         if args.width and args.height:
@@ -67,7 +68,7 @@ def initialize(work, args):
             if subtitle != project.get('source_subtitles'):
                 raise ValueError('Source subtitles cannot change inside an existing project')
         for key, value in options.items():
-            if value is not None and value != project['settings'].get(key):
+            if value is not None and value != project['settings'].get(key, 'speaker' if key == 'tts_reference_mode' else None):
                 raise ValueError(f'Project setting {key} differs; use the saved settings or a new workdir')
     return project
 
@@ -137,6 +138,10 @@ def run_project(work, project, args):
     analysis = read_json(work / 'analysis.json')
     if project['mode'] == 'dubbing':
         client = Client(work, project.get('server'))
+        if project['settings'].get('tts_reference_mode', 'speaker') == 'segment':
+            capabilities = client.call('api')
+            if 'segment' not in capabilities.get('tts_reference_modes', []):
+                raise ValueError('Server does not support segment references; update BiliMix before submitting')
         if project.get('server') and client.server != project['server']:
             raise ValueError('SDK connected to another server')
         project['server'] = client.server
@@ -192,7 +197,9 @@ def run_project(work, project, args):
             project['ass_upload'] = dict(path=client.upload(artifacts['work_ass']),
                                          sha256=file_hash(artifacts['work_ass']))
             save(work, project)
-        command = ['task', 'submit', '--type', 'video', '--server-path', project['video_server_path'],
+        reference_mode = project['settings'].get('tts_reference_mode', 'speaker')
+        command = ['task', 'submit', '--type', 'video',
+                   '--tts-reference-mode', reference_mode, '--server-path', project['video_server_path'],
                    '--subtitle-path', project['ass_upload']['path'], '--dub-manifest', artifacts['manifest'],
                    '--analysis-id', analysis['analysis_id'], '--subtitle-mode', 'bilingual',
                    '--subtitle-font-size', str(project['settings']['font_size'])]
@@ -283,6 +290,7 @@ def parser():
             command.add_argument('--quality', default=None)
             command.add_argument('--font-size', type=int)
             command.add_argument('--keep-bgm', action='store_true', default=None)
+            command.add_argument('--tts-reference-mode', choices=['speaker', 'segment'])
             command.add_argument('--width', type=int)
             command.add_argument('--height', type=int)
             command.add_argument('--chunk-words', type=int)

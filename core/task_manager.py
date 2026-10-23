@@ -93,7 +93,7 @@ def save_task_result_to_disk(result_dir: str, data: dict):
         task_id = data.get("task_id", "")
         current = tasks.get(task_id, {})
         data.update(task_identity(current, data))
-        for key in ("url", "title", "created_at", "_analysis_id", "_dub_manifest", "_speaker_analysis", "_reference_manifest",
+        for key in ("url", "title", "created_at", "tts_reference_mode", "_tts_reference_manifest", "_analysis_id", "_dub_manifest", "_speaker_analysis", "_reference_manifest",
                     "_audio_path", "_video_path", "_raw_segments",
                     "_subtitle_mode", "_subtitle_font_size"):
             if key in current and key not in data:
@@ -185,6 +185,7 @@ def _persist_task(task_id: str):
             "message": task.get("message", ""),
             "created_at": task.get("created_at", ""),
             "keep_bgm": task.get("keep_bgm", False),
+            "tts_reference_mode": task.get("tts_reference_mode", "speaker"),
             "basename": ((task.get("result") or {}).get("basename")
                          or task.get("_basename", "")),
             "total_words": ((task.get("result") or {}).get("total_words", 0)
@@ -236,6 +237,7 @@ def restore_task_from_disk(task_id: str) -> dict:
         return {}
 
     identity = task_identity(summary)
+    identity["tts_reference_mode"] = summary.get("tts_reference_mode", "speaker")
     basename = summary.get("basename", "")
     if not basename:
         # A partial index write in older runs may have cleared basename. Only
@@ -334,6 +336,7 @@ def restore_task_from_disk(task_id: str) -> dict:
                 "_audio_path": (saved.get("result", {}).get("original_audio", "")
                                 if saved.get("result") else ""),
                 "keep_bgm": saved.get("keep_bgm", summary.get("keep_bgm", False)),
+                "tts_reference_mode": saved.get("tts_reference_mode", identity["tts_reference_mode"]),
                 "_subtitle_mode": saved.get("_subtitle_mode", "bilingual"),
                 "_subtitle_font_size": saved.get("_subtitle_font_size"),
                 "_subtitle_path": saved.get("_subtitle_path", ""),
@@ -342,7 +345,7 @@ def restore_task_from_disk(task_id: str) -> dict:
             _restore_video_source(task)
             if saved.get('tts_audio_map'):
                 task['tts_audio_map'] = {int(k): v for k, v in saved['tts_audio_map'].items()}
-            for key in ("_analysis_id", "_dub_manifest", "_speaker_analysis", "_reference_manifest",
+            for key in ("_analysis_id", "_dub_manifest", "_speaker_analysis", "_reference_manifest", "_tts_reference_manifest",
                         "_audio_path", "_raw_segments"):
                 if key in saved:
                     task[key] = saved[key]

@@ -142,6 +142,7 @@ def main():
     parser.add_argument('--subtitle-mode',choices=['bilingual','chinese_only','none'],default='bilingual')
     parser.add_argument('--subtitle-font-size',type=int,default=40)
     parser.add_argument('--keep-bgm',action='store_true')
+    parser.add_argument('--tts-reference-mode',choices=['speaker','segment'],default='speaker')
     parser.add_argument('--no-submit',action='store_true')
     parser.add_argument('--dry-run',action='store_true')
     parser.add_argument('--fresh-upload',action='store_true',help='Ignore the saved upload/analysis binding')
@@ -189,6 +190,7 @@ def main():
             'manifest':file_hash(args.dub_manifest) if args.dub_manifest and not args.dry_run else None,
             'subtitle':file_hash(args.subtitle) if args.subtitle and not args.dry_run else None,
             'mode':args.subtitle_mode,'font_size':args.subtitle_font_size,'keep_bgm':args.keep_bgm,
+            'tts_reference_mode':args.tts_reference_mode,
             # Automatic display titles do not invalidate a saved task receipt.
             'title':args.title,'duration':args.duration}
         request_hash = hashlib.sha256(json.dumps(request,sort_keys=True).encode()).hexdigest()
@@ -240,10 +242,14 @@ def main():
             raise ValueError('External ASS must contain nonempty bilingual EN || ZH rows')
         if args.no_submit:
             emit({'video_server_path':paths['video'],'subtitle_server_path':paths['subtitle'],'server':server});return 0
+        if args.tts_reference_mode == 'segment' and not args.dry_run:
+            capabilities,_ = bmx_json(bmx,['api'],False)
+            if 'segment' not in (capabilities or {}).get('tts_reference_modes',[]):
+                raise ValueError('Server does not support segment references; update BiliMix')
         command = ['task','submit','--type','video','--server-path',paths['video'],
             '--subtitle-path',paths['subtitle'],'--subtitle-mode',args.subtitle_mode,
             '--subtitle-font-size',str(args.subtitle_font_size),
-            '--title',task_title]
+            '--title',task_title,'--tts-reference-mode',args.tts_reference_mode]
         if manifest:
             command += ['--dub-manifest',str(Path(args.dub_manifest).resolve()),'--analysis-id',manifest['analysis_id']]
         if args.duration:

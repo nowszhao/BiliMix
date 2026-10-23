@@ -49,6 +49,7 @@ def list_tasks():
                 "created_at": task.get("created_at", ""),
                 "process_mode": task.get("process_mode", "sentence_translate"),
                 "type": task.get("type", "audio"),
+                "tts_reference_mode": task.get("tts_reference_mode", "speaker"),
                 "basename": ((task.get("result") or {}).get("basename", "")
                              if task.get("result") else task.get("_basename", "")),
                 "total_words": ((task.get("result") or {}).get("total_words", 0)
@@ -216,6 +217,7 @@ def get_task_status(task_id):
         "progress": task.get("progress", 0),
         "message": task.get("message", ""),
         "process_mode": task.get("process_mode", "sentence_translate"),
+        "tts_reference_mode": task.get("tts_reference_mode", "speaker"),
     })
 
 
@@ -280,6 +282,8 @@ def get_task_result(task_id):
         "dubbing_protocol": 1,
         "analysis_id": task.get("_analysis_id", ""),
         "reference_manifest": task.get("_reference_manifest", {}),
+        "tts_reference_mode": task.get("tts_reference_mode", "speaker"),
+        "tts_reference_manifest": task.get("_tts_reference_manifest", {}),
         "dub_manifest": task.get("_dub_manifest"),
         "skip_confirmation": task.get("skip_confirmation", True),
         "keep_bgm": task.get("keep_bgm", False),

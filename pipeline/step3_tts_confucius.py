@@ -231,12 +231,12 @@ def synthesize_sentences_with_confucius_tts(
     task_id: str = None,
     lang: str = "zh",
     seg_lang_map: dict = None,
+    reference_mode: str = "speaker",
 ) -> dict:
     """
     使用 Confucius4-TTS-CPU 为句子翻译模式合成中文 TTS 音频。
 
-    每个被翻译的句子独立调用 ConfuciusTTS 合成，使用对应英文句子的原声
-    作为零样本声音克隆的参考音频。
+    每个完整配音句独立合成，参考音频由任务选择 speaker 或 segment 策略。
 
     Args:
         segments: WhisperX segments 列表
@@ -265,6 +265,8 @@ def synthesize_sentences_with_confucius_tts(
     print(f"[Step3-Confucius] 准备为 {total} 个句子合成中文 TTS")
 
     from pipeline.tts_cache import synthesis_key, model_fingerprint
+    from pipeline.tts_references import validate_reference_mode
+    validate_reference_mode(reference_mode)
     root = _get_confucius_root()
     model_id = model_fingerprint(root, os.path.join(config.BASE_DIR, "workers", "confucius_tts_worker.py"),
                                  os.path.join(root, "config", "inference_config.yaml"))
@@ -293,7 +295,7 @@ def synthesize_sentences_with_confucius_tts(
 
         # 缓存 key（含语种，避免切换 lang 时误命中旧缓存）
         speaker = segments[seg_idx].get("speaker", "") if isinstance(segments, list) and seg_idx < len(segments) else ""
-        cache_key = synthesis_key(chinese_text, eff_lang, ref_audio, model_id, parameters, speaker)
+        cache_key = synthesis_key(chinese_text, eff_lang, ref_audio, model_id, parameters, speaker, reference_mode)
         output_path = os.path.join(cache_dir, f"confucius_tts_{cache_key}.wav")
 
         jobs.append({

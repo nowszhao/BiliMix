@@ -15,11 +15,12 @@ const fs = require('fs');
 const vm = require('vm');
 const assert = require('assert/strict');
 const code = fs.readFileSync(SOURCE_PATH, 'utf8');
-async function run(hasAss, hasManifest) {
+async function run(hasAss, hasManifest, segmentClone=false) {
     const sent = [], alerts = [];
     const elements = {
         'sub-font-size': {value: '40'},
         'keep-bgm-checkbox': {checked: false},
+        'video-segment-clone-checkbox': {checked: segmentClone},
     };
     const context = {
         document: {getElementById: id => elements[id] || null, querySelector: () => null},
@@ -45,6 +46,7 @@ async function run(hasAss, hasManifest) {
         assert.equal(sent[0].local_path, '/srv/source.mp4');
         assert.equal(sent[0].subtitle_path, '/srv/refined.ass');
         assert.equal(sent[0].analysis_id, 'analysis');
+        assert.equal(sent[0].tts_reference_mode, segmentClone ? 'segment' : 'speaker');
         assert.equal(sent[0].dub_manifest.units[0].unit_id, 'u1');
         assert.equal(alerts.length, 0);
     } else {
@@ -52,7 +54,7 @@ async function run(hasAss, hasManifest) {
         assert.match(alerts[0], /同时选择/);
     }
 }
-(async () => { await run(true, false); await run(false, true); await run(true, true); })()
+(async () => { await run(true, false); await run(false, true); await run(true, true); await run(true, true, true); })()
 .catch(error => { console.error(error); process.exitCode = 1; });
 '''.replace('SOURCE_PATH', json.dumps(str(source)))
     result = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=15)

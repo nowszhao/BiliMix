@@ -13,6 +13,10 @@
 
 function openNewTaskModal() {
     document.getElementById('new-task-modal').classList.add('open');
+    for (const id of ['audio-segment-clone-checkbox', 'video-segment-clone-checkbox']) {
+        const toggle = document.getElementById(id);
+        if (toggle) toggle.checked = false;
+    }
     // 每次打开时重置按钮状态，避免上次提交残留的 disabled
     const btn = document.getElementById('generate-btn');
     if (btn) {
@@ -295,6 +299,7 @@ async function submitAudioTask(btn) {
             skip_confirmation: true,
             type: 'audio',
             keep_bgm: keepBgm,
+            tts_reference_mode: document.getElementById('audio-segment-clone-checkbox')?.checked ? 'segment' : 'speaker',
         };
         if (currentSubtitlePath || currentDubManifest) {
             if (!currentSubtitlePath || !currentDubManifest) {
@@ -389,6 +394,7 @@ async function submitVideoTask(btn) {
             subtitle_mode: subMode,
             subtitle_font_size: parseInt(fontSize),
             keep_bgm: keepBgm,
+            tts_reference_mode: document.getElementById('video-segment-clone-checkbox')?.checked ? 'segment' : 'speaker',
         };
         if (currentSubtitlePath || currentDubManifest) {
             if (!currentSubtitlePath || !currentDubManifest) {

@@ -2,6 +2,7 @@
 from functools import lru_cache
 from pathlib import Path
 from pipeline.dubbing_plan import canonical_hash, file_sha256
+from pipeline.tts_references import REFERENCE_POLICY_VERSION
 
 
 @lru_cache(maxsize=64)
@@ -23,7 +24,8 @@ def model_fingerprint(root, worker, config_path):
     return canonical_hash(records)
 
 
-def synthesis_key(text, language, reference, model_id, parameters, speaker=""):
-    return canonical_hash({"schema": 2, "text": text, "language": language,
+def synthesis_key(text, language, reference, model_id, parameters, speaker="", reference_mode="speaker"):
+    return canonical_hash({"schema": 3, "text": text, "language": language,
                            "reference_sha256": file_sha256(reference), "speaker": speaker,
-                           "model": model_id, "parameters": parameters})
+                           "model": model_id, "parameters": parameters, "reference_mode": reference_mode,
+                           "reference_policy": REFERENCE_POLICY_VERSION})

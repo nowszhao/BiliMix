@@ -2,6 +2,7 @@
 import json
 import time
 from pathlib import Path
+import pytest
 
 from core import config
 from pipeline.dubbing_plan import file_sha256
@@ -17,14 +18,17 @@ def wait_for(wa, task_id, states):
     raise AssertionError(wa.get_task(task_id))
 
 
-def test_queued_analysis_manifest_submission_and_persistence(tmp_path,monkeypatch):
+@pytest.mark.parametrize('reference_mode', ['speaker', 'segment'])
+def test_queued_analysis_manifest_submission_and_persistence(tmp_path,monkeypatch,reference_mode):
     from services import web_app as wa
     from core import task_manager as tm
     monkeypatch.setattr(config,'AUTH_ENABLED',False)
     monkeypatch.setattr(config,'SKIP_CONFIRMATION',True)
     monkeypatch.setattr(config,'SENTENCE_TTS_VOICE_CLONE',True)
     media=tmp_path/'source.mp4';media.write_bytes(b'owned test media')
-    audio=tmp_path/'source.wav';audio.write_bytes(b'owned source audio')
+    from pydub.generators import Sine
+    audio=tmp_path/'source.wav'
+    Sine(220).to_audio_segment(duration=12000).export(str(audio), format='wav')
     a=analysis_fixture();a['source_media_sha256']=file_sha256(media)
     monkeypatch.setattr(wa,'prepare_video',lambda *a,**k:dict(ok=True,video_path=str(media),audio_path=str(audio),title='test'))
     monkeypatch.setattr(wa,'_probe_audio_duration',lambda _:11)
@@ -59,15 +63,23 @@ def test_queued_analysis_manifest_submission_and_persistence(tmp_path,monkeypatc
     manifest,_=manifest_fixture();manifest['analysis_id']=aid;manifest['source_media_sha256']=file_sha256(media)
     subtitle=tmp_path/'work.ass'
     subtitle.write_text('[Events]\nDialogue: 0,0:00:00.00,0:00:01.00,Default,A,0,0,0,,Hello || 你好。\n',encoding='utf-8')
-    response=client.post('/api/submit',json=dict(type='video',local_path=str(media),subtitle_path=str(subtitle),dub_manifest=manifest,analysis_id=aid))
+    response=client.post('/api/submit',json=dict(type='video',local_path=str(media),subtitle_path=str(subtitle),dub_manifest=manifest,analysis_id=aid,tts_reference_mode=reference_mode))
     assert response.status_code==200,response.get_json()
     tid=response.get_json()['task_id'];task=wait_for(wa,tid,{'completed','error'})
     assert task['status']=='completed',task
-    assert captured[0][0]==captured[0][2]!=captured[0][1]
+    if reference_mode == 'speaker':
+        assert captured[0][0]==captured[0][2]!=captured[0][1]
+    else:
+        assert len(set(captured[0].values())) == 3
     saved=Path(config.RESULT_DIR)/task['_basename']/'task_result.json'
     state=json.loads(saved.read_text())
     assert state['_dub_manifest']==manifest
     assert state['_reference_manifest']['A']['speaker']=='A'
+    assert state['tts_reference_mode'] == reference_mode
+    assert state['_tts_reference_manifest']['mode'] == reference_mode
+    result=client.get(f'/api/task/{tid}/result').get_json()
+    assert result['tts_reference_mode'] == reference_mode
+    assert all(u['actual_mode'] == reference_mode for u in result['tts_reference_manifest']['units'])
 
 
 def test_bad_or_unready_analysis_is_400(tmp_path,monkeypatch):

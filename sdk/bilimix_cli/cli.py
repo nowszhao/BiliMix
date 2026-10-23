@@ -350,6 +350,11 @@ def cmd_task_submit(args, client):
     pass  # process_mode fixed to sentence_translate
     if args.title:
         body["title"] = args.title
+    body["tts_reference_mode"] = getattr(args, "tts_reference_mode", "speaker")
+    if body["tts_reference_mode"] == "segment":
+        capabilities = client.get("/api")
+        if "segment" not in capabilities.get("tts_reference_modes", []):
+            raise CLIError("服务端不支持分段复刻，请先更新 BiliMix；未提交任务")
 
     # subtitle_path: 外部双语字幕文件（ASS，|| 分隔英文和中文）。
     # 提供后跳过转录和翻译，直接用字幕生成配音音频/视频。
@@ -1238,6 +1243,8 @@ def build_parser():
                     help="要求人工确认")
     p.add_argument("--title", help="任务标题")
     p.add_argument("--keep-bgm", action="store_true", help="保留原音频/视频背景音乐")
+    p.add_argument("--tts-reference-mode", choices=["speaker", "segment"], default="speaker",
+                   help="speaker: 同人物固定参考（默认）；segment: 每个完整配音句参考对应原声，不合格时回退同人物参考")
     p.add_argument("--duration", help="预知时长 (如 01:23:45 或 142)")
     p.add_argument("--subtitle-path",
                    help="服务端外部双语字幕文件路径 (.ass, || 分隔英文和中文)，"

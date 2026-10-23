@@ -725,6 +725,7 @@ function _renderTaskDetailPanel(task) {
     if (trCount > 0) metaParts.push(`${trCount} 句翻译`);
     const bgmLabel = task.keep_bgm ? '🎵 BGM 保留' : '🔇 无 BGM';
     metaParts.push(bgmLabel);
+    metaParts.push(task.tts_reference_mode === 'segment' ? '分段复刻' : '人物固定参考');
 
     // ── 任务配置项 ──
     const subMode = task._subtitle_mode || '';
@@ -990,6 +991,9 @@ function renderTaskDetailPage(data) {
 
     // ── 任务配置项 ──
     const configParts = [];
+    configParts.push(data.tts_reference_mode === 'segment' ? '分段复刻' : '人物固定参考');
+    const fallbackCount = data.tts_reference_manifest?.fallback_count || 0;
+    if (fallbackCount) configParts.push(`${fallbackCount} 句使用人物固定参考`);
     const subMode = data._subtitle_mode || '';
     if (subMode === 'bilingual') configParts.push('中英双语');
     else if (subMode === 'chinese_only') configParts.push('仅中文');

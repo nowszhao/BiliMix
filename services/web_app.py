@@ -27,6 +27,7 @@ if _project_root not in sys.path:
 from flask import Flask, jsonify, request, send_file, send_from_directory, session, redirect
 
 from core import config
+from pipeline.tts_references import build_reference_map, validate_reference_mode
 from core.task_manager import (
     tasks, tasks_lock, cancel_flags, task_subprocesses,
     load_tasks_index,
@@ -715,8 +716,15 @@ def _build_confucius_ref_map(task_id: str, segments: list,
                if segments[i].get("speaker") not in pool}
     if missing:
         raise ValueError(f"Insufficient clean same-speaker reference: {sorted(missing)}")
-    ref_map = {i: pool[segments[i]["speaker"]]["path"] for i in translated_indices}
-    update_task(task_id, _reference_manifest=pool)
+    mode = validate_reference_mode(task.get("tts_reference_mode", "speaker"))
+    ref_map, report = build_reference_map(ref_audio_source, analysis, segments,
+                                        translated_indices, pool, confucius_ref_dir, mode)
+    update_task(task_id, _reference_manifest=pool, _tts_reference_manifest=report)
+    save_task_result_to_disk(result_dir, get_task(task_id))
+    for unit in report["units"]:
+        if unit["fallback_reason"]:
+            print(f"[TTSRef] unit={unit['unit_id'] or unit['segment_index']} "
+                  f"speaker={unit['speaker']} fallback={unit['fallback_reason']}")
     return ref_map
 
 
@@ -812,6 +820,7 @@ def continue_after_sentence_confirmation(task_id: str):
                 segments, translated_indices, translations,
                 audio_path, confucius_cache_dir,
                 ref_audio_map=confucius_ref_map if voice_clone else {},
+                reference_mode=task.get("tts_reference_mode", "speaker"),
                 cancel_check=_confucius_cancel, progress_cb=_confucius_progress,
                 task_id=task_id)
 
@@ -1168,6 +1177,10 @@ def submit_task():
         return jsonify({"error": "请提供数据"}), 400
 
     task_type = data.get("type", "audio")  # "audio" | "video"
+    try:
+        reference_mode = validate_reference_mode(data.get("tts_reference_mode", "speaker"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     local_path = data.get("local_path", "").strip()
     audio_url = data.get("url", "").strip()
     video_url = data.get("video_url", "").strip()
@@ -1264,6 +1277,7 @@ def submit_task():
             "process_mode": process_mode,
             "type": task_type,
             "skip_confirmation": skip_confirmation,
+            "tts_reference_mode": reference_mode,
             "status": "downloading",
             "step": "download",
             "progress": 0,
@@ -1307,6 +1321,7 @@ def submit_task():
             "total_replacements": 0,
             "original_duration": pre_duration,
             "mixed_duration": 0,
+            "tts_reference_mode": reference_mode,
         })
     except Exception as e:
         print(f"[WARN] 任务创建时持久化失败: {e}")
@@ -1648,7 +1663,7 @@ def redo_task(task_id):
     # 清理所有 checkpoint 和内部键
     checkpoint_keys = ["_checkpoint_translate_batch", "_checkpoint_translations",
                        "_checkpoint_tts_idx", "_bgm_path", "_vocals_path",
-                       "_saved_result_path"]
+                       "_saved_result_path", "_tts_reference_manifest", "_reference_manifest"]
     with tasks_lock:
         t = tasks.get(task_id, {})
         for k, v in reset_fields.items():
@@ -1673,6 +1688,7 @@ def redo_task(task_id):
             "total_words": 0,
             "total_replacements": 0,
             "keep_bgm": task.get("keep_bgm", False),
+            "tts_reference_mode": task.get("tts_reference_mode", "speaker"),
         })
     except Exception:
         pass
@@ -1796,7 +1812,7 @@ def _load_retry_checkpoint(task_id, task):
     for key in ("segments", "translations", "translated_indices", "sentence_pairs", "tts_audio_map",
                 "time_mapping", "result", "_checkpoint_translate_batch", "_checkpoint_translations",
                 "_checkpoint_tts_idx", "_video_path", "_audio_path", "_analysis_id", "_dub_manifest",
-                "_speaker_analysis", "_reference_manifest", "_raw_segments", "_subtitle_path",
+                "_speaker_analysis", "_reference_manifest", "_tts_reference_manifest", "tts_reference_mode", "_raw_segments", "_subtitle_path",
                 "_subtitle_mode", "_subtitle_font_size"):
         if key in saved and not task.get(key):
             recovered[key] = saved[key]
@@ -2005,6 +2021,7 @@ def _synthesis_resume(task_id):
                 segments, missing_indices, missing_translations,
                 audio_path, confucius_cache_dir,
                 ref_audio_map=confucius_ref_map,
+                reference_mode=task.get("tts_reference_mode", "speaker"),
                 cancel_check=_cancel, progress_cb=_progress, task_id=task_id)
         except InterruptedError:
             update_task(task_id, status="cancelled", message="重试已被取消")
@@ -2099,6 +2116,7 @@ def retry_sentence_synthesis(task_id):
                 segments, missing_indices, missing_translations,
                 audio_path, confucius_cache_dir,
                 ref_audio_map=_build_confucius_ref_map(task_id, segments, missing_indices),
+                reference_mode=task.get("tts_reference_mode", "speaker"),
                 cancel_check=_retry_cancel, progress_cb=_retry_progress,
                 task_id=task_id)
         except InterruptedError:

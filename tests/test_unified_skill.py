@@ -113,3 +113,20 @@ def test_submission_uses_video_title_without_machine_identifier(tmp_path, monkey
     workflow.submit(tmp_path,project,Client(),'analysis',['video','analyze'],'hash')
     assert calls[-1][-2:]==('--title',expected)
     assert project['analysis']['title']==expected
+
+
+@pytest.mark.parametrize('mode', ['speaker', 'segment'])
+def test_reference_mode_is_bound_to_project_and_preserved_on_resume(tmp_path, monkeypatch, mode):
+    scripts=Path(__file__).resolve().parents[1]/'skills/nows-ytb-dubbing/scripts'
+    monkeypatch.syspath_prepend(str(scripts))
+    spec=importlib.util.spec_from_file_location('workflow_reference_mode',scripts/'workflow.py')
+    workflow=importlib.util.module_from_spec(spec);spec.loader.exec_module(workflow)
+    args=workflow.parser().parse_args(['run','--input',str(tmp_path/'source.mp4'),
+                                     '--workdir',str(tmp_path),'--tts-reference-mode',mode])
+    project=workflow.initialize(tmp_path,args)
+    assert project['settings']['tts_reference_mode'] == mode
+    resume=workflow.parser().parse_args(['run','--workdir',str(tmp_path)])
+    assert workflow.initialize(tmp_path,resume)['settings']['tts_reference_mode'] == mode
+    args.tts_reference_mode='speaker' if mode == 'segment' else 'segment'
+    with pytest.raises(ValueError,match='tts_reference_mode'):
+        workflow.initialize(tmp_path,args)
