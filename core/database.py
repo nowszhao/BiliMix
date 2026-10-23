@@ -168,15 +168,20 @@ def load_tasks_index() -> dict:
 
 
 def save_task_to_index(task_id: str, summary: dict):
-    """保存/更新单条任务索引"""
+    """Insert a task or update only supplied fields, preserving its identity."""
+    columns = ('url', 'title', 'difficulty', 'process_mode', 'type', 'step', 'status', 'progress',
+               'message', 'created_at', 'basename', 'total_words', 'total_replacements',
+               'original_duration', 'mixed_duration', 'keep_bgm', 'queue_order')
+    updates = ', '.join(f'{name}=excluded.{name}' for name in columns if name in summary)
+    conflict = 'DO UPDATE SET '+updates if updates else 'DO NOTHING'
     with get_db() as conn:
         conn.execute("""
-            INSERT OR REPLACE INTO tasks
+            INSERT INTO tasks
             (task_id, url, title, difficulty, process_mode, type, step, status, progress,
              message, created_at, basename, total_words,
              total_replacements, original_duration, mixed_duration, keep_bgm, queue_order)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
+            ON CONFLICT(task_id) """+conflict, (
             task_id,
             summary.get("url", ""),
             summary.get("title", ""),

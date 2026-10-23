@@ -28,6 +28,26 @@ cancel_flags = {}            # {task_id: threading.Event}  终止信号
 task_subprocesses = {}       # {task_id: subprocess.Popen} 后台子进程引用
 
 
+def task_identity(*records):
+    """Task kind is independent of the shared audio-processing sub-pipeline."""
+    records = [record for record in records if record]
+    if any(r.get('type') == 'analysis' or r.get('process_mode') == 'analysis' for r in records):
+        kind = 'analysis'
+    elif any(r.get('type') == 'video' or r.get('process_mode') == 'video'
+             or r.get('_video_path') or r.get('video_result') for r in records):
+        kind = 'video'
+    else:
+        kind = 'audio'
+    return {'type': kind, 'process_mode': kind if kind != 'audio' else 'sentence_translate'}
+
+
+def _restore_video_source(task):
+    if task['type'] in ('video', 'analysis') and not task.get('_video_path'):
+        source = task.get('url', '')
+        if source.startswith('file://'):
+            task['_video_path'] = source[len('file://'):]
+
+
 # ============================================================
 # 持久化：通过 SQLite 存储任务索引
 # ============================================================
@@ -72,7 +92,8 @@ def save_task_result_to_disk(result_dir: str, data: dict):
 
         task_id = data.get("task_id", "")
         current = tasks.get(task_id, {})
-        for key in ("_analysis_id", "_dub_manifest", "_speaker_analysis", "_reference_manifest",
+        data.update(task_identity(current, data))
+        for key in ("url", "title", "created_at", "_analysis_id", "_dub_manifest", "_speaker_analysis", "_reference_manifest",
                     "_audio_path", "_video_path", "_raw_segments",
                     "_subtitle_mode", "_subtitle_font_size"):
             if key in current and key not in data:
@@ -93,6 +114,7 @@ def update_task(task_id: str, **kwargs):
     """线程安全地更新任务状态"""
     with tasks_lock:
         if task_id in tasks:
+            previous_identity = task_identity(tasks[task_id])
             # 记录步骤切换时间
             if "step" in kwargs:
                 import time
@@ -109,6 +131,7 @@ def update_task(task_id: str, **kwargs):
                 })
                 kwargs["_step_timing"] = step_timing
             tasks[task_id].update(kwargs)
+            tasks[task_id].update(task_identity(previous_identity, tasks[task_id]))
     # 持久化关键状态变更（processing 仅在轮询中频繁调用，不写盘）
     if "status" in kwargs and kwargs["status"] in (
         "completed", "error", "cancelled",
@@ -173,6 +196,7 @@ def _persist_task(task_id: str):
                                if task.get("result") else 0),
             "queue_order": _get_queue_position(task_id),
         }
+        summary.update(task_identity(task))
     save_task_to_index(task_id, summary)
 
 
@@ -211,11 +235,28 @@ def restore_task_from_disk(task_id: str) -> dict:
     if not summary:
         return {}
 
+    identity = task_identity(summary)
     basename = summary.get("basename", "")
+    if not basename:
+        # A partial index write in older runs may have cleared basename. Only
+        # use a checkpoint carrying this exact task ID; never guess a media file.
+        from pathlib import Path
+        matches = []
+        for path in Path(config.RESULT_DIR).glob(f'*{task_id[:8]}*/task_result.json'):
+            try:
+                with path.open(encoding='utf-8') as stream:
+                    candidate = json.load(stream)
+                if candidate.get('task_id') == task_id:
+                    matches.append(path.parent.name)
+            except (OSError, ValueError, AttributeError):
+                continue
+        if len(matches) == 1:
+            basename = matches[0]
     if not basename:
         # 任务可能在中途被中断（如转录中 kill 进程），没有 basename
         # 统一标记为 error 状态，SQLite 里的旧 status 不可信
         task = {
+            **identity,
             "task_id": task_id,
             "url": summary.get("url", ""),
             "title": summary.get("title", ""),
@@ -237,6 +278,7 @@ def restore_task_from_disk(task_id: str) -> dict:
             "_basename": "",
             "_audio_path": "",
         }
+        _restore_video_source(task)
         with tasks_lock:
             tasks[task_id] = task
         print(f"[恢复] 任务 {task_id[:8]}... 无 basename，恢复为已中断状态")
@@ -250,13 +292,17 @@ def restore_task_from_disk(task_id: str) -> dict:
         try:
             with open(task_result_path, "r", encoding="utf-8") as f:
                 saved = json.load(f)
-            saved_status = saved.get("status", summary.get("status", "completed"))
+            saved_status = summary.get("status") or saved.get("status", "completed")
+            interrupted = saved_status in ('processing', 'downloading', 'queued')
+            if interrupted:
+                saved_status = 'error'
             is_confirm = saved_status == "awaiting_confirmation"
             is_sentence_confirm = saved_status == "awaiting_sentence_confirmation"
             task = {
                 "task_id": task_id,
-                "url": saved.get("url") or summary.get("url", ""),
-                "title": summary.get("title", ""),
+                "url": (saved.get("url") or summary.get("url")
+                        or ('file://'+saved['_video_path'] if saved.get('_video_path') else '')),
+                "title": saved.get("title") or summary.get("title", ""),
                 "difficulty": saved.get("difficulty", summary.get("difficulty", "")),
                 "process_mode": saved.get("process_mode", summary.get("process_mode", "sentence_translate")),
                 "type": saved.get("type", summary.get("type", "audio")),
@@ -264,11 +310,14 @@ def restore_task_from_disk(task_id: str) -> dict:
                                    summary.get("skip_confirmation",
                                    getattr(config, "SKIP_CONFIRMATION", True))),
                 "status": saved_status,
-                "step": ("confirm_sentence" if is_sentence_confirm
-                         else ("confirm" if is_confirm else "done")),
+                "step": ("confirm_sentence" if is_sentence_confirm else "confirm" if is_confirm
+                         else "done" if saved_status == 'completed'
+                         else saved.get('step') or summary.get('step') or 'download'),
                 "progress": (55 if is_sentence_confirm
-                             else (60 if is_confirm else 100)),
-                "message": summary.get("message", "全部完成！"),
+                             else 60 if is_confirm else 100 if saved_status == 'completed'
+                             else saved.get('progress', summary.get('progress', 0))),
+                "message": ("任务因服务中断而暂停，可继续原任务重试" if interrupted
+                            else summary.get("message", "全部完成！")),
                 "created_at": summary.get("created_at", ""),
                 "transcription_text": saved.get("transcription_text", ""),
                 "segments": saved.get("segments", []),
@@ -289,6 +338,10 @@ def restore_task_from_disk(task_id: str) -> dict:
                 "_subtitle_font_size": saved.get("_subtitle_font_size"),
                 "_subtitle_path": saved.get("_subtitle_path", ""),
             }
+            task.update(task_identity(saved, summary))
+            _restore_video_source(task)
+            if saved.get('tts_audio_map'):
+                task['tts_audio_map'] = {int(k): v for k, v in saved['tts_audio_map'].items()}
             for key in ("_analysis_id", "_dub_manifest", "_speaker_analysis", "_reference_manifest",
                         "_audio_path", "_raw_segments"):
                 if key in saved:
@@ -323,6 +376,7 @@ def restore_task_from_disk(task_id: str) -> dict:
     sqlite_status = summary.get("status", "completed")
     is_terminal = sqlite_status in ("completed", "cancelled", "error")
     task = {
+        **identity,
         "task_id": task_id,
         "url": summary.get("url", ""),
         "title": summary.get("title", ""),
@@ -348,6 +402,7 @@ def restore_task_from_disk(task_id: str) -> dict:
         "_subtitle_path": "",
         "keep_bgm": summary.get("keep_bgm", False),
     }
+    _restore_video_source(task)
 
     # 尝试恢复转录文本和 segments
     transcription_cache = os.path.join(config.OUTPUT_DIR, f"{basename}.json")

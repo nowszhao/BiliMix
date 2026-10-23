@@ -31,7 +31,7 @@ from core.task_manager import (
     tasks, tasks_lock, cancel_flags, task_subprocesses,
     load_tasks_index,
     save_task_result_to_disk, restore_task_from_disk,
-    update_task, get_task, is_cancelled,
+    update_task, get_task, is_cancelled, task_identity,
 )
 from core.database import (
     setup_database, delete_task_from_index, save_task_to_index,
@@ -1041,25 +1041,7 @@ def _run_video_post_process(task_id):
                     message="视频配音完成！",
                     video_result=video_result)
 
-        # 落盘确保重启不丢
-        try:
-            existing = {}
-            disk_path = os.path.join(result_dir, "task_result.json")
-            if os.path.exists(disk_path):
-                try:
-                    with open(disk_path, "r") as f:
-                        existing = json.load(f)
-                except Exception:
-                    pass
-            existing.update({
-                "video_result": video_result,
-                "_video_path": video_path,
-                "_subtitle_mode": mode,
-                "_subtitle_font_size": sub_font_size,
-            })
-            save_task_result_to_disk(result_dir, existing)
-        except Exception as e:
-            print(f"[Video] 落盘失败: {e}")
+        save_task_result_to_disk(result_dir, get_task(task_id))
 
         return True
 
@@ -1412,7 +1394,7 @@ def submit_task():
             try:
                 save_task_to_index(task_id, {
                     "task_id": task_id, "url": source_url,
-                    "title": real_title, "process_mode": "video",
+                    "title": real_title, "process_mode": process_mode, "type": task_type,
                     "status": "processing", "progress": 5,
                     "message": "视频准备完成",
                 })
@@ -1610,7 +1592,7 @@ def redo_task(task_id):
         return jsonify({"error": "任务不存在"}), 404
 
     source_url = task.get("url", "")
-    task_type = task.get("type", "audio")
+    task_type = task_identity(task)["type"]
     if not source_url:
         return jsonify({"error": "任务缺少源 URL，无法重做"}), 400
 
@@ -1681,7 +1663,7 @@ def redo_task(task_id):
             "task_id": task_id,
             "url": source_url,
             "title": task.get("title", ""),
-            "process_mode": "sentence_translate",
+            "process_mode": task_identity(task)["process_mode"],
             "type": task_type,
             "status": "queued",
             "progress": 0,
@@ -1784,6 +1766,9 @@ def _do_redo_video_task(task_id, source_url):
         update_task(task_id, status="error", message="音频提取失败")
         return
     update_task(task_id, _audio_path=audio_file)
+    if task_identity(task)["type"] == "analysis":
+        _process_source_analysis(task_id, audio_file, _video_path)
+        return
     process_audio_sentence_mode(task_id, audio_file)
     # 视频后处理
     task = get_task(task_id)
@@ -1795,179 +1780,137 @@ def _do_redo_video_task(task_id, source_url):
                 print(f"[Redo] 视频后处理失败: {e}")
 
 
+def _load_retry_checkpoint(task_id, task):
+    basename = task.get("_basename", "")
+    if not basename:
+        update_task(task_id, **task_identity(task))
+        return get_task(task_id)
+    checkpoint = os.path.join(config.RESULT_DIR, basename, "task_result.json")
+    saved = {}
+    if os.path.isfile(checkpoint):
+        with open(checkpoint, encoding="utf-8") as stream:
+            saved = json.load(stream)
+        if saved.get("task_id") not in (None, task_id):
+            raise ValueError("Checkpoint belongs to another task")
+    recovered = {}
+    for key in ("segments", "translations", "translated_indices", "sentence_pairs", "tts_audio_map",
+                "time_mapping", "result", "_checkpoint_translate_batch", "_checkpoint_translations",
+                "_checkpoint_tts_idx", "_video_path", "_audio_path", "_analysis_id", "_dub_manifest",
+                "_speaker_analysis", "_reference_manifest", "_raw_segments", "_subtitle_path",
+                "_subtitle_mode", "_subtitle_font_size"):
+        if key in saved and not task.get(key):
+            recovered[key] = saved[key]
+    for key in ("translations", "tts_audio_map", "_checkpoint_translations"):
+        if recovered.get(key):
+            recovered[key] = {int(k): v for k, v in recovered[key].items()}
+    recovered.update(task_identity(task, saved))
+    update_task(task_id, **recovered)
+    return get_task(task_id)
+
+
+def _prepare_retry_input(task_id):
+    """Recover the source for its original task kind, inside the queue."""
+    task = get_task(task_id)
+    identity = task_identity(task)
+    update_task(task_id, **identity)
+    source_url = task.get("url", "")
+    audio = task.get("_audio_path", "")
+    if identity["type"] in ("video", "analysis"):
+        video = task.get("_video_path", "")
+        if not video or not os.path.isfile(video):
+            if source_url.startswith("file://"):
+                video = source_url[len("file://"):]
+                if not os.path.isfile(video):
+                    raise FileNotFoundError("原视频文件缺失，无法按视频任务重试")
+            elif source_url.startswith(("http://", "https://")):
+                video = source_url
+            else:
+                raise FileNotFoundError("任务缺少原视频来源，不能降级为音频任务重试")
+        if os.path.isfile(video) and audio and audio != video and os.path.isfile(audio):
+            update_task(task_id, _video_path=video)
+            return audio
+        cache = os.path.join(config.DOWNLOAD_DIR, "video_cache")
+        prep = prepare_video(video, cache, title=task.get("title", ""))
+        if not prep.get("ok"):
+            raise ValueError("重试准备原视频失败: "+prep.get("error", "unknown error"))
+        video, audio = prep.get("video_path"), prep.get("audio_path")
+        if not video or not audio or not os.path.isfile(video) or not os.path.isfile(audio):
+            raise FileNotFoundError("重试缺少原视频或提取音频")
+        updates = dict(_video_path=video, _audio_path=audio)
+        if not task.get("_basename"):
+            updates["_basename"] = os.path.splitext(os.path.basename(audio))[0]+"_"+task_id[:8]
+        update_task(task_id, **updates)
+        return audio
+    if audio and os.path.isfile(audio):
+        return audio
+    if source_url.startswith("file://"):
+        audio = source_url[len("file://"):]
+        if not os.path.isfile(audio):
+            raise FileNotFoundError("原音频文件缺失")
+    elif source_url.startswith(("http://", "https://")):
+        extension = os.path.splitext(source_url.split("?")[0])[-1].lower()
+        if extension not in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"):
+            extension = ".mp3"
+        os.makedirs(config.DOWNLOAD_DIR, exist_ok=True)
+        audio = os.path.join(config.DOWNLOAD_DIR, task_id+".retry"+extension)
+        if not download_audio(source_url, audio, task_id):
+            if is_cancelled(task_id):
+                raise InterruptedError("重试已取消")
+            raise ValueError("重新下载音频失败")
+    else:
+        raise FileNotFoundError("任务缺少原音频来源")
+    update_task(task_id, _audio_path=audio)
+    return audio
+
+
+def _resume_task(task_id):
+    audio = _prepare_retry_input(task_id)
+    task = get_task(task_id)
+    if task["type"] == "analysis":
+        return _process_source_analysis(task_id, audio, task["_video_path"])
+    if task.get("segments") and task.get("translations") and task.get("translated_indices"):
+        return _synthesis_resume(task_id)
+    process_audio_sentence_mode(task_id, audio)
+    current = get_task(task_id)
+    if (current.get("type") == "video"
+            and current.get("status") not in ("error", "cancelled", "awaiting_sentence_confirmation", "awaiting_confirmation")):
+        return _run_video_post_process(task_id)
+
+
 @app.route("/api/task/<task_id>/retry", methods=["POST"])
 def retry_task(task_id):
-    """通用断点续传：检查已有数据，跳过已完成的步骤"""
-    task = get_task(task_id)
-    if not task:
-        task = restore_task_from_disk(task_id)
+    """Resume the saved task without changing its media type or output contract."""
+    task = get_task(task_id) or restore_task_from_disk(task_id)
     if not task:
         return jsonify({"error": "任务不存在"}), 404
-
-    refresh_analysis = (request.get_json(silent=True) or {}).get("refresh_analysis") is True
-    can_refresh = (refresh_analysis and task.get("type") == "analysis"
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"error": "JSON object required"}), 400
+    try:
+        task = _load_retry_checkpoint(task_id, task)
+    except (OSError, ValueError, TypeError) as exc:
+        return jsonify({"error": "恢复任务断点失败: "+str(exc)}), 400
+    can_refresh = (payload.get("refresh_analysis") is True and task["type"] == "analysis"
                    and task.get("status") == "completed")
     if task.get("status") != "error" and not can_refresh:
         return jsonify({"error": f"任务状态为 {task.get('status')}，仅 error 状态可重试"}), 400
 
-    mode = "sentence_translate"
-    audio_path = task.get("_audio_path", "")
-    if not audio_path:
-        source_url = task.get("url", "")
-        # 优先从原始 URL 找回文件路径
-        if source_url.startswith("file://"):
-            candidate = source_url[len("file://"):]
-            if os.path.isfile(candidate):
-                audio_path = candidate
-                update_task(task_id, _audio_path=audio_path)
-        if not audio_path:
-            basename_check = task.get("_basename", "")
-            if basename_check:
-                for ext in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".mp4", ".mkv", ".mov"):
-                    p = os.path.join(config.DOWNLOAD_DIR, f"{basename_check}{ext}")
-                    if os.path.exists(p):
-                        audio_path = p
-                        update_task(task_id, _audio_path=audio_path)
-                        break
-                if not audio_path:
-                    # 模糊匹配：去掉 basename 中的 task_id 后缀后再找
-                    base_no_taskid = basename_check.rsplit("_", 1)[0]
-                    for name in sorted(os.listdir(config.DOWNLOAD_DIR)):
-                        if name.startswith(base_no_taskid):
-                            p = os.path.join(config.DOWNLOAD_DIR, name)
-                            if os.path.isfile(p):
-                                audio_path = p
-                                update_task(task_id, _audio_path=audio_path)
-                                break
-        if not audio_path and source_url and not source_url.startswith("file://"):
-            # 重新下载
-            update_task(task_id, status="processing", step="download", progress=0,
-                        message="重新下载音频...")
-            from urllib.request import Request, urlopen
-            ext = os.path.splitext(source_url.split("?")[0])[-1] or ".mp3"
-            if ext not in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"):
-                ext = ".mp3"
-            audio_path = os.path.join(config.DOWNLOAD_DIR, f"{task_id[:16]}.retry{ext}")
-            try:
-                req = Request(source_url, headers={"User-Agent": "BiliMix/1.0"})
-                with urlopen(req, timeout=300) as resp, open(audio_path, "wb") as f:
-                    f.write(resp.read())
-                update_task(task_id, _audio_path=audio_path)
-            except Exception as e:
-                return jsonify({"error": f"重新下载失败: {e}"}), 400
-        if not audio_path:
-            return jsonify({"error": "任务缺少音频路径，无法重试"}), 400
-
-    # 尝试从 task_result.json 加载断点数据（内存恢复可能缺失）
-    basename = task.get("_basename", "")
-    if basename:
-        result_dir = os.path.join(config.RESULT_DIR, basename)
-        checkpoint_path = os.path.join(result_dir, "task_result.json")
-        if os.path.exists(checkpoint_path):
-            try:
-                with open(checkpoint_path, "r", encoding="utf-8") as f:
-                    saved = json.load(f)
-                # 恢复关键数据到内存 task
-                for key in ("segments", "translations", "translated_indices",
-                            "sentence_pairs", "tts_audio_map",
-                            "_checkpoint_translate_batch",
-                            "_checkpoint_translations",
-                            "_checkpoint_tts_idx"):
-                    if key in saved and not task.get(key):
-                        task[key] = saved[key]
-                if saved.get("_checkpoint_translations"):
-                    task["_checkpoint_translations"] = {
-                        int(k): v for k, v
-                        in saved["_checkpoint_translations"].items()
-                    }
-                update_task(task_id, **{k: task[k] for k in task
-                                        if k.startswith("_checkpoint_")})
-            except Exception as e:
-                print(f"[Retry] 加载断点数据失败: {e}")
-
-    # 判断已有数据，确定从哪步恢复
-    segments = task.get("segments", [])
-    translations = task.get("translations", {})
-    translated_indices = task.get("translated_indices", [])
-    difficult_words = task.get("difficult_words", [])
-
-    if task.get("type") == "analysis":
-        source_media = task.get("url", "").removeprefix("file://")
-        if not os.path.isfile(source_media):
-            source_media = task.get("_video_path", "")
-        if not source_media or not os.path.isfile(source_media):
-            return jsonify({"error":"Source analysis media missing"}),400
-        _retry_target = lambda: _process_source_analysis(task_id,audio_path,source_media)
-    elif True:  # sentence_translate
-
-        if translations and translated_indices and segments:
-            # 翻译已完成，直接从 TTS 合成恢复（只补缺失的 TTS 文件）
-            msg = f"断点续传 — 跳过转录+翻译，从 TTS 恢复 ({len(translated_indices)} 句)"
-            print(f"[Retry] {msg}")
-            _retry_target = lambda: _synthesis_resume(task_id)
-        elif segments:
-            # 转录已完成，从翻译步骤恢复
-            msg = f"断点续传 — 跳过转录，从翻译恢复 ({len(segments)} 句)"
-            print(f"[Retry] {msg}")
-            update_task(task_id, _failed_step="", progress=20, message=msg)
-
-            def _segments_retry():
-                process_audio_sentence_mode(task_id, audio_path)
-                # 视频任务：process_audio_sentence_mode 处理完音频后，追加视频组装
-                task = get_task(task_id)
-                vp = task.get("_video_path", "")
-                if vp and os.path.isfile(vp):
-                    if task.get("translations") and task.get("translated_indices"):
-                        print(f"[Retry] 视频任务，从翻译恢复后追加视频组装...")
-                        _run_video_post_process(task_id)
-
-            _retry_target = _segments_retry
-        else:
-            # 从头开始
-            update_task(task_id, _failed_step="", progress=0,
-                        message="断点续传 — 从头开始…")
-
-            def _from_scratch_inner():
-                process_audio_sentence_mode(task_id, audio_path)
-                task = get_task(task_id)
-                vp = task.get("_video_path", "")
-                if vp and os.path.isfile(vp):
-                    if task.get("translations") and task.get("translated_indices"):
-                        _run_video_post_process(task_id)
-
-            _retry_target = _from_scratch_inner
-    else:
-        # 从头开始（if True 的 else 和 外层 else 共享同一逻辑）
-        update_task(task_id, _failed_step="", progress=0,
-                    message="断点续传 — 从头开始…")
-
-        def _from_scratch_retry():
-            process_audio_sentence_mode(task_id, audio_path)
-            task = get_task(task_id)
-            vp = task.get("_video_path", "")
-            if vp and os.path.isfile(vp):
-                if task.get("translations") and task.get("translated_indices"):
-                    _run_video_post_process(task_id)
-
-        _retry_target = _from_scratch_retry
-
-    def _retry_worker():
-        update_task(task_id, status="queued", progress=0,
-                    message="排队中，请稍候…")
+    def worker():
         with _queue_condition:
             _queue_waiters.append(task_id)
             while _queue_waiters[0] != task_id:
                 _queue_condition.wait(timeout=1.0)
-
         try:
             if is_cancelled(task_id) or not get_task(task_id):
                 return
-            update_task(task_id, status="processing",
-                        message="开始处理…")
-            _retry_target()
+            update_task(task_id, status="processing", message="正在恢复原任务…")
+            _resume_task(task_id)
         except Exception as exc:
             traceback.print_exc()
-            update_task(task_id,status="cancelled" if is_cancelled(task_id) else "error",message=str(exc))
+            update_task(task_id, status="cancelled" if is_cancelled(task_id) else "error", message=str(exc))
+            current = get_task(task_id)
+            if current.get("_basename"):
+                save_task_result_to_disk(os.path.join(config.RESULT_DIR, current["_basename"]), current)
         finally:
             with _queue_condition:
                 if task_id in _queue_waiters:
@@ -1977,15 +1920,54 @@ def retry_task(task_id):
                 task_subprocesses.pop(task_id, None)
 
     cancel_flags[task_id] = threading.Event()
-    thread = threading.Thread(target=_retry_worker, daemon=True)
-    thread.start()
-    return jsonify({"message": "已开始断点续传"})
+    update_task(task_id, status="queued", progress=0, message="排队恢复原任务…")
+    threading.Thread(target=worker, daemon=True).start()
+    return jsonify({"message": "已开始断点续传", "task_id": task_id, "type": task["type"]})
+
+
+def _finish_resumed_audio(task_id, audio_path, output_path, segments, translations,
+                          translated_indices, tts_audio_map, mix_result):
+    """Audio is an intermediate for video tasks, never a successful substitute."""
+    if is_cancelled(task_id):
+        update_task(task_id, status="cancelled", message="重试已取消")
+        return False
+    task = get_task(task_id)
+    identity = task_identity(task)
+    if identity["type"] == "analysis":
+        raise ValueError("Analysis tasks cannot enter speech synthesis")
+    mapping = mix_result["time_mapping"]
+    mixed = build_segments_with_mixed_time(segments, translations, mapping)
+    pairs = [dict(index=i, english=mixed[i].get("text", "").strip(), chinese=translations[i],
+                  start=mixed[i].get("start", 0), end=mixed[i].get("end", 0))
+             for i in translated_indices if i in translations and i < len(mixed)]
+    result = dict(basename=task["_basename"], original_audio=audio_path, mixed_audio=output_path,
+                  original_duration=mix_result["original_duration"], mixed_duration=mix_result["mixed_duration"],
+                  total_segments=len(segments), translated_segments=len(translated_indices),
+                  process_mode=identity["process_mode"])
+    video = identity["type"] == "video"
+    update_task(task_id, **identity, result=result, segments=segments, translations=translations,
+                translated_indices=translated_indices, time_mapping=mapping,
+                segments_mixed=mixed, sentence_pairs=pairs, tts_audio_map=tts_audio_map, video_result=None,
+                status="processing" if video else "completed", step="assemble" if video else "done",
+                progress=93 if video else 100,
+                message="音频已就绪，继续合成原视频…" if video else "断点续传完成！")
+    folder = os.path.join(config.RESULT_DIR, task["_basename"])
+    save_task_result_to_disk(folder, get_task(task_id))
+    if video:
+        success = _run_video_post_process(task_id)
+        if not success and get_task(task_id).get("status") not in ("error", "cancelled"):
+            update_task(task_id, status="error", message="视频组装未完成，保留原视频任务等待重试")
+        save_task_result_to_disk(folder, get_task(task_id))
+        return success
+    return True
 
 
 def _synthesis_resume(task_id):
     """断点续传：跳过转录+翻译，只补充合成缺失的 TTS 文件并重新混合"""
     task = get_task(task_id)
     if not task: return
+    if task_identity(task)['type'] == 'analysis':
+        raise ValueError('人物分析任务不能进入配音合成重试')
     segments = task.get("segments", [])
     translated_indices = task.get("translated_indices", [])
     translations = task.get("translations", {})
@@ -2044,97 +2026,22 @@ def _synthesis_resume(task_id):
                                     translated_indices, translations,
                                     tts_audio_map, output_path,
                                     bgm_path=bgm_path)
-    # 更新 time_mapping（mix_sentence_audio 返回的是权威数据，不使用 task 副本中可能过期的值）
-    time_mapping = mix_result.get("time_mapping", [])
-
-    # 如果是视频任务，继��执行视频组装（Step 5）
-    video_path = task.get("_video_path", "")
-    video_result_data = None
-    if video_path and os.path.isfile(video_path):
-        try:
-            mode = task.get("_subtitle_mode", "bilingual")
-            sub_font_size = task.get("_subtitle_font_size", None)
-            if sub_font_size is not None and sub_font_size <= 0:
-                sub_font_size = None  # -1/0 表示自动计算
-            subtitle_path = os.path.join(result_dir, f"{basename}.ass")
-            video_w, video_h = _probe_video_size(video_path)
-
-            update_task(task_id, step="subtitle", progress=93,
-                        message="断点续传: 正在生成字幕...")
-            subtitle_result = generate_bilingual_ass(
-                segments, translations, time_mapping, subtitle_path,
-                subtitle_mode=mode, video_height=video_h, video_width=video_w,
-                subtitle_font_size=sub_font_size)
-            if subtitle_result:
-                update_task(task_id, step="assemble", progress=96,
-                            message="断点续传: 正在合成视频...")
-                output_video = os.path.join(result_dir, f"{basename}_dubbed.mp4")
-                if os.path.exists(output_video):
-                    try:
-                        os.remove(output_video)
-                    except Exception:
-                        pass
-                assembled = assemble_video(
-                    video_path, output_path, subtitle_path, output_video,
-                    time_mapping=time_mapping, segments=segments,
-                    translations=translations, subtitle_mode=mode,
-                    subtitle_font_size=sub_font_size,
-                    video_width=video_w, video_height=video_h)
-                if assembled and os.path.exists(assembled):
-                    video_result_data = {
-                        "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",
-                        "subtitle_url": f"/api/audio/{basename}/{basename}.ass",
-                        "video_path": assembled,
-                        "subtitle_path": subtitle_path,
-                    }
-                    print(f"[SynthesisResume] 视频组装完成: {assembled}")
-                else:
-                    print(f"[SynthesisResume] 视频组装失败，仅音频已就绪")
-            else:
-                print(f"[SynthesisResume] 字幕生成失败，跳过视频组装")
-        except Exception as e:
-            traceback.print_exc()
-            print(f"[SynthesisResume] 视频组装异常: {e}")
-
-    # 完成
-    result_data = {
-        "basename": basename,
-        "original_audio": audio_path,
-        "mixed_audio": output_path,
-        "original_duration": mix_result["original_duration"],
-        "mixed_duration": mix_result["mixed_duration"],
-        "total_segments": len(segments),
-        "translated_segments": len(translated_indices),
-    }
-    update_task(task_id, status="completed", progress=100,
-                step="done", message="断点续传完成!",
-                result=result_data, sentence_pairs=task.get("sentence_pairs", []),
-                video_result=video_result_data)
-    disk_data = {
-        **result_data, "task_id": task_id,
-        "status": "completed", "segments": segments,
-        "translations": translations,
-        "translated_indices": translated_indices,
-        "process_mode": "sentence_translate",
-        "tts_audio_map": task.get("tts_audio_map", {}),
-        "_step_timing": task.get("_step_timing", []),
-        "_subtitle_mode": task.get("_subtitle_mode", "bilingual"),
-        "_subtitle_font_size": task.get("_subtitle_font_size"),
-    }
-    if video_result_data:
-        disk_data["video_result"] = video_result_data
-        disk_data["_video_path"] = video_path
-    save_task_result_to_disk(result_dir, disk_data)
-    save_task_to_index(task_id, {"status": "completed", "progress": 100,
-                       "step": "done", "message": "断点续传完成!"})
+    return _finish_resumed_audio(task_id, audio_path, output_path, segments, translations,
+                                  translated_indices, tts_audio_map, mix_result)
 
 
 @app.route("/api/task/<task_id>/retry-synthesis", methods=["POST"])
 def retry_sentence_synthesis(task_id):
     """TTS 合成失败后手动重试"""
-    task = get_task(task_id)
+    task = get_task(task_id) or restore_task_from_disk(task_id)
     if not task:
         return jsonify({"error": "任务不存在"}), 404
+    try:
+        task = _load_retry_checkpoint(task_id, task)
+    except (OSError, ValueError, TypeError) as exc:
+        return jsonify({'error': '恢复任务断点失败: '+str(exc)}), 400
+    if task["type"] == "analysis":
+        return jsonify({"error": "人物分析任务不能进入配音合成重试"}), 400
 
     status = task.get("status", "")
     if status not in ("error",):
@@ -2149,6 +2056,13 @@ def retry_sentence_synthesis(task_id):
 
     if not segments or not translated_indices or not translations:
         return jsonify({"error": "任务数据不完整，无法重试"}), 400
+
+    try:
+        audio_path = _prepare_retry_input(task_id)
+        task = get_task(task_id)
+    except (OSError, ValueError) as exc:
+        update_task(task_id, status="error", message=str(exc))
+        return jsonify({"error": str(exc)}), 400
 
     # 找出已有 TTS 和缺失 TTS 的 segment
     existing_tts = task.get("tts_audio_map", {}) or {}
@@ -2220,117 +2134,14 @@ def retry_sentence_synthesis(task_id):
         output_path=output_audio_path,
         bgm_path=bgm_path)
 
-    # 如果是视频任务，执行视频组装（与 _synthesis_resume 保持一致）
-    result_dir = os.path.join(config.RESULT_DIR, basename)
-    time_mapping = mix_result.get("time_mapping", [])
-    video_path = task.get("_video_path", "")
-    video_result_data = None
-    if video_path and os.path.isfile(video_path):
-        try:
-            mode = task.get("_subtitle_mode", "bilingual")
-            sub_font_size = task.get("_subtitle_font_size", None)
-            if sub_font_size is not None and sub_font_size <= 0:
-                sub_font_size = None  # -1/0 表示自动计算
-            subtitle_path = os.path.join(result_dir, f"{basename}.ass")
-            video_w, video_h = _probe_video_size(video_path)
-
-            update_task(task_id, step="subtitle", progress=93,
-                        message="重试: 正在生成字幕...")
-            subtitle_result = generate_bilingual_ass(
-                segments, translations, time_mapping, subtitle_path,
-                subtitle_mode=mode, video_height=video_h, video_width=video_w,
-                subtitle_font_size=sub_font_size)
-            if subtitle_result:
-                update_task(task_id, step="assemble", progress=96,
-                            message="重试: 正在合成视频...")
-                output_video = os.path.join(result_dir, f"{basename}_dubbed.mp4")
-                if os.path.exists(output_video):
-                    try:
-                        os.remove(output_video)
-                    except Exception:
-                        pass
-                assembled = assemble_video(
-                    video_path, output_audio_path, subtitle_path, output_video,
-                    time_mapping=time_mapping, segments=segments,
-                    translations=translations, subtitle_mode=mode,
-                    subtitle_font_size=sub_font_size,
-                    video_width=video_w, video_height=video_h)
-                if assembled and os.path.exists(assembled):
-                    video_result_data = {
-                        "video_url": f"/api/audio/{basename}/{basename}_dubbed.mp4",
-                        "subtitle_url": f"/api/audio/{basename}/{basename}.ass",
-                        "video_path": assembled,
-                        "subtitle_path": subtitle_path,
-                    }
-                    print(f"[RetrySynthesis] 视频组装完成: {assembled}")
-                else:
-                    print(f"[RetrySynthesis] 视频组装失败，仅音频已就绪")
-            else:
-                print(f"[RetrySynthesis] 字幕生成失败，跳过视频组装")
-        except Exception as e:
-            traceback.print_exc()
-            print(f"[RetrySynthesis] 视频组装异常: {e}")
-
-    # 构建完整结果
-    full_text = task.get("transcription_text", "")
-    result_data = {
-        "basename": basename,
-        "original_audio": audio_path,
-        "mixed_audio": output_audio_path,
-        "original_duration": mix_result["original_duration"],
-        "mixed_duration": mix_result["mixed_duration"],
-        "total_segments": mix_result["total_segments"],
-        "translated_segments": mix_result["translated_segments"],
-        "process_mode": task.get("process_mode", "sentence_translate"),
-    }
-
-    # 构建混合时间轴的 segments
-    segments_mixed = build_segments_with_mixed_time(
-        segments, translations, mix_result["time_mapping"])
-
-    sentence_pairs = []
-    for seg_idx in translated_indices:
-        if seg_idx in translations and seg_idx < len(segments_mixed):
-            sentence_pairs.append({
-                "index": seg_idx,
-                "english": segments_mixed[seg_idx].get("text", "").strip(),
-                "chinese": translations[seg_idx],
-                "start": segments_mixed[seg_idx].get("start", 0),
-                "end": segments_mixed[seg_idx].get("end", 0),
-            })
-
-    update_task(task_id, status="completed", step="done", progress=100,
-                message="全部完成！", result=result_data,
-                sentence_pairs=sentence_pairs,
-                time_mapping=mix_result["time_mapping"],
-                segments_mixed=segments_mixed,
-                tts_audio_map=tts_audio_map,
-                video_result=video_result_data)
-
-    disk_data = {
-        "task_id": task_id, "status": "completed",
-        "process_mode": task.get("process_mode", "sentence_translate"),
-        "transcription_text": full_text,
-        "segments": segments,
-        "segments_mixed": segments_mixed,
-        "translations": translations,
-        "translated_indices": translated_indices,
-        "sentence_pairs": sentence_pairs,
-        "result": result_data,
-        "time_mapping": mix_result["time_mapping"],
-        "tts_audio_map": tts_audio_map,
-        "_step_timing": task.get("_step_timing", []),
-        "_video_path": task.get("_video_path", ""),
-        "_subtitle_mode": task.get("_subtitle_mode", "bilingual"),
-        "_subtitle_font_size": task.get("_subtitle_font_size"),
-    }
-    if video_result_data:
-        disk_data["video_result"] = video_result_data
-    save_task_result_to_disk(result_dir, disk_data)
-
-    _cleanup_intermediate_files(result_dir)
-
-    return jsonify({"message": "重试完成", "result": result_data})
+    success = _finish_resumed_audio(task_id, audio_path, output_audio_path, segments, translations,
+                                     translated_indices, tts_audio_map, mix_result)
+    current = get_task(task_id)
+    if not success:
+        return jsonify({"error": current.get("message", "视频重试未完成"),
+                        "task_id": task_id, "type": current["type"]}), 500
+    _cleanup_intermediate_files(os.path.join(config.RESULT_DIR, basename))
+    return jsonify({"message": "重试完成", "result": current["result"]})
 
 
 # ============================================================
