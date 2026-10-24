@@ -13,6 +13,15 @@ import subprocess
 import tempfile
 import shutil
 import sys
+import wave
+
+
+def _valid_stem(path: str) -> bool:
+    try:
+        with wave.open(path, "rb") as stream:
+            return stream.getnframes() > 0
+    except (OSError, EOFError, wave.Error):
+        return False
 
 
 def separate_vocals(audio_path: str, cache_dir: str, timeout: int = None) -> dict:
@@ -38,11 +47,17 @@ def separate_vocals(audio_path: str, cache_dir: str, timeout: int = None) -> dic
     vocals_path = os.path.join(cache_dir, model_name, basename, "vocals.wav")
     no_vocals_path = os.path.join(cache_dir, model_name, basename, "no_vocals.wav")
 
-    # 已有缓存结果直接复用
-    if os.path.exists(vocals_path) and os.path.exists(no_vocals_path):
+    # Only reuse a complete pair of valid stems.  This keeps a crashed or
+    # partial demucs run from poisoning the shared cache.
+    if _valid_stem(vocals_path) and _valid_stem(no_vocals_path):
         print(f"[VocalSep] 发现已有分离缓存: {cache_dir}")
         return {"ok": True, "vocals_path": vocals_path,
                 "no_vocals_path": no_vocals_path, "error": ""}
+
+    if os.path.exists(vocals_path) or os.path.exists(no_vocals_path):
+        shutil.rmtree(
+            os.path.join(cache_dir, model_name, basename), ignore_errors=True
+        )
 
     print(f"[VocalSep] 开始人声分离: {audio_path}")
     # 用当前进程的 Python 解释器（sys.executable）绝对路径调用 demucs，

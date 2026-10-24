@@ -120,6 +120,7 @@ def save_task_result_to_disk(result_dir: str, data: dict):
             "_speaker_analysis",
             "_reference_manifest",
             "_audio_path",
+            "_media_sha256",
             "_video_path",
             "_raw_segments",
             "_subtitle_mode",

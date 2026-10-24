@@ -10,6 +10,7 @@ from core.task_manager import (
     is_cancelled,
 )
 from pipeline.speaker_analysis import analyze_source
+from pipeline.media_cache import vocal_cache_for_task
 from pipeline.step_vocal_separation import separate_vocals
 
 
@@ -29,9 +30,19 @@ def _process_source_analysis(task_id, audio_path, media_path):
         url=(get_task(task_id) or {}).get("url") or "file://" + media_path,
     )
     try:
-        sep = separate_vocals(audio_path, os.path.join(result_dir, "vocals"))
+        task = get_task(task_id) or {}
+        sep = separate_vocals(
+            audio_path,
+            vocal_cache_for_task(task, os.path.join(result_dir, "vocals")),
+        )
         source_audio = sep.get("vocals_path") if sep.get("ok") else audio_path
-        analysis = analyze_source(source_audio, media_path, result_dir, task_id=task_id)
+        analysis = analyze_source(
+            source_audio,
+            media_path,
+            result_dir,
+            task_id=task_id,
+            media_sha256=task.get("_media_sha256") or None,
+        )
         if is_cancelled(task_id):
             update_task(task_id, status="cancelled")
             return

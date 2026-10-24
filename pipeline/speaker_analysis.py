@@ -301,11 +301,11 @@ def _verify_source_speakers(audio_path, transcription, initial, output_dir, sign
     return evidence
 
 
-def analyze_source(audio_path, media_path, output_dir, task_id=None):
+def analyze_source(audio_path, media_path, output_dir, task_id=None, media_sha256=None):
     from pipeline.step1_transcribe import transcribe
     from core import config
     os.makedirs(output_dir, exist_ok=True)
-    media_hash = file_sha256(media_path)
+    media_hash = media_sha256 or file_sha256(media_path)
     audio_hash = file_sha256(audio_path)
     worker = os.path.join(config.BASE_DIR, "workers", "analyze_speakers.py")
     signature = native_analysis_signature(audio_hash,worker)

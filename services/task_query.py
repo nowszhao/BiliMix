@@ -19,6 +19,7 @@ from core.task_manager import (
     get_task, is_cancelled, restore_task_from_disk,
     update_task,
 )
+from pipeline.media_cache import is_shared_media_path
 from core.database import load_tasks_index, delete_task_from_index
 from services.shared import _load_step_timing_from_disk, _load_video_result_from_disk
 from core.processes import _kill_task_subprocesses
@@ -152,15 +153,18 @@ def delete_task(task_id):
             cleaned.append(f"data/transcripts/{basename}.json")
 
         if audio_path and os.path.exists(audio_path):
-            _remove_downloads_file(audio_path)
+            # Shared analysis/dubbing media is content-addressed and must
+            # outlive a single task deletion.
+            if not is_shared_media_path(audio_path):
+                _remove_downloads_file(audio_path)
         else:
             for ext in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"):
                 p = os.path.join(config.DOWNLOAD_DIR, f"{basename}{ext}")
                 if os.path.exists(p):
                     os.remove(p)
                     cleaned.append(f"data/downloads/{basename}{ext}")
-            # 视频任务：basename 带 taskid 后缀，提取的音频位于
-            # video_cache/audio_<md5>.wav，去掉后缀后按前缀匹配清理
+            # 视频任务：basename 带 taskid 后缀；旧的路径键音频缓存可清理，
+            # 新的 _shared 内容缓存目录不会被这里的文件匹配命中。
             # 仅限视频任务，避免音频任务（如 audio_xxx.mp3）误删缓存
             if task and task.get("type") == "video":
                 base_no_taskid = basename.rsplit("_", 1)[0]

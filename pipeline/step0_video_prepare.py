@@ -7,10 +7,13 @@ Step 0: 视频预处理模块
 - 本地视频文件 → ffmpeg 提取音频 wav
 - 缓存: 同名视频/音频不重复下载
 """
+import hashlib
 import os
 import re
 import subprocess
-import time
+import tempfile
+import wave
+from functools import lru_cache
 from typing import Optional
 
 
@@ -24,8 +27,35 @@ def _run_ffmpeg(args: list[str], timeout: int = 600) -> subprocess.CompletedProc
 
 def _get_video_cache_key(source: str) -> str:
     """为视频源生成唯一缓存键。"""
-    import hashlib
     return hashlib.md5(source.encode("utf-8")).hexdigest()
+
+
+@lru_cache(maxsize=64)
+def _file_sha256(path: str, size: int, mtime_ns: int) -> str:
+    """Hash a media file once per path/size/mtime in this process."""
+    value = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            value.update(block)
+    return value.hexdigest()
+
+
+def _source_sha256(path: str) -> str:
+    stat = os.stat(path)
+    return _file_sha256(os.path.abspath(path), stat.st_size, stat.st_mtime_ns)
+
+
+def _valid_extracted_wav(path: str) -> bool:
+    try:
+        with wave.open(path, "rb") as stream:
+            return (
+                stream.getnchannels() == 1
+                and stream.getsampwidth() == 2
+                and stream.getframerate() == 16000
+                and stream.getnframes() > 0
+            )
+    except (OSError, EOFError, wave.Error):
+        return False
 
 
 def _extract_audio(video_path: str, audio_output: str, timeout: int = 300) -> bool:
@@ -40,8 +70,20 @@ def _extract_audio(video_path: str, audio_output: str, timeout: int = 300) -> bo
     Returns:
         bool: 提取成功
     """
-    # 始终重新提取音频，避免旧任务遗留的音频文件被复用导致内容错误
-    os.makedirs(os.path.dirname(audio_output) or ".", exist_ok=True)
+    output_dir = os.path.dirname(audio_output) or "."
+    os.makedirs(output_dir, exist_ok=True)
+
+    # A content-addressed cache is only reusable after a complete, validated
+    # extraction.  Writes go to a temporary file first so crashes cannot leave
+    # a partial WAV under the cache name.
+    if _valid_extracted_wav(audio_output):
+        print(f"[Step0] 复用提取音频缓存: {audio_output}")
+        return True
+
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=".extract-", suffix=".wav", dir=output_dir
+    )
+    os.close(descriptor)
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-i", video_path,
@@ -49,10 +91,17 @@ def _extract_audio(video_path: str, audio_output: str, timeout: int = 300) -> bo
         "-acodec", "pcm_s16le",        # 16-bit PCM
         "-ar", "16000",                # 16kHz 采样率
         "-ac", "1",                    # 单声道
-        audio_output,
+        temporary,
     ]
-    proc = _run_ffmpeg(cmd, timeout=timeout)
-    return proc.returncode == 0 and os.path.exists(audio_output)
+    try:
+        proc = _run_ffmpeg(cmd, timeout=timeout)
+        if proc.returncode != 0 or not _valid_extracted_wav(temporary):
+            return False
+        os.replace(temporary, audio_output)
+        return True
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def _probe_video_duration(video_path: str) -> float:
@@ -170,13 +219,15 @@ def prepare_video(
     source: str,
     cache_dir: str,
     title: Optional[str] = None,
+    audio_cache_dir: Optional[str] = None,
 ) -> dict:
     """
     准备视频输入：下载 YouTube 视频或处理本地文件，提取音频。
 
     Args:
         source: YouTube URL 或本地视频文件路径
-        cache_dir: 缓存目录（下载和提取的音频都放这里）
+        cache_dir: 视频下载缓存目录
+        audio_cache_dir: 提取音频的共享缓存目录；默认与 cache_dir 相同
         title: 用户指定的标题（可选），用于文件命名
 
     Returns:
@@ -184,6 +235,7 @@ def prepare_video(
             "ok": bool,
             "video_path": str,     # 视频文件路径
             "audio_path": str,     # 提取的音频文件路径（16kHz mono wav）
+            "media_sha256": str,   # 视频内容哈希
             "title": str,          # 视频标题
             "duration": float,     # 视频时长（秒）
             "thumbnail": str,      # 缩略图 URL（YouTube 独有）
@@ -191,6 +243,8 @@ def prepare_video(
         }
     """
     os.makedirs(cache_dir, exist_ok=True)
+    audio_cache_dir = audio_cache_dir or cache_dir
+    os.makedirs(audio_cache_dir, exist_ok=True)
 
     # ---- 判断来源类型 ----
     is_youtube = bool(re.match(
@@ -216,19 +270,19 @@ def prepare_video(
         print(f"[Step0] 下载完成: {os.path.basename(video_path)} "
               f"({duration:.0f}s)")
 
-        # 2. 提取音频
-        audio_cache_key = _get_video_cache_key(video_path)
-        audio_path = os.path.join(cache_dir, f"audio_{audio_cache_key}.wav")
+        # 2. 提取音频；文件名使用视频内容哈希，分析任务和配音任务可共享
+        media_sha256 = _source_sha256(video_path)
+        audio_path = os.path.join(audio_cache_dir, f"audio_{media_sha256}.wav")
         if not _extract_audio(video_path, audio_path):
             return {"ok": False, "error": "音频提取失败",
                     "video_path": video_path, "audio_path": "",
                     "title": video_title, "duration": duration,
-                    "thumbnail": thumbnail}
+                    "thumbnail": thumbnail, "media_sha256": media_sha256}
 
         print(f"[Step0] 音频提取完成: {os.path.basename(audio_path)}")
         return {"ok": True, "video_path": video_path, "audio_path": audio_path,
                 "title": video_title, "duration": duration,
-                "thumbnail": thumbnail}
+                "thumbnail": thumbnail, "media_sha256": media_sha256}
 
     # ---- 本地文件 ----
     if not os.path.isfile(source):
@@ -246,16 +300,17 @@ def prepare_video(
     video_title = title or os.path.splitext(os.path.basename(source))[0]
     duration = _probe_video_duration(video_path)
 
-    # 提取音频
-    cache_key = _get_video_cache_key(video_path)
-    audio_path = os.path.join(cache_dir, f"audio_{cache_key}.wav")
+    # 提取音频；文件名使用视频内容哈希，分析任务和配音任务可共享
+    media_sha256 = _source_sha256(video_path)
+    audio_path = os.path.join(audio_cache_dir, f"audio_{media_sha256}.wav")
     if not _extract_audio(video_path, audio_path):
         return {"ok": False, "error": "音频提取失败",
                 "video_path": video_path, "audio_path": "",
                 "title": video_title, "duration": duration,
-                "thumbnail": ""}
+                "thumbnail": "", "media_sha256": media_sha256}
 
     print(f"[Step0] 本地视频 {os.path.basename(video_path)} → "
           f"音频 {os.path.basename(audio_path)} ({duration:.0f}s)")
     return {"ok": True, "video_path": video_path, "audio_path": audio_path,
-            "title": video_title, "duration": duration, "thumbnail": ""}
+            "title": video_title, "duration": duration, "thumbnail": "",
+            "media_sha256": media_sha256}

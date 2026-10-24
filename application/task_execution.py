@@ -20,6 +20,7 @@ from pipeline.media_io import (
     download_audio,
     _try_resolve_local_url,
 )
+from pipeline.media_cache import extracted_audio_dir
 from pipeline.step0_video_prepare import prepare_video
 from application import dubbing, source_analysis
 
@@ -101,7 +102,12 @@ def run_source_task(task_id):
         update_task(
             task_id, step="download", progress=1, message="正在下载/提取视频..."
         )
-        prep = prepare_video(video_source, video_cache_dir, title=title)
+        prep = prepare_video(
+            video_source,
+            video_cache_dir,
+            title=title,
+            audio_cache_dir=extracted_audio_dir(),
+        )
         if not prep.get("ok"):
             update_task(
                 task_id,
@@ -118,6 +124,7 @@ def run_source_task(task_id):
             _video_path=video_path,
             _basename=get_task(task_id).get("_basename") or task_id,
             _audio_path=audio_file,
+            _media_sha256=prep.get("media_sha256", ""),
             title=real_title,
             progress=5,
             message=f"视频就绪: {os.path.basename(video_path)}",
@@ -215,7 +222,12 @@ def _prepare_retry_input(task_id):
             update_task(task_id, _video_path=video)
             return audio
         cache = os.path.join(config.DOWNLOAD_DIR, "video_cache")
-        prep = prepare_video(video, cache, title=task.get("title", ""))
+        prep = prepare_video(
+            video,
+            cache,
+            title=task.get("title", ""),
+            audio_cache_dir=extracted_audio_dir(),
+        )
         if not prep.get("ok"):
             raise ValueError(
                 "重试准备原视频失败: " + prep.get("error", "unknown error")
@@ -228,7 +240,11 @@ def _prepare_retry_input(task_id):
             or not os.path.isfile(audio)
         ):
             raise FileNotFoundError("重试缺少原视频或提取音频")
-        updates = dict(_video_path=video, _audio_path=audio)
+        updates = dict(
+            _video_path=video,
+            _audio_path=audio,
+            _media_sha256=prep.get("media_sha256", ""),
+        )
         if not task.get("_basename"):
             updates["_basename"] = (
                 os.path.splitext(os.path.basename(audio))[0] + "_" + task_id[:8]

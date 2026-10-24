@@ -39,6 +39,7 @@ flowchart LR
 - 队列明确区分 active 和 pending。取消 active 只发出停止信号；直到回调真正退出才释放执行位。排序和移除只作用于 pending。
 - 删除运行中任务时，先请求停止并等待退出，再清理文件；退出超时返回 409，避免后台重新写入已删除目录。
 - 首次处理与重做共用来源准备和主流程；断点重试和 retry-synthesis 共用恢复路径。retry-synthesis 返回 202 后按同一 task_id 查询。
+- 视频分析任务与配音任务共享 `data/downloads/video_cache/_shared` 中按媒体 SHA256 命名的提取音频和 demucs 人声缓存；共享缓存不归单个任务清理，避免对同一视频重复提取音频和重复分离人声。
 - `create_app()` 构建 HTTP 适配，不启动后台工作。命令行入口调用 `services.bootstrap.start_runtime()`，在数据库恢复完成后启动一份订阅刷新。
 - 当前部署使用一个服务进程、多个 HTTP 线程。不能通过增加 WSGI worker 数扩展模型并发；需要多进程/多机时，应先将调度和执行权迁到持久化队列，再扩展 HTTP。
 

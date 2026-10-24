@@ -90,7 +90,10 @@ def confirm_source_speakers(analysis_id):
             if revised["dubbing_ready"]
             else f"已保存人物确认，仍有 {len(revised['unresolved_segments'])} 段待确认或参考不足"
         )
-        folder = os.path.join(config.RESULT_DIR, "analysis_" + analysis_id)
+        folder = os.path.join(
+            config.RESULT_DIR,
+            task.get("_basename") or ("analysis_" + analysis_id),
+        )
         task_file = os.path.join(folder, "task_result.json")
         cache_file = os.path.join(folder, "speaker_analysis.json")
         # Disk is authoritative across restarts. Publish memory only after both

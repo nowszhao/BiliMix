@@ -16,6 +16,7 @@ from core.task_manager import (
 from core.database import update_episode_status_by_task
 from core.retry import _run_with_retry
 from pipeline.media_io import _cleanup_intermediate_files
+from pipeline.media_cache import vocal_cache_for_task
 from pipeline.tts_references import build_reference_map, validate_reference_mode
 from pipeline.speaker_analysis import (
     analyze_source,
@@ -66,7 +67,9 @@ def process_audio_sentence_mode(task_id: str, audio_path: str):
             progress=3,
             message="正在分离人声与背景音...",
         )
-        sep_cache_dir = os.path.join(result_dir, "vocal_separation")
+        sep_cache_dir = vocal_cache_for_task(
+            task_pre, os.path.join(result_dir, "vocal_separation")
+        )
         sep_result = separate_vocals(audio_path, sep_cache_dir)
         if sep_result.get("ok"):
             vocals_path = sep_result.get("vocals_path", "")
@@ -366,7 +369,9 @@ def _ensure_vocals_for_tts(task_id: str) -> str:
     # 执行 demucs 分离
     basename = task.get("_basename", "")
     result_dir = os.path.join(config.RESULT_DIR, basename)
-    sep_cache_dir = os.path.join(result_dir, "vocal_separation")
+    sep_cache_dir = vocal_cache_for_task(
+        task, os.path.join(result_dir, "vocal_separation")
+    )
 
     print(
         f"[VocalSep] keep_bgm={task.get('keep_bgm', False)}，"
@@ -608,7 +613,9 @@ def continue_after_sentence_confirmation(task_id: str):
         keep_bgm = task.get("keep_bgm", False)
         if keep_bgm and not bgm_path and audio_path and os.path.exists(audio_path):
             update_task(task_id, message="正在分离人声与背景音...")
-            sep_cache_dir = os.path.join(result_dir, "vocal_separation")
+            sep_cache_dir = vocal_cache_for_task(
+                task, os.path.join(result_dir, "vocal_separation")
+            )
             sep_result = separate_vocals(audio_path, sep_cache_dir)
             if sep_result.get("ok"):
                 bgm_path = sep_result.get("no_vocals_path", "")
@@ -1023,7 +1030,9 @@ def _synthesis_resume(task_id):
         and audio_path
         and os.path.exists(audio_path)
     ):
-        sep_cache_dir = os.path.join(result_dir, "vocal_separation")
+        sep_cache_dir = vocal_cache_for_task(
+            task, os.path.join(result_dir, "vocal_separation")
+        )
         sep_result = separate_vocals(audio_path, sep_cache_dir)
         if sep_result.get("ok"):
             bgm_path = sep_result.get("no_vocals_path", "")
