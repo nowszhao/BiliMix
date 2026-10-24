@@ -583,6 +583,17 @@ def continue_after_sentence_confirmation(task_id: str):
         if is_cancelled(task_id):
             raise InterruptedError("任务已被用户终止")
 
+        if tts_audio_map and getattr(config, "PITCH_NORMALIZE", True):
+            try:
+                from pipeline.voice_tuning import tune_tts_map
+                tts_audio_map, _pitch_report = tune_tts_map(
+                    tts_audio_map, segments, confucius_ref_map
+                )
+                update_task(task_id, _pitch_report=_pitch_report)
+                print(f"[Pitch] {_pitch_report}")
+            except Exception as _pitch_exc:
+                print(f"[Pitch] 音高归一失败，保留原音: {_pitch_exc}")
+
         if len(translated_indices) > 0 and not tts_audio_map:
             if getattr(config, "SKIP_TTS", False):
                 print(f"[TTS] SKIP_TTS=True，跳过 TTS，使用原始音频继续")
