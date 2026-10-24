@@ -4,7 +4,7 @@
 
 Python 3.10+；SDK 通过 `python -m pip install ./sdk` 安装。`bmx` 与 `python -m bilimix_cli` 等价。下载 URL 时另装 yt-dlp/FFmpeg；已有 MP4 可直接上传。客户端无需模型或 HF token。
 
-`python scripts/install_skills.py --destination <Agent技能目录>` 安装两个 Skill；加 `--update` 替换为当前源码，不保留旧目录。Skill 的脚本路径以实际安装位置为准，工作文件写入独立工作目录。
+`python scripts/install_skills.py --destination <Agent技能目录>` 安装统一 Skill；加 `--update` 替换为当前源码并移除两个旧 Skill。Skill 的脚本路径以实际安装位置为准，工作文件写入独立工作目录。
 
 服务地址优先级：`--server` → `BILIMIX_SERVER` → 保存的地址 → `http://localhost:5000`。客户端配置根目录默认 `~/.bilimix`，可由 `BILIMIX_HOME` 指定。
 

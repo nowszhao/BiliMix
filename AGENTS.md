@@ -9,3 +9,4 @@
 - 修改布局后运行 scripts/sync_skill_layout.py，发布前用 --check 校验。
 - 使用临时数据目录验证，不访问生产任务或模型服务。回归命令：python -m pytest tests -q；发布检查：python scripts/release.py --output <临时目录>。
 - 修改模块职责或执行协议时同步架构文档，并保持入口可从任意工作目录使用。
+- 默认只保留当前最新版；除非用户明确要求，不创建备份或旧版本副本，文档只描述当前状态，不累计操作过程。
