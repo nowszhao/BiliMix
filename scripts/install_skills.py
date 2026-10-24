@@ -10,6 +10,7 @@ import shutil
 import tempfile
 
 SKILLS = ('nows-ytb-dubbing',)
+RETIRED_SKILLS = ('nows-ytb-bmxtask', 'nows-ytb-bilingualex')
 ROOT = Path(__file__).resolve().parents[1] / 'skills'
 
 
@@ -26,6 +27,19 @@ def install(destination, update=False):
         if target.exists() and not update:
             raise ValueError('Already installed: ' + name + '; use --update to replace')
 
+    retired = []
+    if update:
+        for name in RETIRED_SKILLS:
+            target = destination / name
+            if not target.exists() and not target.is_symlink():
+                continue
+            if target.is_symlink() or not target.is_dir():
+                raise ValueError('Retired skill target must be a directory: ' + str(target))
+            entry = target / 'SKILL.md'
+            if not entry.is_file() or f'name: {name}' not in entry.read_text(encoding='utf-8').splitlines():
+                raise ValueError('Cannot identify retired BiliMix skill: ' + str(target))
+            retired.append(name)
+
     destination.mkdir(parents=True, exist_ok=True)
     replaced, installed = [], []
     with tempfile.TemporaryDirectory(prefix='.bilimix-install-', dir=destination) as temporary:
@@ -41,13 +55,17 @@ def install(destination, update=False):
                     replaced.append(name)
                 os.replace(stage / name, target)
                 installed.append(name)
+            for name in retired:
+                os.replace(destination / name, stage / (name + '.previous'))
+                replaced.append(name)
         except OSError:
             for name in reversed(installed):
                 shutil.rmtree(destination / name)
             for name in reversed(replaced):
                 os.replace(stage / (name + '.previous'), destination / name)
             raise
-    return {'installed': [str(destination / name) for name in SKILLS]}
+    return {'installed': [str(destination / name) for name in SKILLS],
+            'removed': [str(destination / name) for name in retired]}
 
 
 def main():

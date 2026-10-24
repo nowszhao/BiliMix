@@ -25,7 +25,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from flask import Flask
 from core import config
 from core import task_manager as tm
-from services.shared import _queue_waiters
 from services.task_query import task_query_bp
 
 
@@ -35,7 +34,6 @@ def _reset_global_state():
         tm.tasks.clear()
     tm.cancel_flags.clear()
     tm.task_subprocesses.clear()
-    _queue_waiters.clear()
 
 
 class TestDeleteTaskFileCleanup:

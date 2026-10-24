@@ -143,7 +143,8 @@ def test_mode_survives_partial_index_writes_and_restart(tmp_path, checkpoint):
 
 
 def test_redo_preserves_mode_and_clears_previous_reference_report(tmp_path, monkeypatch):
-    from services import web_app as wa
+    from services import task_api as wa
+    from services.web_app import app
     monkeypatch.setattr(config, 'AUTH_ENABLED', False)
     task_id = 'segment-reference-redo'
     tm.tasks[task_id] = dict(task_id=task_id, type='video', process_mode='video', status='error',
@@ -154,8 +155,8 @@ def test_redo_preserves_mode_and_clears_previous_reference_report(tmp_path, monk
             pass
         def start(self):
             pass
-    monkeypatch.setattr(wa.threading, 'Thread', NoStart)
-    response = wa.app.test_client().post(f'/api/task/{task_id}/redo')
+    monkeypatch.setattr(wa.execution, 'enqueue_task', lambda *a, **k: None)
+    response = app.test_client().post(f'/api/task/{task_id}/redo')
     assert response.status_code == 200
     assert tm.get_task(task_id)['tts_reference_mode'] == 'segment'
     assert '_tts_reference_manifest' not in tm.get_task(task_id)
@@ -164,10 +165,11 @@ def test_redo_preserves_mode_and_clears_previous_reference_report(tmp_path, monk
 
 @pytest.mark.parametrize('mode', ['wrong', True, None, ['segment']])
 def test_invalid_mode_is_rejected_before_creating_a_task(mode, monkeypatch):
-    from services import web_app as wa
+    from services import task_api as wa
+    from services.web_app import app
     monkeypatch.setattr(config, 'AUTH_ENABLED', False)
     before = set(tm.tasks)
-    response = wa.app.test_client().post('/api/submit', json=dict(tts_reference_mode=mode))
+    response = app.test_client().post('/api/submit', json=dict(tts_reference_mode=mode))
     assert response.status_code == 400
     assert 'tts_reference_mode' in response.get_json()['error']
     assert set(tm.tasks) == before

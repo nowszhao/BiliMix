@@ -151,7 +151,8 @@ def test_missing_competing_reference_never_resolves_by_only_available_voice():
 
 def test_confirmation_api_persists_current_analysis_and_rejects_invalid_review(tmp_path, monkeypatch):
     import json
-    from services import web_app as wa
+    from services import task_api as wa
+    from services.web_app import app
     from core import config
     from pipeline.speaker_analysis import atomic_json
     asr, turns = gap_fixture()
@@ -164,7 +165,7 @@ def test_confirmation_api_persists_current_analysis_and_rejects_invalid_review(t
     monkeypatch.setattr(wa, 'get_task', lambda task_id: copy.deepcopy(task))
     def update(task_id, **changes):task.update(changes)
     monkeypatch.setattr(wa, 'update_task', update)
-    with wa.app.test_client() as client:
+    with app.test_client() as client:
         response=client.post('/api/dubbing/review_task/confirm-speakers',json={'resolutions':[{'word_ids':[12],'speaker_id':'B'}]})
         assert response.status_code==200
         assert response.get_json()['dubbing_ready']

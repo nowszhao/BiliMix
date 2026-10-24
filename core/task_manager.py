@@ -1,15 +1,17 @@
-"""
-任务管理模块
-负责任务状态维护、持久化、磁盘恢复等功能。
-从 web_app.py 中提取，减少主文件体积。
+"""Task identity, live snapshots, durable checkpoints, and restart recovery.
 
-已从 JSON 文件迁移到 SQLite 数据库存储。
+SQLite is the query index. task_result.json contains the complete resumable state.
 """
+
+import copy
 import json
+import logging
 import os
 import threading
 
 from core import config
+from core.task_queue import task_queue
+from core.files import atomic_json
 from core.database import (
     load_tasks_index as db_load_tasks_index,
     save_task_to_index,
@@ -21,36 +23,49 @@ from core.database import (
 # 内存中的任务状态
 # ============================================================
 
-tasks = {}                   # {task_id: {status, progress, message, ...}}
+tasks = {}  # {task_id: {status, progress, message, ...}}
+_persist_lock = threading.RLock()
 tasks_lock = threading.Lock()
 
-cancel_flags = {}            # {task_id: threading.Event}  终止信号
-task_subprocesses = {}       # {task_id: subprocess.Popen} 后台子进程引用
+cancel_flags = {}  # {task_id: threading.Event}  终止信号
+task_subprocesses = {}  # {task_id: subprocess.Popen} 后台子进程引用
 
 
 def task_identity(*records):
     """Task kind is independent of the shared audio-processing sub-pipeline."""
     records = [record for record in records if record]
-    if any(r.get('type') == 'analysis' or r.get('process_mode') == 'analysis' for r in records):
-        kind = 'analysis'
-    elif any(r.get('type') == 'video' or r.get('process_mode') == 'video'
-             or r.get('_video_path') or r.get('video_result') for r in records):
-        kind = 'video'
+    if any(
+        r.get("type") == "analysis" or r.get("process_mode") == "analysis"
+        for r in records
+    ):
+        kind = "analysis"
+    elif any(
+        r.get("type") == "video"
+        or r.get("process_mode") == "video"
+        or r.get("_video_path")
+        or r.get("video_result")
+        for r in records
+    ):
+        kind = "video"
     else:
-        kind = 'audio'
-    return {'type': kind, 'process_mode': kind if kind != 'audio' else 'sentence_translate'}
+        kind = "audio"
+    return {
+        "type": kind,
+        "process_mode": kind if kind != "audio" else "sentence_translate",
+    }
 
 
 def _restore_video_source(task):
-    if task['type'] in ('video', 'analysis') and not task.get('_video_path'):
-        source = task.get('url', '')
-        if source.startswith('file://'):
-            task['_video_path'] = source[len('file://'):]
+    if task["type"] in ("video", "analysis") and not task.get("_video_path"):
+        source = task.get("url", "")
+        if source.startswith("file://"):
+            task["_video_path"] = source[len("file://") :]
 
 
 # ============================================================
 # 持久化：通过 SQLite 存储任务索引
 # ============================================================
+
 
 def load_tasks_index() -> dict:
     """从 SQLite 加载历史任务索引"""
@@ -58,6 +73,7 @@ def load_tasks_index() -> dict:
         return db_load_tasks_index()
     except Exception as e:
         import traceback
+
         print(f"[ERROR] 从 SQLite 加载任务索引失败: {e}")
         traceback.print_exc()
         return {}
@@ -71,8 +87,8 @@ def save_task_result_to_disk(result_dir: str, data: dict):
             task_id = data.get("task_id", "")
             if task_id and task_id in tasks:
                 data["skip_confirmation"] = tasks[task_id].get(
-                    "skip_confirmation",
-                    getattr(config, "SKIP_CONFIRMATION", True))
+                    "skip_confirmation", getattr(config, "SKIP_CONFIRMATION", True)
+                )
             else:
                 data["skip_confirmation"] = getattr(config, "SKIP_CONFIRMATION", True)
         # 自动注入 type，确保 redo 恢复时不会丢失视频/音频类型
@@ -93,118 +109,138 @@ def save_task_result_to_disk(result_dir: str, data: dict):
         task_id = data.get("task_id", "")
         current = tasks.get(task_id, {})
         data.update(task_identity(current, data))
-        for key in ("url", "title", "created_at", "tts_reference_mode", "_tts_reference_manifest", "_analysis_id", "_dub_manifest", "_speaker_analysis", "_reference_manifest",
-                    "_audio_path", "_video_path", "_raw_segments",
-                    "_subtitle_mode", "_subtitle_font_size"):
+        for key in (
+            "url",
+            "title",
+            "created_at",
+            "tts_reference_mode",
+            "_tts_reference_manifest",
+            "_analysis_id",
+            "_dub_manifest",
+            "_speaker_analysis",
+            "_reference_manifest",
+            "_audio_path",
+            "_video_path",
+            "_raw_segments",
+            "_subtitle_mode",
+            "_subtitle_font_size",
+        ):
             if key in current and key not in data:
                 data[key] = current[key]
         path = os.path.join(result_dir, "task_result.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"[Task] 任务结果已持久化: {path}")
+        atomic_json(path, data)
+        logging.debug("Task checkpoint saved: %s", path)
     except Exception as e:
         print(f"[WARN] 保存任务结果失败: {e}")
+        raise
 
 
 # ============================================================
 # 任务状态操作
 # ============================================================
 
+
 def update_task(task_id: str, **kwargs):
-    """线程安全地更新任务状态"""
-    with tasks_lock:
-        if task_id in tasks:
-            previous_identity = task_identity(tasks[task_id])
-            # 记录步骤切换时间
-            if "step" in kwargs:
-                import time
-                now_ts = time.time()
-                step_timing = tasks[task_id].get("_step_timing", [])
-                # 上一个步骤的结束时间
-                if step_timing:
-                    step_timing[-1]["end"] = round(now_ts, 1)
-                # 新步骤的开始时间
-                step_timing.append({
-                    "step": kwargs["step"],
-                    "start": round(now_ts, 1),
-                    "end": 0,
-                })
-                kwargs["_step_timing"] = step_timing
-            tasks[task_id].update(kwargs)
-            tasks[task_id].update(task_identity(previous_identity, tasks[task_id]))
-    # 持久化关键状态变更（processing 仅在轮询中频繁调用，不写盘）
-    if "status" in kwargs and kwargs["status"] in (
-        "completed", "error", "cancelled",
-        "awaiting_confirmation", "awaiting_sentence_confirmation",
-        "queued",
-    ):
-        # 终态时关闭最后一个步骤的计时
-        _finalize_step_timing(task_id)
-        _persist_task(task_id)
-    # basename / audio_path / original_duration 首次设置时也更新 SQLite
-    elif "_basename" in kwargs and kwargs.get("_basename"):
-        _persist_task(task_id)
-    elif "_audio_path" in kwargs and kwargs.get("_audio_path"):
-        _persist_task(task_id)
-    elif "original_duration" in kwargs and kwargs.get("original_duration"):
-        _persist_task(task_id)
+    """Publish critical states only after their checkpoint and index are durable."""
+    with _persist_lock:
+        with tasks_lock:
+            previous = tasks.get(task_id)
+            if previous is None:
+                return
+            candidate = dict(previous)
+        timing = candidate.get("_step_timing", [])
+        if "step" in kwargs and (
+            not timing or timing[-1]["step"] != kwargs["step"] or timing[-1].get("end")
+        ):
+            import time
+
+            now = round(time.time(), 1)
+            timing = [dict(item) for item in candidate.get("_step_timing", [])]
+            if timing:
+                timing[-1]["end"] = now
+            timing.append(dict(step=kwargs["step"], start=now, end=0))
+            candidate["_step_timing"] = timing
+        candidate.update(kwargs)
+        candidate.update(task_identity(previous, candidate))
+        durable_status = kwargs.get("status") in (
+            "completed",
+            "error",
+            "cancelled",
+            "awaiting_confirmation",
+            "awaiting_sentence_confirmation",
+            "queued",
+        )
+        if durable_status:
+            import time
+
+            timing = [dict(item) for item in candidate.get("_step_timing", [])]
+            if timing and not timing[-1].get("end"):
+                timing[-1]["end"] = round(time.time(), 1)
+            candidate["_step_timing"] = timing
+        if durable_status or any(
+            kwargs.get(key) for key in ("_basename", "_audio_path", "original_duration")
+        ):
+            _persist_task(task_id, candidate)
+        with tasks_lock:
+            if task_id in tasks:
+                tasks[task_id] = candidate
 
 
-def _finalize_step_timing(task_id: str):
-    """终态时关闭最后一个步骤的计时"""
-    import time
-    with tasks_lock:
-        task = tasks.get(task_id)
-        if not task:
-            return
-        step_timing = task.get("_step_timing", [])
-        if step_timing and step_timing[-1].get("end", 0) == 0:
-            step_timing[-1]["end"] = round(time.time(), 1)
-
-
-def _persist_task(task_id: str):
-    """将任务摘要信息持久化到 SQLite"""
-    with tasks_lock:
-        task = tasks.get(task_id)
-        if not task:
-            return
-        # 优先使用顶层 original_duration（下载完成后立即设置），否则尝试从 result 取
-        orig_dur = task.get("original_duration", 0)
-        if not orig_dur and task.get("result"):
-            orig_dur = (task.get("result") or {}).get("original_duration", 0)
-        summary = {
-            "task_id": task.get("task_id"),
-            "url": task.get("url", ""),
-            "title": task.get("title", ""),
-            "difficulty": task.get("difficulty", ""),
-            "process_mode": task.get("process_mode", "sentence_translate"),
-            "type": task.get("type", "audio"),
-            "step": task.get("step", ""),
-            "status": task.get("status"),
-            "progress": task.get("progress", 0),
-            "message": task.get("message", ""),
-            "created_at": task.get("created_at", ""),
-            "keep_bgm": task.get("keep_bgm", False),
-            "tts_reference_mode": task.get("tts_reference_mode", "speaker"),
-            "basename": ((task.get("result") or {}).get("basename")
-                         or task.get("_basename", "")),
-            "total_words": ((task.get("result") or {}).get("total_words", 0)
-                            if task.get("result") else 0),
-            "total_replacements": ((task.get("result") or {}).get("total_replacements", 0)
-                                   if task.get("result") else 0),
-            "original_duration": orig_dur,
-            "mixed_duration": ((task.get("result") or {}).get("mixed_duration", 0)
-                               if task.get("result") else 0),
-            "queue_order": _get_queue_position(task_id),
-        }
-        summary.update(task_identity(task))
-    save_task_to_index(task_id, summary)
-
-
-# 延迟导入避免循环引用
-def _get_queue_position(task_id: str) -> int:
-    from services.shared import _get_queue_position as _qpos
-    return _qpos(task_id)
+def _persist_task(task_id: str, snapshot=None):
+    """Persist a resumable snapshot and its query index under one writer lock."""
+    with _persist_lock:
+        with tasks_lock:
+            task = copy.deepcopy(
+                snapshot if snapshot is not None else tasks.get(task_id)
+            )
+            if not task:
+                return
+            # 优先使用顶层 original_duration（下载完成后立即设置），否则尝试从 result 取
+            orig_dur = task.get("original_duration", 0)
+            if not orig_dur and task.get("result"):
+                orig_dur = (task.get("result") or {}).get("original_duration", 0)
+            summary = {
+                "task_id": task.get("task_id"),
+                "url": task.get("url", ""),
+                "title": task.get("title", ""),
+                "difficulty": task.get("difficulty", ""),
+                "process_mode": task.get("process_mode", "sentence_translate"),
+                "type": task.get("type", "audio"),
+                "step": task.get("step", ""),
+                "status": task.get("status"),
+                "progress": task.get("progress", 0),
+                "message": task.get("message", ""),
+                "created_at": task.get("created_at", ""),
+                "keep_bgm": task.get("keep_bgm", False),
+                "tts_reference_mode": task.get("tts_reference_mode", "speaker"),
+                "basename": (
+                    (task.get("result") or {}).get("basename")
+                    or task.get("_basename", "")
+                ),
+                "total_words": (
+                    (task.get("result") or {}).get("total_words", 0)
+                    if task.get("result")
+                    else 0
+                ),
+                "total_replacements": (
+                    (task.get("result") or {}).get("total_replacements", 0)
+                    if task.get("result")
+                    else 0
+                ),
+                "original_duration": orig_dur,
+                "mixed_duration": (
+                    (task.get("result") or {}).get("mixed_duration", 0)
+                    if task.get("result")
+                    else 0
+                ),
+                "queue_order": task_queue.position(task_id),
+            }
+            summary.update(task_identity(task))
+        if task.get("_basename"):
+            save_task_result_to_disk(
+                os.path.join(config.RESULT_DIR, task["_basename"]), task
+            )
+        save_task_to_index(task_id, summary)
 
 
 def get_task(task_id: str) -> dict:
@@ -223,260 +259,92 @@ def is_cancelled(task_id: str) -> bool:
 # 任务恢复
 # ============================================================
 
-def restore_task_from_disk(task_id: str) -> dict:
-    """从磁盘恢复完整任务数据到内存。
 
-    查找流程：
-    1. 从 SQLite 任务索引获取 basename
-    2. 从 data/results/<basename>/task_result.json 读取完整数据
-    3. 如果 task_result.json 不存在，尝试从散落的文件拼装
-    4. 恢复后注入内存 tasks 字典
-    """
+class InvalidTaskCheckpoint(ValueError):
+    """A present checkpoint is corrupt or belongs to a different task."""
+
+
+def read_task_checkpoint(task_id, basename):
+    path = os.path.join(config.RESULT_DIR, basename, "task_result.json")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as stream:
+            saved = json.load(stream)
+        if not isinstance(saved, dict) or saved.get("task_id") != task_id:
+            raise ValueError("task identity mismatch")
+        for key in ("translations", "tts_audio_map", "_checkpoint_translations"):
+            if key in saved:
+                saved[key] = {int(k): v for k, v in (saved[key] or {}).items()}
+        return saved
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        raise InvalidTaskCheckpoint(
+            f"任务 {task_id} 的检查点损坏，不能自动回退或重新翻译: {exc}"
+        ) from exc
+
+
+def restore_task_from_disk(task_id: str) -> dict:
+    """Restore the whole snapshot; source artifacts are never guessed from loose files."""
     summary = get_task_from_index(task_id)
     if not summary:
         return {}
-
-    identity = task_identity(summary)
-    identity["tts_reference_mode"] = summary.get("tts_reference_mode", "speaker")
     basename = summary.get("basename", "")
     if not basename:
-        # A partial index write in older runs may have cleared basename. Only
-        # use a checkpoint carrying this exact task ID; never guess a media file.
         from pathlib import Path
+
         matches = []
-        for path in Path(config.RESULT_DIR).glob(f'*{task_id[:8]}*/task_result.json'):
+        for path in Path(config.RESULT_DIR).glob(f"*{task_id[:8]}*/task_result.json"):
             try:
-                with path.open(encoding='utf-8') as stream:
-                    candidate = json.load(stream)
-                if candidate.get('task_id') == task_id:
-                    matches.append(path.parent.name)
-            except (OSError, ValueError, AttributeError):
+                candidate = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
                 continue
+            if isinstance(candidate, dict) and candidate.get("task_id") == task_id:
+                matches.append(path.parent.name)
         if len(matches) == 1:
             basename = matches[0]
-    if not basename:
-        # 任务可能在中途被中断（如转录中 kill 进程），没有 basename
-        # 统一标记为 error 状态，SQLite 里的旧 status 不可信
-        task = {
-            **identity,
-            "task_id": task_id,
-            "url": summary.get("url", ""),
-            "title": summary.get("title", ""),
-                        "skip_confirmation": summary.get("skip_confirmation",
-                               getattr(config, "SKIP_CONFIRMATION", True)),
-            "status": "error",
-            "step": "download",
-            "progress": 0,
-            "message": "任务因服务重启而中断，请重新提交",
-            "created_at": summary.get("created_at", ""),
-            "transcription_text": "",
-            "segments": [],
-            "difficult_words": [],
-            "replacements": [],
-            "translations": {},
-            "translated_indices": [],
-            "result": None,
-            "time_mapping": [],
-            "_basename": "",
-            "_audio_path": "",
-        }
-        _restore_video_source(task)
-        with tasks_lock:
-            tasks[task_id] = task
-        print(f"[恢复] 任务 {task_id[:8]}... 无 basename，恢复为已中断状态")
-        return task
-
-    result_dir = os.path.join(config.RESULT_DIR, basename)
-
-    # 尝试从 task_result.json 恢复（优先）
-    task_result_path = os.path.join(result_dir, "task_result.json")
-    if os.path.exists(task_result_path):
-        try:
-            with open(task_result_path, "r", encoding="utf-8") as f:
-                saved = json.load(f)
-            saved_status = summary.get("status") or saved.get("status", "completed")
-            interrupted = saved_status in ('processing', 'downloading', 'queued')
-            if interrupted:
-                saved_status = 'error'
-            is_confirm = saved_status == "awaiting_confirmation"
-            is_sentence_confirm = saved_status == "awaiting_sentence_confirmation"
-            task = {
-                "task_id": task_id,
-                "url": (saved.get("url") or summary.get("url")
-                        or ('file://'+saved['_video_path'] if saved.get('_video_path') else '')),
-                "title": saved.get("title") or summary.get("title", ""),
-                "difficulty": saved.get("difficulty", summary.get("difficulty", "")),
-                "process_mode": saved.get("process_mode", summary.get("process_mode", "sentence_translate")),
-                "type": saved.get("type", summary.get("type", "audio")),
-                "skip_confirmation": saved.get("skip_confirmation",
-                                   summary.get("skip_confirmation",
-                                   getattr(config, "SKIP_CONFIRMATION", True))),
-                "status": saved_status,
-                "step": ("confirm_sentence" if is_sentence_confirm else "confirm" if is_confirm
-                         else "done" if saved_status == 'completed'
-                         else saved.get('step') or summary.get('step') or 'download'),
-                "progress": (55 if is_sentence_confirm
-                             else 60 if is_confirm else 100 if saved_status == 'completed'
-                             else saved.get('progress', summary.get('progress', 0))),
-                "message": ("任务因服务中断而暂停，可继续原任务重试" if interrupted
-                            else summary.get("message", "全部完成！")),
-                "created_at": summary.get("created_at", ""),
-                "transcription_text": saved.get("transcription_text", ""),
-                "segments": saved.get("segments", []),
-                "difficult_words": saved.get("difficult_words", []),
-                "replacements": saved.get("replacements", []),
-                "translations": saved.get("translations", {}),
-                "translated_indices": saved.get("translated_indices", []),
-                "sentence_pairs": saved.get("sentence_pairs", []),
-                "result": saved.get("result"),
-                "time_mapping": saved.get("time_mapping", []),
-                "video_result": saved.get("video_result"),
-                "_basename": basename,
-                "_video_path": saved.get("_video_path", ""),
-                "_audio_path": (saved.get("result", {}).get("original_audio", "")
-                                if saved.get("result") else ""),
-                "keep_bgm": saved.get("keep_bgm", summary.get("keep_bgm", False)),
-                "tts_reference_mode": saved.get("tts_reference_mode", identity["tts_reference_mode"]),
-                "_subtitle_mode": saved.get("_subtitle_mode", "bilingual"),
-                "_subtitle_font_size": saved.get("_subtitle_font_size"),
-                "_subtitle_path": saved.get("_subtitle_path", ""),
-            }
-            task.update(task_identity(saved, summary))
-            _restore_video_source(task)
-            if saved.get('tts_audio_map'):
-                task['tts_audio_map'] = {int(k): v for k, v in saved['tts_audio_map'].items()}
-            for key in ("_analysis_id", "_dub_manifest", "_speaker_analysis", "_reference_manifest", "_tts_reference_manifest",
-                        "_audio_path", "_raw_segments"):
-                if key in saved:
-                    task[key] = saved[key]
-            # 恢复翻译/识词批次的断点数据
-            if saved.get("_checkpoint_translate_batch"):
-                task["_checkpoint_translate_batch"] = saved["_checkpoint_translate_batch"]
-            if saved.get("_checkpoint_translations"):
-                task["_checkpoint_translations"] = {
-                    int(k): v for k, v in saved["_checkpoint_translations"].items()
-                }
-            if saved.get("_checkpoint_tts_idx"):
-                task["_checkpoint_tts_idx"] = saved["_checkpoint_tts_idx"]
-
-            # 对于 awaiting 状态，需要查找音频路径
-            if (is_confirm or is_sentence_confirm) and not task["_audio_path"]:
-                for ext in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"):
-                    p = os.path.join(config.DOWNLOAD_DIR, f"{basename}{ext}")
-                    if os.path.exists(p):
-                        task["_audio_path"] = p
-                        break
-            with tasks_lock:
-                tasks[task_id] = task
-            print(f"[恢复] 从 task_result.json 恢复任务 {task_id[:8]}... "
-                  f"(basename={basename}, status={saved_status})")
-            return task
-        except Exception as e:
-            print(f"[WARN] 读取 task_result.json 失败: {e}")
-
-    # 回退方案：从散落文件拼装（适配旧数据）
-    # 保留 completed / cancelled / error 三种终态，其余标记为中断
-    sqlite_status = summary.get("status", "completed")
-    is_terminal = sqlite_status in ("completed", "cancelled", "error")
-    task = {
-        **identity,
-        "task_id": task_id,
-        "url": summary.get("url", ""),
-        "title": summary.get("title", ""),
-                "skip_confirmation": summary.get("skip_confirmation",
-                           getattr(config, "SKIP_CONFIRMATION", True)),
-        "status": sqlite_status if is_terminal else "error",
-        "step": "done" if sqlite_status == "completed" else "download",
-        "progress": summary.get("progress", 100) if sqlite_status == "completed" else summary.get("progress", 0),
-        "message": summary.get("message", "全部完成！") if is_terminal
-                   else "任务因服务重启而中断，请重新提交",
-        "created_at": summary.get("created_at", ""),
-        "transcription_text": "",
-        "segments": [],
-        "difficult_words": [],
-        "replacements": [],
-        "translations": {},
-        "translated_indices": [],
-        "sentence_pairs": [],
-        "result": None,
-        "time_mapping": [],
-        "_basename": basename,
-        "_audio_path": "",
-        "_subtitle_path": "",
-        "keep_bgm": summary.get("keep_bgm", False),
-    }
+    saved = read_task_checkpoint(task_id, basename) if basename else {}
+    task = dict(
+        segments=[],
+        translations={},
+        translated_indices=[],
+        sentence_pairs=[],
+        time_mapping=[],
+        tts_audio_map={},
+        result=None,
+        video_result=None,
+        transcription_text="",
+        _audio_path="",
+        _video_path="",
+        _subtitle_path="",
+        _subtitle_mode="bilingual",
+        _subtitle_font_size=-1,
+    )
+    task.update(summary)
+    task.update(saved)
+    task.update(task_identity(summary, saved))
+    status = summary.get("status") or saved.get("status", "error")
+    interrupted = status in ("queued", "downloading", "processing")
+    if interrupted:
+        status = "error"
+    task.update(
+        task_id=task_id,
+        _basename=basename,
+        status=status,
+        tts_reference_mode=saved.get(
+            "tts_reference_mode", summary.get("tts_reference_mode", "speaker")
+        ),
+        skip_confirmation=saved.get(
+            "skip_confirmation", getattr(config, "SKIP_CONFIRMATION", True)
+        ),
+        progress=100 if status == "completed" else task.get("progress", 0),
+        step="done" if status == "completed" else task.get("step", "download"),
+        message="任务因服务中断而暂停，可继续原任务重试"
+        if interrupted
+        else task.get("message", ""),
+    )
+    if not task.get("_audio_path"):
+        task["_audio_path"] = (task.get("result") or {}).get("original_audio", "")
     _restore_video_source(task)
-
-    # 尝试恢复转录文本和 segments
-    transcription_cache = os.path.join(config.OUTPUT_DIR, f"{basename}.json")
-    if os.path.exists(transcription_cache):
-        try:
-            with open(transcription_cache, "r", encoding="utf-8") as f:
-                transcription = json.load(f)
-            raw_segments = transcription.get("segments", [])
-            task["segments"] = [{"text": s.get("text", "").strip(),
-                                 "start": s.get("start", 0),
-                                 "end": s.get("end", 0)} for s in raw_segments]
-            task["transcription_text"] = " ".join(
-                s.get("text", "").strip() for s in raw_segments)
-        except Exception as e:
-            print(f"[WARN] 恢复转录数据失败: {e}")
-
-    # 尝试恢复 difficult_words
-    dw_path = os.path.join(result_dir, "difficult_words.json")
-    if os.path.exists(dw_path):
-        try:
-            with open(dw_path, "r", encoding="utf-8") as f:
-                task["difficult_words"] = json.load(f)
-        except Exception as e:
-            print(f"[WARN] 恢复生词数据失败: {e}")
-
-    # 尝试从 vocabulary_book.json 恢复 replacements
-    vocab_path = os.path.join(result_dir, "vocabulary_book.json")
-    if os.path.exists(vocab_path):
-        try:
-            with open(vocab_path, "r", encoding="utf-8") as f:
-                vocab_data = json.load(f)
-            vocab_list = vocab_data.get("vocabulary", [])
-            restored_replacements = []
-            for item in vocab_list:
-                if item.get("replaced_in_audio") and item.get("audio_timestamp"):
-                    ts = item["audio_timestamp"]
-                    restored_replacements.append({
-                        "english": item.get("english", ""),
-                        "chinese": item.get("chinese", ""),
-                        "type": item.get("type", "word"),
-                        "start": round(ts.get("start", 0), 2),
-                        "end": round(ts.get("end", 0), 2),
-                    })
-            task["replacements"] = restored_replacements
-        except Exception as e:
-            print(f"[WARN] 从生词本恢复替换数据失败: {e}")
-
-    # 查找音频文件路径
-    audio_path = ""
-    for ext in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"):
-        p = os.path.join(config.DOWNLOAD_DIR, f"{basename}{ext}")
-        if os.path.exists(p):
-            audio_path = p
-            break
-    task["_audio_path"] = audio_path
-
-    # 构建 result 对象
-    mixed_audio_path = os.path.join(
-        result_dir, f"{basename}_mixed.{config.OUTPUT_FORMAT}")
-    if os.path.exists(mixed_audio_path):
-        task["result"] = {
-            "basename": basename,
-            "original_audio": audio_path,
-            "mixed_audio": mixed_audio_path,
-            "original_duration": summary.get("original_duration", 0),
-            "mixed_duration": summary.get("mixed_duration", 0),
-            "total_words": summary.get("total_words", 0),
-            "total_replacements": summary.get("total_replacements", 0),
-                    }
-
     with tasks_lock:
         tasks[task_id] = task
-    print(f"[恢复] 从散落文件拼装恢复任务 {task_id[:8]}... (basename={basename})")
-    return task
+    return dict(task)

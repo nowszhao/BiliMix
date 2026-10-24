@@ -58,6 +58,8 @@ HF 模型需下载权限；完整模型缓存可离线加载。GPU 型号与驱�
 
 `config_local.py`、`settings.json`、凭据文件与客户端会话不随发布包分发。`doctor.py` 只检查能力，不下载模型或创建配音任务；凭据检查只输出是否配置。
 
+任务调度由单个服务进程持有，HTTP 请求可使用多个线程。不要增加多个 WSGI worker，否则各进程将各自启动模型任务。通过 `services.web_app.create_app()` 构建应用时不会启动后台刷新；自定义启动器须在接收请求前显式调用 `services.bootstrap.start_runtime()`。
+
 ## systemd 示例
 
 将下列路径替换成实际部署目录与解释器。环境文件由部署者创建并设为 0600。

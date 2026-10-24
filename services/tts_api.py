@@ -26,6 +26,7 @@ if _project_root not in sys.path:
 from flask import Blueprint, jsonify, request
 
 from core import config
+from core.task_queue import task_queue
 from core.tts_jobs import (
     TERMINAL_STATUSES, clear_cancel, create_job, delete_job, get_job,
     is_cancelled, list_jobs, request_cancel, update_job,
@@ -34,15 +35,10 @@ from pipeline.tts_direct import (
     DEFAULT_LANG, MAX_TEXTS, SUPPORTED_LANGS, build_job_id, get_job_dir,
     synthesize_texts, validate_lang, validate_texts,
 )
-from services.shared import _kill_task_subprocesses, _probe_audio_duration
+from pipeline.media_io import _probe_audio_duration
+from core.processes import _kill_task_subprocesses
 
 tts_bp = Blueprint('tts', __name__, url_prefix='/api/tts')
-
-# 全局串行锁：单个 TTS 任务已会按 CONFUCIUS4_TTS_NUM_WORKERS 并行拉起多个
-# worker 子进程，多个任务同时跑会成倍占用 CPU 与内存（每个 worker 约 2-4GB），
-# 因此这里串行化，等待期间任务保持 queued 状态。
-_run_lock = threading.Lock()
-
 
 # ── 辅助 ────────────────────────────────────────────────────
 
@@ -122,13 +118,6 @@ def _run_job(job_id: str):
     total = len(texts)
     started = time.time()
 
-    # 等待全局串行锁（可被取消中断）
-    while not _run_lock.acquire(timeout=1.0):
-        if is_cancelled(job_id):
-            update_job(job_id, status="cancelled", message="已取消（排队中）",
-                       elapsed=round(time.time() - started, 1))
-            return
-
     try:
         if is_cancelled(job_id):
             update_job(job_id, status="cancelled", message="已取消（排队中）",
@@ -172,12 +161,11 @@ def _run_job(job_id: str):
         print(f"[TTS] 任务失败 {job_id}: {e}")
     finally:
         clear_cancel(job_id)
-        _run_lock.release()
 
 
 def _start_job(job_id: str):
     """启动后台合成线程（daemon，随服务退出）"""
-    threading.Thread(target=_run_job, args=(job_id,), daemon=True).start()
+    task_queue.submit("tts:"+job_id, lambda: _run_job(job_id))
 
 
 # ── 路由 ────────────────────────────────────────────────────
@@ -226,7 +214,7 @@ def synthesize():
                             "reused": True,
                             "message": "相同输入的合成结果已存在"}), 200
         # 其他状态（error/cancelled/中断）-> 重置并重新执行
-        if existing.get("status") == "processing":
+        if existing.get("status") in ("processing", "queued") or task_queue.position("tts:"+job_id) >= 0:
             return jsonify({"error": "该任务正在合成中，请稍后查询", 
                             "job_id": job_id}), 409
 
@@ -297,6 +285,9 @@ def cancel_job(job_id):
                         "status": job["status"]}), 200
 
     request_cancel(job_id)
+    if task_queue.discard("tts:"+job_id):
+        update_job(job_id, status="cancelled", message="已取消（排队中）")
+        clear_cancel(job_id)
     # 杀掉合成中的 worker 子进程（worker 以 job_id 注册在 task_subprocesses）
     _kill_task_subprocesses(job_id)
     return jsonify({"message": "已请求终止", "job_id": job_id}), 200
@@ -308,8 +299,8 @@ def retry_job(job_id):
     job = get_job(job_id)
     if not job:
         return jsonify({"error": "任务不存在"}), 404
-    if job.get("status") == "processing":
-        return jsonify({"error": "任务正在合成中，无需重试"}), 409
+    if job.get("status") in ("processing", "queued") or task_queue.position("tts:"+job_id) >= 0:
+        return jsonify({"error": "任务已在执行队列中，无需重试"}), 409
 
     clear_cancel(job_id)
     update_job(job_id, status="queued", progress=0, error="",
@@ -325,9 +316,12 @@ def remove_job(job_id):
     if not job:
         return jsonify({"error": "任务不存在"}), 404
 
-    if job.get("status") == "processing":
-        _kill_task_subprocesses(job_id)
+    request_cancel(job_id)
+    task_queue.discard("tts:"+job_id)
+    _kill_task_subprocesses(job_id)
 
+    if not task_queue.wait("tts:"+job_id, timeout=10):
+        return jsonify({"error": "任务仍在停止中，请稍后重试删除"}), 409
     cleaned = delete_job(job_id)
     return jsonify({"message": "任务已删除", "cleaned_files": cleaned})
 

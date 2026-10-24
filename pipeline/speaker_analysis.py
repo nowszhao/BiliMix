@@ -1,5 +1,6 @@
 """Independent, reusable source analysis for externally refined subtitles."""
 import json
+from core.files import atomic_json
 import math
 import os
 from pipeline.dubbing_plan import file_sha256, known_speaker, canonical_hash
@@ -372,20 +373,6 @@ def _extract_audio_clip(audio_path, start_ms, end_ms, output_path):
         ], check=True, capture_output=True, timeout=config.REF_EXTRACT_TIMEOUT)
         os.replace(output, target)
 
-
-def atomic_json(path, value):
-    import tempfile
-    folder = os.path.dirname(os.path.abspath(path))
-    descriptor, temporary = tempfile.mkstemp(prefix=".analysis-", dir=folder)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            json.dump(value, stream, ensure_ascii=False, indent=2)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
 
 
 def ensure_dubbing_ready(analysis):

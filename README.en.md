@@ -8,7 +8,7 @@ BiliMix produces Chinese dubbing for English audio and video, with per-speaker v
 
 Use the single `nows-ytb-dubbing` skill: input video → speaker analysis → FULL English refinement → Chinese translation → server dubbing → delivery. The current Code Agent performs both language passes. One local workflow handles uploads, validation, ASS/manifest export, task recovery and downloads. BiliMix synthesizes complete utterances and adapts video timing to the resulting audio.
 
-Each speaker uses one qualified reference pool throughout a task. Subtitle pagination is independent of synthesis: at most two lines per language, four lines total and a text height budget of 25% of the frame.
+By default each speaker uses a fixed qualified reference. Segment mode can condition each complete utterance on its own source audio, with audited same-speaker fallbacks. Subtitle pagination is independent of synthesis: at most two lines per language, four lines total and a text height budget of 25% of the frame.
 
 Podcast tasks can use server-side transcription and translation. A separate TTS interface accepts reference audio and text.
 
@@ -22,7 +22,7 @@ python scripts/install_skills.py --destination <agent-skills-directory>
 python -m bilimix_cli --server <server-url> auth status
 ```
 
-Use `--update` to replace installed skills with current files. Any Code Agent able to read files and execute commands can read the installed SKILL.md files.
+Use `--update` to replace installed skills with current files and retire the two superseded BiliMix workflows. Any Code Agent able to read files and execute commands can read the installed SKILL.md files.
 
 ```text
 python <skill>/scripts/workflow.py setup --workdir work
@@ -44,6 +44,8 @@ python services/web_app.py 5000
 ```
 
 See [installation and configuration](docs/installation.md), [dubbing contract](docs/audio-first-dubbing.md), and [SDK commands](sdk/docs/cli.md).
+
+Module responsibilities and execution invariants are documented in [Architecture](docs/architecture.md).
 
 ## Development and release
 

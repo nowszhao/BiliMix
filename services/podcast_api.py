@@ -85,7 +85,6 @@ def _start_subscription_refresh_loop():
     print(f"[Refresh] 订阅自动刷新已启动 (间隔 {interval_minutes} 分钟)")
 
 
-_start_subscription_refresh_loop()
 
 
 # ============================================================

@@ -51,7 +51,7 @@ python <skill>/scripts/workflow.py run --input <YouTube网址或本地视频> --
 
 ## 交付与其他模式
 
-正常交付 `output/dubbed.mp4`、`dubbed.mp3`、`dubbed.ass`；工作 ASS 和 manifest 保存在同目录供审校。说明未确认或未通过声纹复核的片段，不把人物绑定描述成百分之百准确。
+正常交付 `output/dubbed.mp4`、`dubbed.mp3`、`dubbed.ass` 和实际参考选择报告 `tts_references.json`；工作 ASS 和 manifest 保存在同目录供审校。说明未确认或未通过声纹复核的片段，不把人物绑定描述成百分之百准确。根据返回的 `tts_reference_quality` 报告真实逐段参考数量及回退数量，打开 segment 模式不等于每句都逐段复刻。
 
 只生成字幕时，在新项目首次运行中指定 `--mode subtitles`，按[纯字幕说明](references/subtitles.md)执行；该模式不连接 BiliMix。状态查询 `workflow.py status --workdir <工作目录>` 只读取本地项目。
 

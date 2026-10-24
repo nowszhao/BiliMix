@@ -13,13 +13,15 @@ if _project_root not in sys.path:
 
 from flask import Blueprint, jsonify, request
 from core import config
+from core.task_queue import task_queue
 from core.task_manager import (
     tasks, tasks_lock, cancel_flags, task_subprocesses,
     get_task, is_cancelled, restore_task_from_disk,
     update_task,
 )
 from core.database import load_tasks_index, delete_task_from_index
-from services.shared import _queue_condition, _queue_waiters, _kill_task_subprocesses, _load_step_timing_from_disk, _load_video_result_from_disk
+from services.shared import _load_step_timing_from_disk, _load_video_result_from_disk
+from core.processes import _kill_task_subprocesses
 
 task_query_bp = Blueprint('task_query', __name__, url_prefix='/api')
 
@@ -62,8 +64,7 @@ def list_tasks():
                 "mixed_duration": ((task.get("result") or {}).get("mixed_duration", 0)
                                    if task.get("result") else 0),
                 "keep_bgm": task.get("keep_bgm", False),
-                "queue_order": task.get("queue_order",
-                                        sqlite_summary.get("queue_order", 0)),
+                "queue_order": task_queue.position(tid),
             }
 
     sorted_tasks = sorted(result.values(), key=lambda t: t.get("created_at", ""), reverse=True)
@@ -114,6 +115,10 @@ def delete_task(task_id):
                     video_path = candidate
     if not basename and task_id in index:
         basename = index[task_id].get("basename", "")
+
+    task_queue.discard(task_id)
+    if not task_queue.wait(task_id, timeout=10):
+        return jsonify({"error": "任务仍在停止中，请稍后重试删除"}), 409
 
     cleaned = []
 
@@ -185,10 +190,7 @@ def delete_task(task_id):
         _remove_downloads_file(subtitle_path)
 
     # Remove from queue if waiting
-    with _queue_condition:
-        if task_id in _queue_waiters:
-            _queue_waiters.remove(task_id)
-        _queue_condition.notify_all()
+    task_queue.discard(task_id)
 
     with tasks_lock:
         tasks.pop(task_id, None)

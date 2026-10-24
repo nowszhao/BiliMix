@@ -322,7 +322,7 @@ def test_successful_encode_with_missing_frames_is_rejected(monkeypatch):
 
 
 def test_voice_clone_requires_source_analysis(tmp_path, monkeypatch):
-    from services import web_app as wa
+    from application import dubbing as wa
     monkeypatch.setattr(config, 'SENTENCE_TTS_VOICE_CLONE', True)
     monkeypatch.setattr(config, 'RESULT_DIR', str(tmp_path))
     monkeypatch.setattr(wa, 'get_task', lambda _: {'_basename': 'test'})

@@ -69,7 +69,8 @@ def test_corrupted_index_recovers_only_exact_task_checkpoint(tmp_path):
 
 
 def test_missing_video_never_falls_back_to_an_audio_resume(tmp_path, monkeypatch):
-    from services import web_app as wa
+    from application import dubbing as wa
+    from application import task_execution as execution
     task_id = 'missing-video-retry'
     audio = tmp_path/'source.wav'; audio.write_bytes(b'audio')
     with tm.tasks_lock:
@@ -80,14 +81,15 @@ def test_missing_video_never_falls_back_to_an_audio_resume(tmp_path, monkeypatch
     monkeypatch.setattr(wa, 'process_audio_sentence_mode', forbidden)
     monkeypatch.setattr(wa, '_synthesis_resume', forbidden)
     with pytest.raises(FileNotFoundError, match='视频'):
-        wa._resume_task(task_id)
+        execution._resume_task(task_id)
     assert tm.get_task(task_id)['type'] == 'video'
 
 
 @pytest.mark.parametrize('video_success', [True, False])
 @pytest.mark.parametrize('reference_mode', ['speaker', 'segment'])
 def test_resumed_video_requires_video_completion_and_retains_complete_checkpoint(tmp_path, monkeypatch, video_success, reference_mode):
-    from services import web_app as wa
+    from application import dubbing as wa
+    from application import task_execution as execution
     task_id = 'resume-video-'+str(video_success)
     audio = tmp_path/'audio.wav'; audio.write_bytes(b'audio')
     source = tmp_path/'source.mp4'; source.write_bytes(b'video')
@@ -131,3 +133,12 @@ def test_resumed_video_requires_video_completion_and_retains_complete_checkpoint
     assert saved['status'] == current['status']
     assert saved['result']['mixed_audio'] == current['result']['mixed_audio']
     assert saved['time_mapping'] == mapping
+
+
+@pytest.mark.parametrize('contents', ['{broken', '{"task_id":"another-task"}'])
+def test_corrupted_or_foreign_checkpoint_never_falls_back_to_loose_files(contents):
+    task_id='checkpoint-ownership'
+    database.save_task_to_index(task_id,dict(type='video',basename=task_id,status='error'))
+    folder=Path(config.RESULT_DIR)/task_id;folder.mkdir(exist_ok=True)
+    (folder/'task_result.json').write_text(contents)
+    with pytest.raises(tm.InvalidTaskCheckpoint):tm.restore_task_from_disk(task_id)

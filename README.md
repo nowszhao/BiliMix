@@ -12,7 +12,7 @@ BiliMix 为英文音频与视频生成中文配音，支持人物音色克隆、
 
 当前 Agent 完成 FULL 和精翻；统一入口负责下载、上传、格式转换、校验、恢复和交付。BiliMix 使用已确认的人物参考合成完整话语，再按音频时间调整视频。
 
-一个完整中文话语对应一次 TTS。同一人物全片使用固定参考；显示字幕独立分页，默认中文最多两行、英文最多两行、合计最多四行，文字高度预算为画面的 25%。
+一个完整中文话语对应一次 TTS。默认同一人物全片使用固定参考，也可启用逐段参考并记录同人物回退；显示字幕独立分页，默认中文最多两行、英文最多两行、合计最多四行，文字高度预算为画面的 25%。
 
 音频播客也可使用服务端转录和翻译；独立 TTS 接口支持参考音频加文本合成。精翻任务以 Agent 提交的翻译为准。
 
@@ -26,7 +26,7 @@ python scripts/install_skills.py --destination <Agent技能目录>
 python -m bilimix_cli --server <服务URL> auth status
 ```
 
-更新 Skill 使用同一安装命令加 `--update`，安装目录只保留当前文件。任何支持读写文件和执行命令的 Code Agent 均可读取 Skill 的 `SKILL.md`。
+更新 Skill 使用同一安装命令加 `--update`，安装目录只保留当前文件，并清理已退休的两个 BiliMix 旧入口。任何支持读写文件和执行命令的 Code Agent 均可读取 Skill 的 `SKILL.md`。
 
 ## 模型服务器
 
@@ -64,6 +64,8 @@ bmx --server <服务URL> video download-subtitles --task-id <task_id> -o dubbed.
 Web 中也可上传与分析相同的本地媒体，选择工作 ASS 和配音计划 JSON 后提交。
 
 数据契约与时间轴见 [精翻配音协议](docs/audio-first-dubbing.md)。客户端命令见 [SDK](sdk/README.md) 和 [命令参考](sdk/docs/cli.md)。
+
+模块职责、任务执行约束和扩展顺序见 [架构说明](docs/architecture.md)。
 
 ## 开发与发布
 

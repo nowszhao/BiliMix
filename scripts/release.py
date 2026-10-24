@@ -18,8 +18,8 @@ import tempfile
 from package_skills import package
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_DIRS = ('core', 'pipeline', 'services', 'workers', 'web', 'sdk', 'skills', 'scripts', 'tests', '.github', 'bin', 'examples')
-SOURCE_ROOT_FILES = ('README.md', 'README.en.md', 'setup.sh', 'requirements.txt', 'requirements-tts.txt', 'constraints-speech.txt', '.gitignore', 'index.html', 'en.html', 'docs/installation.md', 'docs/audio-first-dubbing.md')
+SOURCE_DIRS = ('application', 'core', 'pipeline', 'services', 'workers', 'web', 'sdk', 'skills', 'scripts', 'tests', '.github', 'bin', 'examples')
+SOURCE_ROOT_FILES = ('README.md', 'README.en.md', 'setup.sh', 'requirements.txt', 'requirements-tts.txt', 'constraints-speech.txt', '.gitignore', 'index.html', 'en.html', 'docs/installation.md', 'docs/audio-first-dubbing.md', 'docs/architecture.md', 'AGENTS.md')
 SUFFIXES = {'.py', '.md', '.txt', '.toml', '.yml', '.html', '.css', '.js', '.svg', '.json', '.wav', '.jpg', '.png', '.mp4', '.sh', '.whl'}
 EXCLUDED_PARTS = {'__pycache__', 'build', 'dist', '.pytest_cache', '.venv', '.bilimix-tools'}
 

@@ -1,167 +1,181 @@
-"""Run the real skill scripts through refinement, translation, and submission data."""
+"""The unified skill preserves speech ownership through FULL, translation and export."""
+
+import importlib
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
-
 import pytest
 from pipeline.dubbing_plan import validate_manifest
-from tests.test_audio_first import analysis_fixture
+from pipeline.speaker_analysis import build_analysis, confirm_speakers
 
-SKILLS = Path(os.environ.get('BILIMIX_SKILLS_DIR', str(Path(__file__).resolve().parents[1]/'skills')))
-if not (SKILLS/'nows-ytb-bilingualex/scripts').is_dir():
-    raise RuntimeError('Bundled skills missing; restore repository skills/ or set BILIMIX_SKILLS_DIR')
-SCRIPTS = SKILLS/'nows-ytb-bilingualex/scripts'
+SCRIPTS = Path(__file__).resolve().parents[1] / "skills/nows-ytb-dubbing/scripts"
 
 
-def run(script, *args):
-    result = subprocess.run([sys.executable, '-B', str(SCRIPTS/script), *map(str,args)],
-                            capture_output=True, text=True, timeout=15)
-    assert result.returncode == 0, result.stdout+result.stderr
-    return result.stdout
+@pytest.fixture
+def skill(monkeypatch):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    return importlib.import_module("_language"), importlib.import_module("_export")
 
 
-def test_real_skill_pipeline_keeps_full_speech_and_speaker_ownership(tmp_path):
-    analysis = analysis_fixture()
-    (tmp_path/'analysis.json').write_text(json.dumps(analysis))
-    run('import_analysis.py', tmp_path/'analysis.json','--workdir',tmp_path)
-    run('refine_srt.py','prepare-full',tmp_path/'transcript_official.srt',tmp_path/'raw_aligned.srt','--workdir',tmp_path)
-    # Translator decisions: keep complete turns; actual source words unchanged.
-    (tmp_path/'refine_parts/refined_01.txt').write_text('\n'.join(
-        f'S{i}\t{turn["text"]}.' for i,turn in enumerate(analysis['turns'],1))+'\n')
-    run('check_refined.py','--workdir',tmp_path)
-    run('refine_srt.py','apply','--workdir',tmp_path)
-    run('split_translation.py',tmp_path/'transcript_refined.srt','--out',tmp_path)
-    rows=(tmp_path/'transcript.txt').read_text().splitlines()
-    (tmp_path/'parts/trans_01.txt').write_text('\n'.join(row+'\t完整自然的一句话。' for row in rows)+'\n')
-    run('assemble_final.py','--workdir',tmp_path)
-    run('build_dub_manifest.py','prepare','--workdir',tmp_path)
-    plan={'units':[{'source_indices':[i],'text_zh':'完整自然的一句话。'} for i in range(1,4)]}
-    (tmp_path/'dub_units_plan.json').write_text(json.dumps(plan))
-    run('build_dub_manifest.py','apply','--workdir',tmp_path)
-    manifest=json.loads((tmp_path/'dub_manifest.json').read_text())
-    assert [u['speaker'] for u in validate_manifest(manifest,analysis)] == ['A','B','A']
+def source():
+    return build_analysis(
+        {
+            "segments": [
+                {
+                    "speaker": speaker,
+                    "words": [
+                        dict(word=w, start=start + i * 0.5, end=start + (i + 1) * 0.5)
+                        for i, w in enumerate(text.split())
+                    ],
+                }
+                for speaker, start, text in [
+                    ("A", 0, "We can finish this sentence."),
+                    ("B", 4, "Yes we can finish it."),
+                ]
+            ]
+        },
+        "media",
+    )
 
 
-def test_missing_refined_block_fails(tmp_path):
-    (tmp_path/'refine_parts').mkdir()
-    (tmp_path/'refine_plan.json').write_text(json.dumps({'parts':[{'file':'refine_part_01.txt'}]}))
-    (tmp_path/'refine_parts/refine_part_01.txt').write_text('1\t0\t1\tx\n')
-    result=subprocess.run([sys.executable,'-B',str(SCRIPTS/'check_refined.py'),'--workdir',str(tmp_path)],capture_output=True,text=True)
-    assert result.returncode != 0
+def translate_all(skill, work, analysis):
+    language, _ = skill
+    action = language.advance_language(work, analysis, "dubbing", {})
+    request = json.loads(Path(action["input"]).read_text())
+    sentences = [dict(text=t["text"]) for t in analysis["turns"]]
+    Path(action["output"]).write_text(
+        json.dumps(dict(input_id=request["input_id"], sentences=sentences))
+    )
+    assert (
+        language.advance_language(work, analysis, "dubbing", {})["stage"] == "advance"
+    )
+    action = language.advance_language(work, analysis, "dubbing", {})
+    request = json.loads(Path(action["input"]).read_text())
+    units = [
+        dict(
+            source_unit_ids=[u["unit_id"]],
+            text_en=u["text"],
+            text_zh="我们可以把这句话说完整。",
+        )
+        for u in request["source_units"]
+    ]
+    Path(action["output"]).write_text(
+        json.dumps(dict(input_id=request["input_id"], units=units))
+    )
+    assert (
+        language.advance_language(work, analysis, "dubbing", {})["stage"] == "advance"
+    )
+    assert language.advance_language(work, analysis, "dubbing", {}) is None
 
 
-def test_ass_centisecond_rounding_carries(tmp_path):
-    srt=tmp_path/'x.srt'
-    srt.write_text('1\n00:00:00,995 --> 00:00:02,000\nA complete sentence.\n')
-    run('split_translation.py',srt,'--out',tmp_path)
-    assert '\t0:00:01.00\t' in (tmp_path/'transcript.txt').read_text()
+def test_full_translation_and_export_use_server_owned_ids(skill, tmp_path):
+    analysis = source()
+    translate_all(skill, tmp_path, analysis)
+    artifacts = skill[1].export_work(tmp_path, analysis, "dubbing", (1280, 720), 40)
+    manifest = json.loads(Path(artifacts["manifest"]).read_text())
+    units = validate_manifest(manifest, analysis)
+    assert [u["speaker"] for u in units] == ["A", "B"]
+    assert [i for u in units for i in u["source_word_ids"]] == list(range(10))
+    assert all(u["text_zh"] == "我们可以把这句话说完整。" for u in units)
 
 
-def test_exact_fallback_last_sentence_end_and_word_sequence(tmp_path):
-    script=SKILLS/'nows-ytb-bmxtask/scripts/refine_apply_exact.py'
-    (tmp_path/'transcript_official.srt').write_text(
-        '1\n00:00:00,000 --> 00:00:01,000\none two three four five\n\n'
-        '2\n00:00:01,000 --> 00:00:03,000\nsix seven eight nine ten\n')
-    (tmp_path/'refine_parts').mkdir()
-    (tmp_path/'refine_plan.json').write_text(json.dumps({'parts':[{'file':'refine_part_01.txt'}]}))
-    refined=tmp_path/'refine_parts/refined_01.txt'
-    refined.write_text('S1\tone two three four five six seven eight nine ten\n')
-    result=subprocess.run([sys.executable,'-B',str(script),'--workdir',str(tmp_path)],capture_output=True,text=True)
-    assert result.returncode==0,result.stderr
-    assert '--> 00:00:03,000' in (tmp_path/'transcript_refined.srt').read_text()
-    refined.write_text('S1\ttwo one three four five six seven eight nine ten\n')
-    result=subprocess.run([sys.executable,'-B',str(script),'--workdir',str(tmp_path)],capture_output=True,text=True)
-    assert result.returncode!=0
+def test_confirmation_rebinds_source_ids_without_retranslation(skill, tmp_path):
+    analysis = source()
+    # A real unknown region remains independently refinable but cannot be dubbed.
+    asr = {
+        "segments": [
+            {
+                "words": [
+                    dict(word="Hello", start=0, end=1, speaker="A"),
+                    dict(word="there", start=1, end=2, speaker="A"),
+                    dict(word="friend.", start=2, end=3, speaker="A"),
+                ]
+            },
+            {"words": [dict(word="Yes.", start=4, end=5)]},
+        ]
+    }
+    analysis = build_analysis(asr, "media")
+    translate_all(skill, tmp_path, analysis)
+    before = (tmp_path / "language/units.json").read_bytes()
+    artifacts = skill[1].export_work(tmp_path, analysis, "dubbing", (1280, 720), 40)
+    assert "manifest" not in artifacts
+    revised = confirm_speakers(analysis, [dict(word_ids=[3], speaker_id="A")])
+    artifacts = skill[1].export_work(tmp_path, revised, "dubbing", (1280, 720), 40)
+    validate_manifest(json.loads(Path(artifacts["manifest"]).read_text()), revised)
+    assert (tmp_path / "language/units.json").read_bytes() == before
 
 
-def test_long_monologue_is_bounded_context_without_losing_words(tmp_path):
-    analysis=analysis_fixture()
-    words=[dict(word_id=i,text=f'word{i}',start=i*.3,end=(i+1)*.3,speaker='A') for i in range(205)]
-    analysis['words']=words
-    analysis['turns']=[dict(turn_id='turn1',speaker='A',start=0,end=61.5,
-                            word_ids=list(range(205)),text=' '.join(w['text'] for w in words))]
-    (tmp_path/'analysis.json').write_text(json.dumps(analysis))
-    run('import_analysis.py',tmp_path/'analysis.json','--workdir',tmp_path)
-    run('refine_srt.py','prepare-full',tmp_path/'transcript_official.srt',tmp_path/'raw_aligned.srt','--workdir',tmp_path)
-    chunk=(tmp_path/'refine_parts/refine_part_01.txt').read_text()
-    assert chunk.count('speaker=A turn=turn1')==3
-    assert 'word204' in chunk
+def test_standalone_subtitle_workflow_uses_no_sdk_or_site_packages(tmp_path):
+    video = tmp_path / "视频.mp4"
+    video.write_bytes(b"local media")
+    captions = tmp_path / "source.srt"
+    captions.write_text(
+        "1\n00:00:00,995 --> 00:00:04,000\nWe can finish this complete sentence.\n",
+        encoding="utf-8",
+    )
+    work = tmp_path / "project"
 
+    def run(*args):
+        out = subprocess.run(
+            [
+                sys.executable,
+                "-S",
+                str(SCRIPTS / "workflow.py"),
+                "run",
+                "--workdir",
+                str(work),
+                *map(str, args),
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=15,
+        )
+        assert out.returncode == 0, out.stdout + out.stderr
+        return json.loads(out.stdout)
 
-def test_wrapper_prefers_its_runtime_cli_over_old_path_cli(tmp_path, monkeypatch):
-    import runpy
-    module=runpy.run_path(str(SKILLS/'nows-ytb-bmxtask/scripts/bmx_video_task.py'))
-    runtime=tmp_path/'runtime';runtime.mkdir()
-    old=tmp_path/'old';old.mkdir()
-    for root in (runtime,old):
-        cli=root/'bmx';cli.write_text('#!/bin/sh\nexit 0\n');cli.chmod(0o755)
-    monkeypatch.setattr(sys,'executable',str(runtime/'python'))
-    monkeypatch.setenv('PATH',str(old))
-    monkeypatch.delenv('BILIMIX_CLI',raising=False)
-    resolve=module['resolve_bmx']
-    assert resolve()==str(runtime/'bmx')
-    assert resolve('/explicit/bmx')=='/explicit/bmx'
-
-
-def test_environment_prefers_runtime_downloader_over_old_path_binary(tmp_path, monkeypatch):
-    import runpy
-    module=runpy.run_path(str(SKILLS/'nows-ytb-bilingualex/scripts/check_env.py'))
-    runtime=tmp_path/'runtime';runtime.mkdir()
-    old=tmp_path/'old';old.mkdir()
-    for root in (runtime,old):
-        binary=root/'yt-dlp';binary.write_text('#!/bin/sh\nexit 0\n');binary.chmod(0o755)
-    monkeypatch.setattr(sys,'executable',str(runtime/'python'))
-    monkeypatch.setenv('PATH',str(old))
-    assert module['probe_yt_dlp'](str(tmp_path/'venv'))==str(runtime/'yt-dlp')
-
-
-def test_reanchor_validates_all_rows_before_updating_without_history(tmp_path):
-    (tmp_path / 'parts').mkdir()
-    (tmp_path / 'subtitle_meta.json').write_text(json.dumps({'events': [
-        {'start': '00:00:01,000', 'end': '00:00:03,000'}]}))
-    translated = tmp_path / 'parts/trans_01.txt'
-    translated.write_text('1\twrong\twrong\tHello\t你好。\n', encoding='utf-8')
-    run('reanchor_timestamps.py', '--workdir', tmp_path)
-    assert translated.read_text().startswith('1\t00:00:01,000\t00:00:03,000')
-    assert sorted(p.name for p in (tmp_path / 'parts').iterdir()) == ['trans_01.txt']
-    translated.write_text('2\twrong\twrong\tHello\t你好。\n', encoding='utf-8')
-    before = translated.read_bytes()
-    result = subprocess.run([sys.executable, str(SCRIPTS / 'reanchor_timestamps.py'),
-                             '--workdir', str(tmp_path)], capture_output=True, timeout=15)
-    assert result.returncode != 0
-    assert translated.read_bytes() == before
-
-
-def test_pending_speaker_can_be_refined_and_translated_then_confirmed_without_retranslation(tmp_path):
-    from pipeline.speaker_analysis import build_analysis, confirm_speakers
-    from tests.test_speaker_uncertainty import gap_fixture
-    asr, turns = gap_fixture()
-    analysis = build_analysis(asr, 'media', turns)
-    (tmp_path/'analysis.json').write_text(json.dumps(analysis))
-    run('import_analysis.py',tmp_path/'analysis.json','--workdir',tmp_path)
-    run('refine_srt.py','prepare-full',tmp_path/'transcript_official.srt',tmp_path/'raw_aligned.srt','--workdir',tmp_path)
-    (tmp_path/'refine_parts/refined_01.txt').write_text('\n'.join(
-        f'S{i}\t{turn["text"]}' for i,turn in enumerate(analysis['turns'],1))+'\n')
-    run('check_refined.py','--workdir',tmp_path)
-    run('refine_srt.py','apply','--workdir',tmp_path)
-    run('split_translation.py',tmp_path/'transcript_refined.srt','--out',tmp_path)
-    rows=(tmp_path/'transcript.txt').read_text().splitlines()
-    translated='\n'.join(row+'\t完整自然的一句话。' for row in rows)+'\n'
-    (tmp_path/'parts/trans_01.txt').write_text(translated)
-    run('assemble_final.py','--workdir',tmp_path)
-    run('build_dub_manifest.py','prepare','--workdir',tmp_path)
-    prepared=json.loads((tmp_path/'dub_unit_input.json').read_text())
-    assert prepared['rows'][1]['speaker_id'] is None
-    plan={'units':[{'source_indices':[i], 'text_zh':'完整自然的一句话。'} for i in range(1,4)]}
-    (tmp_path/'dub_units_plan.json').write_text(json.dumps(plan))
-    result=subprocess.run([sys.executable,str(SCRIPTS/'build_dub_manifest.py'),'apply','--workdir',str(tmp_path)],capture_output=True,text=True)
-    assert result.returncode!=0 and 'Unresolved speakers' in result.stderr
-    revised=confirm_speakers(analysis,[{'word_ids':[12],'speaker_id':'B'}])
-    (tmp_path/'analysis.json').write_text(json.dumps(revised))
-    run('assemble_final.py','--workdir',tmp_path)
-    run('build_dub_manifest.py','apply','--workdir',tmp_path)
-    manifest=json.loads((tmp_path/'dub_manifest.json').read_text())
-    assert [unit['speaker'] for unit in validate_manifest(manifest,revised)]==['A','B','B']
-    assert (tmp_path/'parts/trans_01.txt').read_text()==translated
+    action = run(
+        "--input",
+        video,
+        "--mode",
+        "subtitles",
+        "--source-subtitles",
+        captions,
+        "--width",
+        "1280",
+        "--height",
+        "720",
+    )
+    request = json.loads(Path(action["input"]).read_text())
+    Path(action["output"]).write_text(
+        json.dumps(
+            dict(
+                input_id=request["input_id"],
+                sentences=[{"text": "We can finish this complete sentence."}],
+            )
+        )
+    )
+    action = run()
+    request = json.loads(Path(action["input"]).read_text())
+    Path(action["output"]).write_text(
+        json.dumps(
+            dict(
+                input_id=request["input_id"],
+                units=[
+                    dict(
+                        source_unit_ids=[u["unit_id"] for u in request["source_units"]],
+                        text_en="We can finish this complete sentence.",
+                        text_zh="我们可以把这一整句话完整、自然地说完，不必在说到一半时突然停下来。",
+                    )
+                ],
+            )
+        )
+    )
+    action = run()
+    assert action["stage"] == "completed"
+    report = action["artifacts"]["subtitle_layout"]
+    assert report["max_lines"] <= 4 and report["max_estimated_height_ratio"] <= 0.25
+    assert not (work / "output/dub_manifest.json").exists()
+    assert "0:00:01.00" in (work / "output/refined.ass").read_text()

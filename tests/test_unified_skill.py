@@ -130,3 +130,15 @@ def test_reference_mode_is_bound_to_project_and_preserved_on_resume(tmp_path, mo
     args.tts_reference_mode='speaker' if mode == 'segment' else 'segment'
     with pytest.raises(ValueError,match='tts_reference_mode'):
         workflow.initialize(tmp_path,args)
+
+
+def test_delivery_distinguishes_segment_references_from_fallbacks(monkeypatch):
+    scripts=Path(__file__).resolve().parents[1]/'skills/nows-ytb-dubbing/scripts'
+    monkeypatch.syspath_prepend(str(scripts))
+    from _export import reference_quality
+    result=dict(tts_reference_manifest=dict(mode='segment',fallback_count=1,units=[
+        dict(segment_index=0,requested_mode='segment',actual_mode='segment'),
+        dict(segment_index=1,requested_mode='segment',actual_mode='speaker',fallback_reason='reference_too_short')]))
+    assert reference_quality(result,'segment',2)==dict(mode='segment',total_units=2,segment_reference_units=1,fallback_units=1)
+    result['tts_reference_manifest']['units'][1].pop('fallback_reason')
+    with pytest.raises(ValueError,match='explanation'):reference_quality(result,'segment',2)

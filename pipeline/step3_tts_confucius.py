@@ -487,7 +487,7 @@ def synthesize_sentences_with_confucius_tts(
                     proc.wait()
                     raise RuntimeError(
                         f"Confucius4-TTS worker 卡住 ({stall_elapsed:.0f}s 无输出)，"
-                        f"已完成 {done_count}/{len(pending_jobs)} 条")
+                        f"已完成 {disk_done}/{len(pending_jobs)} 条")
 
             if proc.poll() is not None and not ready:
                 break

@@ -17,6 +17,7 @@ import threading
 import time
 
 from core import config
+from core.files import atomic_json
 
 # 内存中的任务状态 {job_id: {...}}
 tts_jobs = {}
@@ -54,8 +55,7 @@ def _write_job_to_disk(job: dict):
         job_dir = get_job_dir(job_id)
         os.makedirs(job_dir, exist_ok=True)
         data = {k: job.get(k) for k in _PERSIST_FIELDS if k in job}
-        with open(_job_file(job_id), "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        atomic_json(_job_file(job_id), data)
     except Exception as e:
         print(f"[TTS] 写入 job.json 失败 ({job_id}): {e}")
 
