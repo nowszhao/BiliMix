@@ -77,3 +77,44 @@ def test_tune_skips_when_already_in_range(monkeypatch, tmp_path):
     assert report["enabled"] is False
     assert tuned == {0: unit}
     assert report["speakers"]["SPEAKER_00"]["skipped"] == "already_in_range"
+
+
+def test_comfortable_reference_prefers_calmer_segment(monkeypatch, tmp_path):
+    from pipeline import speaker_analysis as analysis
+
+    candidates = [
+        {"speaker": "SPEAKER_00", "start": 0.0, "end": 10.0, "text": "loud excited run"},
+        {"speaker": "SPEAKER_00", "start": 20.0, "end": 26.0, "text": "calm measured run"},
+        {"speaker": "SPEAKER_00", "start": 40.0, "end": 46.0, "text": "another calm run"},
+    ]
+    stats = {
+        (0.0, 10.0): (190.0, -14.0),
+        (20.0, 26.0): (145.0, -19.5),
+        (40.0, 46.0): (146.0, -19.0),
+    }
+    monkeypatch.setattr(analysis, "_clip_stats",
+                        lambda path, start, end: stats[(start, end)])
+
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"stub")
+    chosen = analysis._comfortable_reference(candidates, str(audio))
+    assert chosen is not None
+    assert chosen["text"] in ("calm measured run", "another calm run")
+
+
+def test_select_references_keeps_previous_without_audio():
+    from pipeline import speaker_analysis as analysis
+
+    words = []
+    for index in range(60):
+        words.append(dict(word_id=index, text="w", start=index * 0.5,
+                          end=index * 0.5 + 0.4, speaker="SPEAKER_00",
+                          speaker_verified=True, reference_eligible=True,
+                          speaker_assignment="user_confirmed"))
+    turns = [{"speaker": "SPEAKER_00", "word_ids": list(range(60))}]
+    previous = {"SPEAKER_00": {"speaker": "SPEAKER_00", "start": 5.0, "end": 11.0,
+                               "text": "kept", "analysis_verified": True}}
+
+    chosen = analysis._select_references(words, turns, words, True, previous=previous)
+    assert chosen["SPEAKER_00"]["start"] == 5.0
+    assert chosen["SPEAKER_00"]["end"] == 11.0

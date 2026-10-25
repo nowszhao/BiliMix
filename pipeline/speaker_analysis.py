@@ -3,6 +3,8 @@ import json
 from core.files import atomic_json
 import math
 import os
+import shutil
+import statistics
 from pipeline.dubbing_plan import file_sha256, known_speaker, canonical_hash
 
 
@@ -67,8 +69,107 @@ def _group_words(words):
     return turns, sentences
 
 
-def _select_references(words, turns, native, require_verified):
-    references = {}
+def _clip_stats(audio_path, start, end):
+    """参考片段的（中位基频, 中位响度 dB）；无法估计时返回 (None, None)。"""
+    import subprocess
+    import tempfile
+    import wave
+    try:
+        import numpy as np
+    except ImportError:
+        return None, None
+    handle, path = tempfile.mkstemp(suffix=".wav")
+    os.close(handle)
+    try:
+        subprocess.run(
+            [shutil.which("ffmpeg") or "ffmpeg", "-v", "error", "-ss", str(start),
+             "-t", str(end - start), "-i", audio_path, "-vn", "-ac", "1", "-ar", "16000",
+             "-y", path],
+            check=True, capture_output=True,
+        )
+        with wave.open(path, "rb") as stream:
+            rate = stream.getframerate()
+            samples = np.frombuffer(stream.readframes(stream.getnframes()), dtype=np.int16)
+    except Exception:
+        return None, None
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)
+    if samples.size == 0:
+        return None, None
+    signal = samples.astype(np.float32) / 32768.0
+    values, levels = [], []
+    for index in range(0, len(signal) - 640, 320):
+        frame = signal[index:index + 640]
+        if float(np.sqrt(np.mean(frame ** 2))) < 0.01:
+            continue
+        frame = frame - frame.mean()
+        auto = np.correlate(frame, frame, "full")[639:]
+        if auto[0] <= 0:
+            continue
+        low, high = int(rate / 380), int(rate / 70)
+        window = auto[low:high]
+        if window.size < 10:
+            continue
+        lag = int(np.argmax(window)) + low
+        if auto[lag] / auto[0] < 0.25:
+            continue
+        values.append(rate / lag)
+        levels.append(float(np.sqrt(np.mean(frame ** 2))))
+    if len(values) < 8:
+        return None, None
+    return statistics.median(values), 20 * math.log10(statistics.median(levels))
+
+
+def _spread(items, limit):
+    """从整段素材里均匀取样，避免只看开头。"""
+    if len(items) <= limit:
+        return list(items)
+    step = len(items) / limit
+    return [items[int(index * step)] for index in range(limit)]
+
+
+def _comfortable_reference(candidates, audio_path):
+    """在同人候选里挑音高、响度都贴近个人中位的一段。
+
+    TTS 会抬高基频，参考若取自情绪高涨的段落，合成后容易尖锐；这里以全片
+    均匀取样得到的个人中位为基准，优先 5~7 秒、平铺直叙的片段。
+    """
+    if not audio_path or not os.path.isfile(audio_path) or not candidates:
+        return None
+    baseline_items = _spread(candidates, 16)
+    selection_items = _spread(candidates, 30)
+    stats = {}
+
+    def measure(candidate):
+        key = (candidate["start"], candidate["end"])
+        if key not in stats:
+            stats[key] = _clip_stats(audio_path, candidate["start"], candidate["end"])
+        return stats[key]
+
+    measured = [value for value in (measure(item) for item in baseline_items)
+                if value[0] and value[1]]
+    if len(measured) < 3:
+        return None
+    pitches = sorted(value[0] for value in measured)
+    base_f0 = pitches[int(len(pitches) * 0.4)]
+    base_db = statistics.median([value[1] for value in measured])
+    best, best_score = None, None
+    for candidate in selection_items:
+        f0, db = measure(candidate)
+        if not f0 or not db:
+            continue
+        length = candidate["end"] - candidate["start"]
+        score = abs(f0 - base_f0) / base_f0 * 3 + abs(db - base_db) / 6
+        if not 5.0 <= length <= 7.0:
+            score += 0.15
+        if best_score is None or score < best_score:
+            best, best_score = candidate, score
+    return best
+
+
+def _select_references(words, turns, native, require_verified, audio_path=None, previous=None):
+    candidates = {}
     for turn in turns:
         if not known_speaker(turn["speaker"]):
             continue
@@ -97,17 +198,32 @@ def _select_references(words, turns, native, require_verified):
             end = owned[-1]["end"]
             if any(t["speaker"] != turn["speaker"] and t["start"] < end and t["end"] > start for t in native):
                 continue
-            candidate = dict(speaker=turn["speaker"], start=start, end=end,
-                             text=" ".join(w["text"] for w in owned), analysis_verified=require_verified)
-            previous = references.get(turn["speaker"])
-            if previous is None or end-start > previous["end"]-previous["start"]:
-                references[turn["speaker"]] = candidate
+            candidates.setdefault(turn["speaker"], []).append(
+                dict(speaker=turn["speaker"], start=start, end=end,
+                     text=" ".join(w["text"] for w in owned),
+                     analysis_verified=require_verified))
+    references = {}
+    for speaker, items in candidates.items():
+        previous_choice = (previous or {}).get(speaker)
+        comfortable = _comfortable_reference(items, audio_path)
+        if comfortable is not None:
+            references[speaker] = comfortable
+        elif previous_choice and previous_choice.get("text"):
+            kept = next((item for item in items
+                         if abs(item["start"] - previous_choice["start"]) < 0.01
+                         and abs(item["end"] - previous_choice["end"]) < 0.01), None)
+            references[speaker] = kept or previous_choice
+        else:
+            references[speaker] = max(items, key=lambda item: item["end"] - item["start"])
     return references
 
 
-def _assemble_analysis(words, media_hash, native, require_verified):
+def _assemble_analysis(words, media_hash, native, require_verified, audio_path=None,
+                       previous_references=None):
     turns, sentences = _group_words(words)
-    references = _select_references(words, turns, native if native is not None else words, require_verified)
+    references = _select_references(words, turns, native if native is not None else words,
+                                    require_verified, audio_path=audio_path,
+                                    previous=previous_references)
     unresolved = []
     for word in words:
         word["speaker_status"] = "assigned" if known_speaker(word["speaker"]) else "unresolved"
@@ -137,7 +253,8 @@ def _assemble_analysis(words, media_hash, native, require_verified):
     return value
 
 
-def build_analysis(transcription, media_hash, speaker_turns=None, verification=None):
+def build_analysis(transcription, media_hash, speaker_turns=None, verification=None,
+                   audio_path=None, previous_references=None):
     words = []
     for segment in transcription.get("segments", []):
         for item in segment.get("words", []):
@@ -164,7 +281,8 @@ def build_analysis(transcription, media_hash, speaker_turns=None, verification=N
         decisions = verified_word_assignments({"words": words}, verification)
         for word in words:
             word.update(decisions.get(word["word_id"], {}))
-    return _assemble_analysis(words, media_hash, speaker_turns, verification is not None)
+    return _assemble_analysis(words, media_hash, speaker_turns, verification is not None,
+                              audio_path=audio_path, previous_references=previous_references)
 
 
 def native_analysis_signature(audio_hash, worker):
@@ -326,11 +444,12 @@ def analyze_source(audio_path, media_path, output_dir, task_id=None, media_sha25
     stage("diarize", 55, "正在分析原声人物时间段...")
     speaker_turns = _native_speaker_turns(audio_path,output_dir,signature,task_id)
     stage("bind_speakers", 70, "正在绑定词级人物，保留待确认片段...")
-    initial = build_analysis(transcription, media_hash, speaker_turns)
+    initial = build_analysis(transcription, media_hash, speaker_turns, audio_path=audio_path)
     atomic_json(cache, initial)
     evidence = _verify_source_speakers(audio_path,transcription,initial,output_dir,acoustic_signature,task_id)
     stage("finalize_analysis", 98, "正在汇总声纹复核和待确认片段...")
-    result = build_analysis(transcription, media_hash, speaker_turns,verification=evidence)
+    result = build_analysis(transcription, media_hash, speaker_turns, verification=evidence,
+                            audio_path=audio_path)
     result["verification_signature"] = acoustic_signature
     result["speaker_verification_summary"].update({
         "windows":len(evidence["units"]),
@@ -408,7 +527,9 @@ def confirm_speakers(analysis, resolutions):
             catalog[word_id].update(speaker=speaker, speaker_assignment="user_confirmed",
                                     human_confirmed=True, speaker_verified=False, reference_eligible=False)
     rebuilt = _assemble_analysis(result["words"], result["source_media_sha256"],
-                                 result.get("speaker_turns") or None, result.get("verification_complete", False))
+                                 result.get("speaker_turns") or None,
+                                 result.get("verification_complete", False),
+                                 previous_references=result.get("references"))
     summary = result.get("speaker_verification_summary", {})
     result.update(rebuilt)
     result["speaker_verification_summary"] = {**summary, **rebuilt["speaker_verification_summary"]}
