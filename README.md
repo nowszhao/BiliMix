@@ -22,7 +22,7 @@ BiliMix 为英文音频与视频生成中文配音，支持人物音色克隆、
 
 | 原声（英文） | 中文配音 |
 | --- | --- |
-| [![原声](examples/demo-original.jpg)](examples/demo-original.mp4) | [![中文配音](examples/demo-dubbed.jpg)](examples/demo-dubbed.mp4) |
+| [<img src="examples/demo-original.jpg" width="420" alt="原声">](examples/demo-original.mp4) | [<img src="examples/demo-dubbed.jpg" width="420" alt="中文配音">](examples/demo-dubbed.mp4) |
 
 配音由原片人物音色合成，画面按中文音频时长等比调整，底部烧录双语字幕（中文在上、英文在下）。更多示例见 [examples](https://github.com/nowszhao/BiliMix/tree/main/examples)。
 
