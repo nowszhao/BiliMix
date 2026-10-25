@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BiliMix 配音前后对比</title>
+<style>
+  :root {
+    --ink: #1f2328;
+    --muted: #59636e;
+    --line: #d8dee4;
+    --bg: #ffffff;
+    --soft: #f6f8fa;
+    --accent: #1f6feb;
+    --warm: #9a6700;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.7 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 48px 24px 72px; }
+  header { margin-bottom: 32px; }
+  h1 { font-size: 26px; font-weight: 600; margin: 0 0 10px; letter-spacing: -.3px; }
+  .lede { color: var(--muted); font-size: 15px; margin: 0; max-width: 760px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .panel { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--soft); }
+  .panel-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; padding: 14px 18px; background: #fff; border-bottom: 1px solid var(--line);
+  }
+  .panel-head h2 { font-size: 15px; font-weight: 600; margin: 0; }
+  .tag { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
+  .tag.before { color: var(--muted); border-color: var(--line); background: #fff; }
+  .tag.after { color: var(--accent); border-color: #c7d9fb; background: #e8f0fe; }
+  video { display: block; width: 100%; background: #000; }
+  .panel-foot { padding: 12px 18px 16px; font-size: 13px; color: var(--muted); background: #fff; }
+  .panel-foot b { color: var(--ink); font-weight: 600; }
+  .notes { margin-top: 32px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .note { border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .note h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; color: var(--warm); }
+  .note p { margin: 0; font-size: 13.5px; color: var(--muted); }
+  footer { margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--muted); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  @media (max-width: 820px) {
+    .grid, .notes { grid-template-columns: 1fr; }
+    .wrap { padding: 32px 18px 56px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>配音前后对比</h1>
+    <p class="lede">同一段 60 秒素材。左侧是原声英文，右侧是 BiliMix 生成的中文配音：音色由原片各说话人克隆，画面按中文音频时长等比调整，底部烧录双语字幕（中文在上、英文在下）。</p>
+  </header>
+
+  <div class="grid">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>原声</h2>
+        <span class="tag before">英文 · 无字幕</span>
+      </div>
+      <video controls preload="metadata" playsinline src="examples/demo-original.mp4"></video>
+      <div class="panel-foot"><b>60 秒</b> · 原始音轨与原始时长，未做任何处理</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>中文配音</h2>
+        <span class="tag after">中文 · 双语字幕</span>
+      </div>
+      <video controls preload="metadata" playsinline src="examples/demo-dubbed.mp4"></video>
+      <div class="panel-foot"><b>60 秒</b> · 克隆音色合成，画面随音频变速，字幕已烧录</div>
+    </section>
+  </div>
+
+  <div class="notes">
+    <div class="note">
+      <h3>音色</h3>
+      <p>每位说话人使用从原片挑选的参考音频克隆；参考段按个人音域挑选，合成后基频再校准到该音域，避免听着发尖。</p>
+    </div>
+    <div class="note">
+      <h3>时长</h3>
+      <p>中文通常比英文短，画面按音频等比提速而不是删内容。全片约缩短一成。</p>
+    </div>
+    <div class="note">
+      <h3>字幕</h3>
+      <p>中文最多两行、英文最多两行，合计不超过四行，文字高度控制在画面的 25% 以内。</p>
+    </div>
+  </div>
+
+  <footer>
+    更多素材见 <a href="https://github.com/nowszhao/BiliMix/tree/main/examples">examples 目录</a> ·
+    源码与文档 <a href="https://github.com/nowszhao/BiliMix">github.com/nowszhao/BiliMix</a>
+  </footer>
+</div>
+</body>
+</html>

@@ -20,6 +20,8 @@ The same 60-second clip: original English on the left, Chinese dubbing on the ri
 | --- | --- |
 | [<img src="examples/demo-original.jpg" width="420" alt="Original">](examples/demo-original.mp4) | [<img src="examples/demo-dubbed.jpg" width="420" alt="Chinese dubbing">](examples/demo-dubbed.mp4) |
 
+**[▶ Play both side by side](https://nowszhao.github.io/BiliMix/demo.html)** — two players, so the difference is audible in place.
+
 Speech is synthesized with each speaker's cloned voice, the picture is retimed to the Chinese audio, and bilingual subtitles are burned in. More samples: [examples](https://github.com/nowszhao/BiliMix/tree/main/examples).
 
 ## Client
