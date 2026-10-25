@@ -60,20 +60,18 @@ On first use, the Agent checks the BiliMix service. If it can access the target 
 
 ## Gallery
 
-Original on the left, Chinese dubbing on the right. Click either video to play.
+Original on the left, Chinese dubbing on the right. Click a cover to play the full video.
 
 <table>
   <tr>
-    <td width="50%"><video src="examples/test1.mp4" poster="examples/screenshot_original.jpg" controls preload="metadata" playsinline width="100%"><a href="examples/test1.mp4"><img src="examples/screenshot_original.jpg" width="100%" alt="test1 original"></a></video></td>
-    <td width="50%"><video src="examples/test1_mixed.mp4" poster="examples/screenshot_mixed.jpg" controls preload="metadata" playsinline width="100%"><a href="examples/test1_mixed.mp4"><img src="examples/screenshot_mixed.jpg" width="100%" alt="test1 Chinese dubbing"></a></video></td>
+    <td width="50%"><a href="examples/test1.mp4"><img src="examples/test1-original-poster.jpg" width="100%" alt="test1 original, click to play"></a></td>
+    <td width="50%"><a href="examples/test1_mixed.mp4"><img src="examples/test1-dubbed-poster.jpg" width="100%" alt="test1 Chinese dubbing, click to play"></a></td>
   </tr>
   <tr>
     <td><sub><b>Before</b>: original English audio.</sub></td>
     <td><sub><b>After</b>: Chinese dubbing in the original voice + bilingual subtitles.</sub></td>
   </tr>
 </table>
-
-If your browser does not support embedded video, open [test1 original](examples/test1.mp4) or [test1 Chinese dubbing](examples/test1_mixed.mp4).
 
 ## What it makes
 

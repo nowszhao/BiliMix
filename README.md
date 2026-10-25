@@ -60,20 +60,18 @@ https://www.youtube.com/watch?v=...
 
 ## Gallery
 
-左边原声，右边中文配音。点击视频直接播放。
+左边原声，右边中文配音。点击封面播放完整视频。
 
 <table>
   <tr>
-    <td width="50%"><video src="examples/test1.mp4" poster="examples/screenshot_original.jpg" controls preload="metadata" playsinline width="100%"><a href="examples/test1.mp4"><img src="examples/screenshot_original.jpg" width="100%" alt="test1 原声"></a></video></td>
-    <td width="50%"><video src="examples/test1_mixed.mp4" poster="examples/screenshot_mixed.jpg" controls preload="metadata" playsinline width="100%"><a href="examples/test1_mixed.mp4"><img src="examples/screenshot_mixed.jpg" width="100%" alt="test1 中文配音"></a></video></td>
+    <td width="50%"><a href="examples/test1.mp4"><img src="examples/test1-original-poster.jpg" width="100%" alt="test1 原声，点击播放"></a></td>
+    <td width="50%"><a href="examples/test1_mixed.mp4"><img src="examples/test1-dubbed-poster.jpg" width="100%" alt="test1 中文配音，点击播放"></a></td>
   </tr>
   <tr>
     <td><sub><b>配音前</b>：英文原声。</sub></td>
     <td><sub><b>配音后</b>：原音色中文配音 + 双语字幕。</sub></td>
   </tr>
 </table>
-
-浏览器不支持内嵌视频时，直接打开 [test1 原声](examples/test1.mp4) 或 [test1 中文配音](examples/test1_mixed.mp4)。
 
 ## What it makes
 
