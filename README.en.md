@@ -12,6 +12,12 @@ By default each speaker uses a fixed qualified reference. Segment mode can condi
 
 Podcast tasks can use server-side transcription and translation. A separate TTS interface accepts reference audio and text.
 
+## Demo
+
+[![Dubbing sample](examples/dubbing-demo.jpg)](examples/dubbing-demo.mp4)
+
+A 75-second clip: Chinese speech is synthesized with each speaker's cloned voice, the picture is retimed to the Chinese audio, and bilingual subtitles are burned in (Chinese above, English below).
+
 ## Client
 
 Python 3.10+ is required. Clients use the lightweight SDK; local URL downloads additionally require yt-dlp and FFmpeg.
