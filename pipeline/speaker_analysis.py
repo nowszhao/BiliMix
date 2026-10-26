@@ -10,6 +10,8 @@ from pipeline.dubbing_plan import file_sha256, known_speaker, canonical_hash
 
 ANALYSIS_REVISION = 6
 
+MIN_REFERENCE_SECONDS = 3.5
+
 
 def _project_word(start, end, turns):
     """Return evidence and an optional owner; a missing owner is reviewable data."""
@@ -156,10 +158,12 @@ def _comfortable_reference(candidates, audio_path):
     base_db = statistics.median([value[1] for value in measured])
     best, best_score = None, None
     for candidate in selection_items:
+        length = candidate["end"] - candidate["start"]
+        if length < MIN_REFERENCE_SECONDS:
+            continue
         f0, db = measure(candidate)
         if not f0 or not db:
             continue
-        length = candidate["end"] - candidate["start"]
         score = abs(f0 - base_f0) / base_f0 * 3 + abs(db - base_db) / 6
         if not 5.0 <= length <= 7.0:
             score += 0.15

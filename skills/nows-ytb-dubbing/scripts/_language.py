@@ -35,12 +35,15 @@ def apply_full(request, response, analysis, mode):
     catalog = {w['word_id']: w for w in analysis['words']}
     expected, positions = [], []
     for index, word in enumerate(words):
+        # ASR occasionally emits a punctuation-only token; it carries no speech
+        # and must not break the word stream.
         values = tokens(word['text'])
-        if not values:
-            raise ValueError(f"Nonlexical source word {word['word_id']}: inspect the source analysis")
         expected.extend(values)
         positions.extend([index] * len(values))
+    if not expected:
+        raise ValueError('No lexical source words in this window')
     cursor, output = 0, []
+    previous_end = -1
     for sentence in sentences:
         text = sentence.get('text', '') if isinstance(sentence, dict) else ''
         values = tokens(text)
@@ -50,7 +53,14 @@ def apply_full(request, response, analysis, mode):
         if (cursor and positions[cursor] == positions[cursor-1]) or (
                 end < len(positions) and positions[end-1] == positions[end]):
             raise ValueError('A source word was split across FULL sentences')
-        ids = [w['word_id'] for w in words[positions[cursor]:positions[end-1]+1]]
+        start_index = positions[cursor] if cursor else 0
+        start_index = max(start_index, previous_end + 1)
+        last_index = positions[end-1]
+        next_token = positions[end] if end < len(positions) else len(words)
+        while last_index + 1 < next_token:
+            last_index += 1
+        ids = [w['word_id'] for w in words[start_index:last_index+1]]
+        previous_end = last_index
         owner(ids, catalog, mode)
         output.append({'source_word_ids': ids, 'text': text.strip()})
         cursor = end
