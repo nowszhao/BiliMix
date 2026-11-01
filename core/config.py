@@ -111,7 +111,7 @@ CONFUCIUS4_TTS_TEMPERATURE = 0.3
 CONFUCIUS4_TTS_TOP_P = 0.5
 # Top-k 采样参数（0 表示不限制）
 CONFUCIUS4_TTS_TOP_K = 0
-# 束搜索宽度（1 = 贪心解码，避免长句序列超 max_length 导致杂音）
+# 束搜索宽度（引擎仍启用采样；Worker 按文本与参考固定种子并检查节奏）
 CONFUCIUS4_TTS_NUM_BEAMS = 1
 # 重复惩罚系数（越高重复越少）
 CONFUCIUS4_TTS_REPETITION_PENALTY = 1.2
@@ -120,7 +120,7 @@ CONFUCIUS4_TTS_N_TIMESTEPS = 50
 # 无分类器引导强度（越高越紧跟参考音频的语速/音量风格）
 CONFUCIUS4_TTS_INFERENCE_CFG_RATE = 0.9
 # 并行 Worker 数量（利用多核并行合成，1 = 串行，建议 2-3）
-CONFUCIUS4_TTS_NUM_WORKERS = 2
+CONFUCIUS4_TTS_NUM_WORKERS = 4
 
 # 同一人物固定参考由源人物分析选择，合格连续语音范围为 2–10 秒。
 # ffmpeg 提取参考音频子进程超时（秒）
@@ -200,15 +200,15 @@ SECRET_KEY = "bilimix-secret-key-change-me"
 OUTPUT_FORMAT = "mp3"
 # 输出音频比特率
 OUTPUT_BITRATE = "192k"
-# 默认保留背景音乐/环境音（需人声分离）
+# 默认只输出配音人声；需要背景音乐/环境音时显式开启（需人声分离）
 # 可在 Web 设置页面修改，新建任务时作为 BGM 选项的默认值
-KEEP_BGM = True
+KEEP_BGM = False
 # TTS 音频目标响度（dBFS），统一所有句子的音量
 TTS_TARGET_DBFS = -20.0
 # 句间固定间隙（毫秒），保证相邻句子不粘连又有呼吸感（mixer 内部默认值）
 MIXER_DEFAULT_GAP_MS = 150
 # 句首/句尾淡入淡出（毫秒），平滑音色衔接
-MIXER_FADE_MS = 60
+MIXER_FADE_MS = 10
 # 背景音混入时的音量调整（dB，负值=降低音量）
 MIXER_BGM_GAIN_DB = -10.0
 

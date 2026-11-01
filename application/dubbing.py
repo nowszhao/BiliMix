@@ -18,6 +18,7 @@ from core.retry import _run_with_retry
 from pipeline.media_io import _cleanup_intermediate_files
 from pipeline.media_cache import vocal_cache_for_task
 from pipeline.tts_references import build_reference_map, validate_reference_mode
+from pipeline.tts_narration import collect_synthesis_reports
 from pipeline.speaker_analysis import (
     analyze_source,
     extract_reference_pool,
@@ -351,7 +352,7 @@ def _ensure_vocals_for_tts(task_id: str) -> str:
     若已有 _vocals_path 则直接复用；否则执行 demucs 分离。
 
     Returns:
-        str: vocals.wav 路径（纯人声），失败时返回原始 audio_path
+        str: vocals.wav 路径（纯人声）；分离失败则停止，禁止借原始混音克隆。
     """
     task = get_task(task_id)
     if not task:
@@ -378,7 +379,7 @@ def _ensure_vocals_for_tts(task_id: str) -> str:
         f"vocals_path 缺失，执行 demucs 分离..."
     )
     sep_result = separate_vocals(audio_path, sep_cache_dir)
-    if sep_result.get("ok"):
+    if sep_result.get("ok") and os.path.isfile(sep_result.get("vocals_path", "")):
         vocals_path = sep_result.get("vocals_path", "")
         update_task(task_id, _vocals_path=vocals_path)
         print(f"[VocalSep] 分离成功: vocals={vocals_path}")
@@ -389,11 +390,9 @@ def _ensure_vocals_for_tts(task_id: str) -> str:
                 update_task(task_id, _bgm_path=bgm_path)
         return vocals_path
 
-    print(
-        f"[VocalSep] 分离失败: {sep_result.get('error', '未知错误')}，"
-        f"回退到原始音频（可能含 BGM）"
+    raise RuntimeError(
+        f"无法取得纯人声参考，停止声音克隆：{sep_result.get('error') or '人声文件缺失'}"
     )
-    return audio_path
 
 
 def _build_confucius_ref_map(
@@ -476,7 +475,7 @@ def continue_after_sentence_confirmation(task_id: str):
         os.makedirs(result_dir, exist_ok=True)
 
         # 确保 TTS 参考音频使用纯人声（不受 keep_bgm 开关影响）
-        ref_audio_source = _ensure_vocals_for_tts(task_id) or audio_path
+        ref_audio_source = _ensure_vocals_for_tts(task_id)
 
         translations = {int(k): v for k, v in translations.items()}
         translated_indices = sorted(
@@ -609,8 +608,8 @@ def continue_after_sentence_confirmation(task_id: str):
 
         # 背景音乐保留：优先复用 Step0 提前分离好的伴奏轨（_bgm_path），
         # 避免重复调用 demucs；仅当提前分离未执行/未成功时才在此处补做一次
-        bgm_path = task.get("_bgm_path", "") or None
         keep_bgm = task.get("keep_bgm", False)
+        bgm_path = (task.get("_bgm_path", "") or None) if keep_bgm else None
         if keep_bgm and not bgm_path and audio_path and os.path.exists(audio_path):
             update_task(task_id, message="正在分离人声与背景音...")
             sep_cache_dir = vocal_cache_for_task(
@@ -648,6 +647,7 @@ def continue_after_sentence_confirmation(task_id: str):
             "total_segments": mix_result["total_segments"],
             "translated_segments": mix_result["translated_segments"],
             "process_mode": task.get("process_mode", "sentence_translate"),
+            "speech_quality": collect_synthesis_reports(tts_audio_map),
         }
 
         # 构建混合时间轴的 segments（start/end 替换为混合音频上的位置）
@@ -904,6 +904,7 @@ def _finish_resumed_audio(
         total_segments=len(segments),
         translated_segments=len(translated_indices),
         process_mode=identity["process_mode"],
+        speech_quality=collect_synthesis_reports(tts_audio_map),
     )
     video = identity["type"] == "video"
     update_task(
@@ -1023,7 +1024,7 @@ def _synthesis_resume(task_id):
     output_path = os.path.join(
         result_dir, f"{basename}_sentence.{config.OUTPUT_FORMAT}"
     )
-    bgm_path = task.get("_bgm_path", "") or None
+    bgm_path = (task.get("_bgm_path", "") or None) if task.get("keep_bgm", False) else None
     if (
         task.get("keep_bgm", False)
         and not bgm_path

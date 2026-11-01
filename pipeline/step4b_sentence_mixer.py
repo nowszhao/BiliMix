@@ -48,6 +48,18 @@ _COMPRESSOR_RELEASE_MS = getattr(config, "COMPRESSOR_RELEASE_MS", 50.0)
 _LIMITER_THRESHOLD_DB = getattr(config, "LIMITER_THRESHOLD_DB", -1.0)
 
 
+def _trim_edge_silence(audio: AudioSegment) -> AudioSegment:
+    """Remove only quiet outer padding, leaving 60ms around speech on each side."""
+    from pydub.silence import detect_leading_silence
+    if audio.dBFS == float('-inf'):
+        return audio
+    head = detect_leading_silence(audio, silence_threshold=-50, chunk_size=5)
+    tail = detect_leading_silence(audio.reverse(), silence_threshold=-50, chunk_size=5)
+    if head + tail >= len(audio):
+        return audio
+    return audio[max(0, head-60):len(audio)-max(0, tail-60)]
+
+
 def _normalize_tts_audio(audio: AudioSegment,
                          target_dbfs: float = _TTS_TARGET_DBFS) -> AudioSegment:
     """
@@ -57,13 +69,17 @@ def _normalize_tts_audio(audio: AudioSegment,
     对短句（如单字/两字应答）的感知响度归一化更精确。
     """
     import numpy as np
+    # Float/PCM24 input must not be interpreted as PCM16 bytes at its old width.
+    audio = audio.set_sample_width(2)
+    if len(audio) < 400:
+        return audio if audio.dBFS == float('-inf') else audio.apply_gain(min(12, target_dbfs-audio.dBFS))
     try:
         import pyloudnorm as pyln
     except ImportError:
         # pyloudnorm 不可用时回退到 pydub dBFS
         if audio.dBFS == float('-inf'):
             return audio
-        gain = target_dbfs - audio.dBFS
+        gain = min(12, target_dbfs - audio.dBFS)
         return audio.apply_gain(gain)
 
     # 将 pydub AudioSegment 转为 numpy 数组供 pyloudnorm 处理
@@ -71,6 +87,8 @@ def _normalize_tts_audio(audio: AudioSegment,
     # 归一化到 [-1, 1] 范围
     max_val = float(2 ** (audio.sample_width * 8 - 1))
     samples = samples / max_val
+    if audio.channels > 1:
+        samples = samples.reshape(-1, audio.channels)
 
     # 测量当前响度
     meter = pyln.Meter(audio.frame_rate)
@@ -78,14 +96,13 @@ def _normalize_tts_audio(audio: AudioSegment,
 
     # 计算需要的增益并应用
     if np.isfinite(current_loudness):
-        gain_db = _TARGET_LUFS - current_loudness
+        gain_db = min(12, _TARGET_LUFS - current_loudness)
         gain_linear = 10.0 ** (gain_db / 20.0)
         samples = samples * gain_linear
     # else: 静音片段，不做增益
 
     # 转回 pydub AudioSegment
-    samples = np.clip(samples, -1.0, 1.0)
-    samples_int = (samples * max_val).astype(np.int16)
+    samples_int = np.clip(samples * max_val, -32768, 32767).astype(np.int16)
     return AudioSegment(
         samples_int.tobytes(),
         frame_rate=audio.frame_rate,
@@ -268,7 +285,7 @@ def mix_sentence_audio(
     # Load the next leading silence lazily; silence is measured, not assumed.
     edge_silence = {}
     for idx in sorted_indices:
-        clip = AudioSegment.from_file(tts_audio_map[idx])
+        clip = _trim_edge_silence(AudioSegment.from_file(tts_audio_map[idx]))
         edge_silence[idx] = (min(500, detect_leading_silence(clip, silence_threshold=-45, chunk_size=5)),
                              min(500, detect_leading_silence(clip.reverse(), silence_threshold=-45, chunk_size=5)))
     for i, seg_idx in enumerate(sorted_indices):
@@ -277,7 +294,7 @@ def mix_sentence_audio(
         chinese_text = translations.get(seg_idx, "")
 
         if tts_path and os.path.exists(tts_path):
-            tts_clip = AudioSegment.from_file(tts_path)
+            tts_clip = _trim_edge_silence(AudioSegment.from_file(tts_path))
             tts_clip = tts_clip.set_channels(target_channels)
             if tts_clip.frame_rate != target_sr:
                 tts_clip = tts_clip.set_frame_rate(target_sr)

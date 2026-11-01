@@ -13,6 +13,11 @@ def _content(path, size, mtime_ns):
 def model_fingerprint(root, worker, config_path):
     files = {Path(worker), Path(config_path)}
     root = Path(root)
+    # Engine code and the worker's narration policy affect phrasing and seeds,
+    # even when weights and YAML configuration have not changed.
+    for code_root in (root/'confuciustts', root/'external'):
+        files.update(code_root.rglob('*.py'))
+    files.add(Path(__file__).with_name('tts_narration.py'))
     for model_root in (root, root/"checkpoints"):
         for pattern in ("*.pt", "*.pth", "*.safetensors", "*.ckpt", "*.bin"):
             files.update(model_root.rglob(pattern))
@@ -25,7 +30,7 @@ def model_fingerprint(root, worker, config_path):
 
 
 def synthesis_key(text, language, reference, model_id, parameters, speaker="", reference_mode="speaker"):
-    return canonical_hash({"schema": 3, "text": text, "language": language,
+    return canonical_hash({"schema": 4, "text": text, "language": language,
                            "reference_sha256": file_sha256(reference), "speaker": speaker,
                            "model": model_id, "parameters": parameters, "reference_mode": reference_mode,
                            "reference_policy": REFERENCE_POLICY_VERSION})

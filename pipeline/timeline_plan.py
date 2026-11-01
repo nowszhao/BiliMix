@@ -4,12 +4,12 @@ import re
 
 def additional_pause_ms(current, following, tail_ms=0, head_ms=0):
     boundary = current.get("boundary_after", "sentence_end")
-    if boundary == "continuation":
-        desired = 0
-    elif current.get("speaker") != following.get("speaker"):
-        desired = 220
+    if boundary == "turn_end" or current.get("speaker") != following.get("speaker"):
+        desired = 300
+    elif boundary == "continuation":
+        desired = 100
     else:
-        desired = 150
+        desired = 220
     return max(0, desired - tail_ms - head_ms)
 
 

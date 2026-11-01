@@ -32,6 +32,14 @@ import threading
 import time
 
 from core import config
+from pipeline.tts_narration import cached_synthesis_valid
+
+
+def _require_complete(jobs, audio_map):
+    missing = [job['segment_index'] for job in jobs if job['segment_index'] not in audio_map]
+    if missing:
+        raise RuntimeError(f'TTS 合成或节奏检查失败，缺少完整话语 {missing}；禁止交付部分配音')
+    return audio_map
 
 
 def _get_confucius_root() -> str:
@@ -79,7 +87,7 @@ def _synthesize_parallel(
     for i, chunk in enumerate(chunks):
         sub_task = {
             "config_path": config_path,
-            "device": env.get("CONFUCIUS4_TTS_DEVICE", "cpu"),
+            "device": getattr(config, "CONFUCIUS4_TTS_DEVICE", "cpu"),
             "jobs": [{"text": j["text"], "ref_audio": j["ref_audio"],
                       "output_path": j["output_path"],
                       "lang": j.get("lang", "zh")} for j in chunk],
@@ -127,8 +135,11 @@ def _synthesize_parallel(
         except Exception:
             pass
 
+    readers = []
     for i in range(num_workers):
-        threading.Thread(target=_drain, args=(i,), daemon=True).start()
+        reader = threading.Thread(target=_drain, args=(i,), daemon=True)
+        reader.start()
+        readers.append(reader)
 
     # Register for cancellation
     if task_id:
@@ -145,7 +156,7 @@ def _synthesize_parallel(
     _last_progress_cb = 0  # throttle
 
     def _count_disk_all():
-        return sum(1 for j in pending_jobs if os.path.exists(j["output_path"]))
+        return sum(1 for j in pending_jobs if cached_synthesis_valid(j["output_path"]))
 
     try:
         while True:
@@ -184,6 +195,14 @@ def _synthesize_parallel(
                 break
 
     finally:
+        # Validation/callback exceptions must not release the shared execution
+        # slot while parallel model processes are still running.
+        for proc in procs:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+        for reader in readers:
+            reader.join(timeout=10)
         if task_id:
             try:
                 from core.task_manager import task_subprocesses
@@ -206,7 +225,7 @@ def _synthesize_parallel(
             failed_workers.append(i)
 
     for job in pending_jobs:
-        if job["segment_index"] not in tts_map and os.path.exists(job["output_path"]):
+        if job["segment_index"] not in tts_map and cached_synthesis_valid(job["output_path"]):
             tts_map[job["segment_index"]] = job["output_path"]
 
     if progress_cb:
@@ -216,7 +235,7 @@ def _synthesize_parallel(
     if failed_workers:
         print(f"  [警告] Worker {failed_workers} 异常退出，已从磁盘回收结果")
 
-    return tts_map
+    return _require_complete(pending_jobs, tts_map)
 
 
 def synthesize_sentences_with_confucius_tts(
@@ -314,7 +333,7 @@ def synthesize_sentences_with_confucius_tts(
     pending_jobs = []
     cached_results = {}
     for job in jobs:
-        if os.path.exists(job["output_path"]):
+        if cached_synthesis_valid(job["output_path"]):
             cached_results[job["segment_index"]] = job["output_path"]
             print(f"  [缓存] seg[{job['segment_index']}] {job['text'][:20]}...")
         else:
@@ -430,7 +449,7 @@ def synthesize_sentences_with_confucius_tts(
     _last_progress_cb = 0  # throttle progress callbacks
 
     def _count_disk():
-        return sum(1 for j in pending_jobs if os.path.exists(j["output_path"]))
+        return sum(1 for j in pending_jobs if cached_synthesis_valid(j["output_path"]))
 
     try:
         while True:
@@ -534,7 +553,7 @@ def synthesize_sentences_with_confucius_tts(
             print(f"[Step3-Confucius] Worker 异常退出 (code={proc.returncode})")
             # 尝试从磁盘回收
             for job in pending_jobs:
-                if os.path.exists(job["output_path"]):
+                if cached_synthesis_valid(job["output_path"]):
                     tts_map[job["segment_index"]] = job["output_path"]
             if len(tts_map) == len(cached_results):
                 # 磁盘也回收不到任何文件 → 真正失败
@@ -543,7 +562,7 @@ def synthesize_sentences_with_confucius_tts(
 
     # 从磁盘回收生成的音频
     for job in pending_jobs:
-        if job["segment_index"] not in tts_map and os.path.exists(job["output_path"]):
+        if job["segment_index"] not in tts_map and cached_synthesis_valid(job["output_path"]):
             tts_map[job["segment_index"]] = job["output_path"]
 
     # 尝试从 stdout 解析 JSON 结果
@@ -553,7 +572,7 @@ def synthesize_sentences_with_confucius_tts(
             result_json = json.loads(stdout_lines[-1])
             if result_json.get("results"):
                 for wr, job in zip(result_json["results"], pending_jobs):
-                    if wr.get("output_path") and os.path.exists(wr["output_path"]):
+                    if wr.get("output_path") and cached_synthesis_valid(wr["output_path"]):
                         tts_map[job["segment_index"]] = wr["output_path"]
         except (json.JSONDecodeError, IndexError):
             pass
@@ -563,4 +582,4 @@ def synthesize_sentences_with_confucius_tts(
 
     completed = len(tts_map) - len(cached_results)
     print(f"[Step3-Confucius] 合成完成: {len(tts_map)}/{total} 条 (新合成 {completed} 条)")
-    return tts_map
+    return _require_complete(jobs, tts_map)

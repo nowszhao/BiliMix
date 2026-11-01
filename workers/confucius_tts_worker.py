@@ -12,13 +12,23 @@ Confucius4-TTS-CPU Worker — 批量句子级 TTS 合成
     python workers/confucius_tts_worker.py <task_file.json>
 """
 import json
+import hashlib
 import os
+import random
 import sys
 import time
 import traceback
 
-import soundfile as sf
 import torch
+import numpy as np
+
+# Keep the worker runnable from any directory, including the engine checkout.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pipeline.tts_narration import (
+    synthesize_narration, write_synthesis, cached_synthesis_valid,
+    NarrationQualityError, report_path,
+)
+from core.files import atomic_json
 
 # 将 Confucius4-TTS-CPU 项目根目录加入 sys.path
 _CONFUCIUS_ROOT = os.environ.get(
@@ -129,7 +139,7 @@ def main():
                 continue
 
             # 检查缓存
-            if os.path.exists(output_path):
+            if cached_synthesis_valid(output_path):
                 print(f"[ConfuciusWorker] [{i+1}/{total}] 缓存: {text[:30]}...", flush=True, file=sys.stderr)
                 results.append({"output_path": output_path, "error": None})
                 success += 1
@@ -140,16 +150,25 @@ def main():
                   f"(ref: {os.path.basename(ref_audio)})", flush=True, file=sys.stderr)
 
             try:
-                audio = model.generate(
-                    text=text,
-                    lang=lang,
-                    prompt_wav=ref_audio,
-                    **gen_kwargs,
+                with open(ref_audio, 'rb') as reference:
+                    reference_hash = hashlib.sha256(reference.read()).hexdigest()
+                # Normalize before planning so spoken numbers also count toward
+                # the clause limit. generate() may safely normalize again.
+                spoken_text = model.normalizer.normalize(text, language=lang)
+                def generate(chunk, seed, limit):
+                    random.seed(seed)
+                    np.random.seed(seed)
+                    torch.manual_seed(seed)
+                    if torch.cuda.is_available():
+                        torch.cuda.manual_seed_all(seed)
+                    audio = model.generate(text=chunk, lang=lang, prompt_wav=ref_audio,
+                        max_text_tokens_per_segment=limit, **gen_kwargs)
+                    return audio.cpu().squeeze(0).numpy()
+                audio_np, quality = synthesize_narration(
+                    spoken_text, lang, reference_hash, generate, model.sample_rate,
+                    seed_context=json.dumps(gen_kwargs, sort_keys=True),
                 )
-                # audio: torch.Tensor shape (1, T_audio)
-                audio_np = audio.cpu().squeeze(0).numpy()
-                os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-                sf.write(output_path, audio_np, model.sample_rate)
+                write_synthesis(output_path, audio_np, model.sample_rate, quality)
                 elapsed = time.time() - t_start
                 print(f"[ConfuciusWorker] [{i+1}/{total}] 完成 ({elapsed:.1f}s) "
                       f"-> {os.path.basename(output_path)}", flush=True, file=sys.stderr)
@@ -157,6 +176,8 @@ def main():
                 success += 1
 
             except Exception as e:
+                if isinstance(e, NarrationQualityError):
+                    atomic_json(report_path(output_path), {**e.report, 'error': str(e)})
                 elapsed = time.time() - t_start
                 print(f"[ConfuciusWorker] [{i+1}/{total}] 失败 ({elapsed:.1f}s): {e}", flush=True, file=sys.stderr)
                 traceback.print_exc()
