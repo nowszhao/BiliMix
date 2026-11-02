@@ -1,0 +1,62 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 640
+PlayResY: 360
+ScaledBorderAndShadow: yes
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Chinese,Noto Sans CJK SC,40,&H0000D7FF&,&H000000FF&,&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,2,0,2,30,30,20,1
+Style: English,Noto Sans CJK SC,30,&H00E6E6E6&,&H000000FF&,&H00000000&,&H40000000&,0,0,0,0,100,100,0,0,3,2,0,2,30,30,20,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:01.22,Chinese,SPEAKER_01,0,0,0,,{\rChinese\q2}专门送给你。\N{\rEnglish\q2}Just for you.
+Dialogue: 0,0:00:01.40,0:00:03.24,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}不睡觉的国王。\N{\rEnglish\q2}The King of No Sleep.
+Dialogue: 0,0:00:03.37,0:00:04.96,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}在遥远的晚\N{\rEnglish\q2}Far away in the Goodnight
+Dialogue: 0,0:00:04.96,0:00:06.22,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}安王国里，\N{\rEnglish\q2}Kingdom, there lived
+Dialogue: 0,0:00:06.22,0:00:07.62,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}住着一群爱睡\N{\rEnglish\q2}several little animals
+Dialogue: 0,0:00:07.62,0:00:08.82,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}觉的小动物。\N{\rEnglish\q2}who loved to sleep.
+Dialogue: 0,0:00:08.98,0:00:11.79,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}大家每天早早上床睡觉，\N{\rEnglish\q2}Everyone went to bed early
+Dialogue: 0,0:00:11.79,0:00:14.18,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}第二天又早早起床。\N{\rEnglish\q2}and woke up early every day.
+Dialogue: 0,0:00:14.34,0:00:16.43,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}日子过得多快乐呀！\N{\rEnglish\q2}What a happy life it was,
+Dialogue: 0,0:00:16.43,0:00:18.60,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}可有一天，不睡觉\N{\rEnglish\q2}until one day... The king of
+Dialogue: 0,0:00:18.60,0:00:20.84,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}的国王来到了这里。\N{\rEnglish\q2}no sleep came to the kingdom.
+Dialogue: 0,0:00:21.11,0:00:23.22,Chinese,SPEAKER_01,0,0,0,,{\rChinese\q2}睡觉一点儿也不好玩！\N{\rEnglish\q2}Sleeping’s no fun at all.
+Dialogue: 0,0:00:23.22,0:00:25.12,Chinese,SPEAKER_01,0,0,0,,{\rChinese\q2}我永远都不要睡觉！\N{\rEnglish\q2}I’ll never sleep.
+Dialogue: 0,0:00:25.34,0:00:26.61,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}这位国王不\N{\rEnglish\q2}The king of no sleep not
+Dialogue: 0,0:00:26.61,0:00:27.94,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}仅自己讨厌睡\N{\rEnglish\q2}only hated going to sleep
+Dialogue: 0,0:00:27.94,0:00:29.31,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}觉，还见不\N{\rEnglish\q2}himself, but he also hated
+Dialogue: 0,0:00:29.31,0:00:30.63,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}得别人睡觉。\N{\rEnglish\q2}seeing anyone else sleep.
+Dialogue: 0,0:00:30.74,0:00:32.47,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}一看到晚安王国\N{\rEnglish\q2}When he saw all the little
+Dialogue: 0,0:00:32.47,0:00:34.07,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}的小动物们睡得\N{\rEnglish\q2}animals in the goodnight
+Dialogue: 0,0:00:34.07,0:00:35.61,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}香香的，做着甜\N{\rEnglish\q2}kingdom fast asleep and
+Dialogue: 0,0:00:35.61,0:00:37.07,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}甜的美梦，他就\N{\rEnglish\q2}dreaming sweet dreams,
+Dialogue: 0,0:00:37.07,0:00:38.94,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}气不打一处来。\N{\rEnglish\q2}he instantly grew irritated.
+Dialogue: 0,0:00:39.19,0:00:41.50,Chinese,SPEAKER_01,0,0,0,,{\rChinese\q2}不许睡觉！快起来，陪我玩！\N{\rEnglish\q2}No sleeping! Wake up and play!
+Dialogue: 0,0:00:41.73,0:00:43.27,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}第一天，不睡\N{\rEnglish\q2}On the first day, the
+Dialogue: 0,0:00:43.27,0:00:44.87,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}觉的国王偷偷\N{\rEnglish\q2}king of no sleep snuck
+Dialogue: 0,0:00:44.87,0:00:46.19,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}钻进大家的梦\N{\rEnglish\q2}into everyone’s
+Dialogue: 0,0:00:46.19,0:00:47.94,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}里捣乱，把\N{\rEnglish\q2}dreams to cause trouble,
+Dialogue: 0,0:00:47.94,0:00:49.32,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}甜美的梦境搅\N{\rEnglish\q2}turning their sweet
+Dialogue: 0,0:00:49.32,0:00:50.64,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}得吵吵闹闹、\N{\rEnglish\q2}dreams into noisy,
+Dialogue: 0,0:00:50.64,0:00:52.02,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}乱七八糟。\N{\rEnglish\q2}upside-down dreams.
+Dialogue: 0,0:00:52.14,0:00:53.75,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}第二天，他挨\N{\rEnglish\q2}On the second day, the king
+Dialogue: 0,0:00:53.75,0:00:55.42,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}家挨户地敲门，\N{\rEnglish\q2}of no sleep knocked on every
+Dialogue: 0,0:00:55.42,0:00:57.04,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}把王国里的小\N{\rEnglish\q2}door in the kingdom, waking
+Dialogue: 0,0:00:57.04,0:00:58.53,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}动物全都叫醒，\N{\rEnglish\q2}up all the little animals
+Dialogue: 0,0:00:58.53,0:01:00.08,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}逼着大家陪他\N{\rEnglish\q2}and making them play games
+Dialogue: 0,0:01:00.08,0:01:01.51,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}玩了一整夜。\N{\rEnglish\q2}with him all night long.
+Dialogue: 0,0:01:01.64,0:01:03.57,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}第三天，大家刚准\N{\rEnglish\q2}On the third day, just as
+Dialogue: 0,0:01:03.57,0:01:05.58,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}备上床睡觉，不睡\N{\rEnglish\q2}everyone was getting ready
+Dialogue: 0,0:01:05.58,0:01:07.35,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}觉的国王就念起\N{\rEnglish\q2}for bed, the king of no
+Dialogue: 0,0:01:07.35,0:01:09.52,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}了一道魔法咒语。\N{\rEnglish\q2}sleep chanted a magic spell.
+Dialogue: 0,0:01:09.71,0:01:12.10,Chinese,SPEAKER_01,0,0,0,,{\rChinese\q2}叽里咂，哇咔哇！\N{\rEnglish\q2}Zip-a-zap, walk-a-wap!
+Dialogue: 0,0:01:12.36,0:01:15.33,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}只听“噗”的一声，被子、\N{\rEnglish\q2}And poof! All the quilts,
+Dialogue: 0,0:01:15.33,0:01:18.55,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}枕头，还有床，全都不见了！\N{\rEnglish\q2}pillows, and beds vanished.
+Dialogue: 0,0:01:18.68,0:01:20.77,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}大家找自己的被褥，\N{\rEnglish\q2}Everyone spent the whole night
+Dialogue: 0,0:01:20.77,0:01:22.59,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}整整找了一夜。\N{\rEnglish\q2}looking for their bedding.
+Dialogue: 0,0:01:22.69,0:01:24.96,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}到了第四天，所有小\N{\rEnglish\q2}By the fourth day,
+Dialogue: 0,0:01:24.96,0:01:27.22,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}动物都累坏了，困得\N{\rEnglish\q2}everyone was so tired they
+Dialogue: 0,0:01:27.22,0:01:29.74,Chinese,SPEAKER_00,0,0,0,,{\rChinese\q2}连眼睛都快睁不开了。\N{\rEnglish\q2}could barely stay awake.

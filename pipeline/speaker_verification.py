@@ -55,12 +55,30 @@ def _local_winner(evidence, duration):
 def verified_word_assignments(analysis, evidence):
     """Verify each voiced run; a parent winner never fills an unknown run."""
     from pipeline.dubbing_plan import known_speaker
-    if evidence.get('missing_reference_speakers'):
+    missing = set(evidence.get('missing_reference_speakers') or [])
+    units = evidence.get('units') or []
+    # A partial reference set is still usable: an unrepresented voice can only
+    # poison the windows it actually appears in, so those windows are skipped
+    # instead of discarding every verified voice in the file.
+    if missing and not units:
         return {}
     catalog = {w['word_id']: w for w in analysis['words']}
     output = {}
-    for unit in evidence['units']:
+    for unit in units:
         ids = unit['word_ids']
+        blocked = False
+        for i in ids:
+            word = catalog[i]
+            # An unassigned word may well be the voice we cannot compare against,
+            # so no window containing one is ever resolved from the remaining refs.
+            if missing and word['speaker'] is None:
+                blocked = True
+                break
+            if word['speaker'] in missing or set(word.get('speaker_candidates') or []) & missing:
+                blocked = True
+                break
+        if blocked:
+            continue
         duration = catalog[ids[-1]]['end']-catalog[ids[0]]['start']
         winner, method = _local_winner(unit, duration)
         runs = unit.get('runs') or []

@@ -41,7 +41,7 @@ def main():
         e=feature(start,end)
         return sorted([(s,round(float(e@r),6)) for s,r in refs.items()],key=lambda p:-p[1]) if e is not None else []
     units=[]
-    spans = utterance_spans(asr) if not missing else []
+    spans = utterance_spans(asr) if refs else []
     def progress(completed):
         print(json.dumps(dict(event='speaker_verification', completed=completed, total=len(spans))), flush=True)
     progress(0)

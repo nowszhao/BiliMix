@@ -8,9 +8,12 @@ import statistics
 from pipeline.dubbing_plan import file_sha256, known_speaker, canonical_hash
 
 
-ANALYSIS_REVISION = 6
+ANALYSIS_REVISION = 7
 
 MIN_REFERENCE_SECONDS = 3.5
+# A short role that only ever speaks one clipped line still owns a voice; using
+# its own seconds beats borrowing someone else's timbre.
+MIN_REFERENCE_RUN_SECONDS = 1.0
 
 
 def _project_word(start, end, turns):
@@ -172,7 +175,8 @@ def _comfortable_reference(candidates, audio_path):
     return best
 
 
-def _select_references(words, turns, native, require_verified, audio_path=None, previous=None):
+def _reference_candidates(words, turns, native, require_verified,
+                          minimum=MIN_REFERENCE_RUN_SECONDS):
     candidates = {}
     for turn in turns:
         if not known_speaker(turn["speaker"]):
@@ -197,7 +201,7 @@ def _select_references(words, turns, native, require_verified, audio_path=None, 
         for run in runs:
             start = run[0]["start"]
             owned = [word for word in run if word["end"] <= start+10]
-            if not owned or owned[-1]["end"]-start < 2:
+            if not owned or owned[-1]["end"]-start < minimum:
                 continue
             end = owned[-1]["end"]
             if any(t["speaker"] != turn["speaker"] and t["start"] < end and t["end"] > start for t in native):
@@ -206,18 +210,34 @@ def _select_references(words, turns, native, require_verified, audio_path=None, 
                 dict(speaker=turn["speaker"], start=start, end=end,
                      text=" ".join(w["text"] for w in owned),
                      analysis_verified=require_verified))
+    return candidates
+
+
+def _select_references(words, turns, native, require_verified, audio_path=None, previous=None):
+    candidates = _reference_candidates(words, turns, native, require_verified)
+    if require_verified:
+        # Partial acoustic coverage must not erase a voice whose words stayed
+        # unverified: it keeps a reference taken from its own clean run, marked
+        # as unverified instead of disappearing from the analysis.
+        for speaker, items in _reference_candidates(words, turns, native, False).items():
+            candidates.setdefault(speaker, items)
     references = {}
-    for speaker, items in candidates.items():
+    for speaker in sorted(set(candidates) | set(previous or {})):
+        items = candidates.get(speaker) or []
         previous_choice = (previous or {}).get(speaker)
-        comfortable = _comfortable_reference(items, audio_path)
+        comfortable = _comfortable_reference(items, audio_path) if items else None
         if comfortable is not None:
             references[speaker] = comfortable
+            continue
+        kept = next((item for item in items
+                     if previous_choice
+                     and abs(item["start"] - previous_choice["start"]) < 0.01
+                     and abs(item["end"] - previous_choice["end"]) < 0.01), None)
+        if kept is not None:
+            references[speaker] = kept
         elif previous_choice and previous_choice.get("text"):
-            kept = next((item for item in items
-                         if abs(item["start"] - previous_choice["start"]) < 0.01
-                         and abs(item["end"] - previous_choice["end"]) < 0.01), None)
-            references[speaker] = kept or previous_choice
-        else:
+            references[speaker] = previous_choice
+        elif items:
             references[speaker] = max(items, key=lambda item: item["end"] - item["start"])
     return references
 
