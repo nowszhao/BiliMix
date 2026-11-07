@@ -157,11 +157,34 @@ def test_unusable_synthesis_cannot_be_published(bad_audio):
     assert len(error.value.report['chunks'][0]['attempts']) == 3
 
 
-def test_short_and_mixed_language_texts_do_not_use_naive_han_rate():
+@pytest.mark.parametrize('text,seconds', [
+    ('好。', .8), ('这个 API returns a JSON response with status OK。', 4),
+    ('版本 2。', 4), ('这是カタカナ。', 4),
+])
+def test_short_and_mixed_language_texts_do_not_use_naive_han_rate(text, seconds):
     from pipeline.tts_narration import synthesize_narration
-    for text in ('好。', '这个 API returns a JSON response with status OK。'):
-        _, report = synthesize_narration(text,'zh','A',lambda *a:waveform(2),24000)
-        assert report['chunks'][0]['attempts'][0]['chars_per_second'] is None
+    _, report = synthesize_narration(text, 'zh', 'A', lambda *a: waveform(seconds), 24000)
+    assert len(report['chunks'][0]['attempts']) == 1
+    assert report['chunks'][0]['attempts'][0]['chars_per_second'] is None
+
+
+def test_drawn_out_short_reply_retries_without_speeding_up_audio():
+    from pipeline.tts_narration import synthesize_narration
+    candidates = iter([waveform(3), waveform(.5)])
+    audio, report = synthesize_narration('好的。', 'zh', 'same-reference',
+                                         lambda *args: next(candidates), 24000)
+    chunk = report['chunks'][0]
+    assert chunk['selected_attempt'] == 1
+    assert 'short_utterance_too_slow' in chunk['attempts'][0]['reasons']
+    assert len(audio) == 12000
+
+
+def test_short_reply_duration_check_excludes_silence():
+    from pipeline.tts_narration import synthesize_narration
+    samples = np.concatenate([np.zeros(24000), waveform(.6), np.zeros(24000),
+                              waveform(.6), np.zeros(24000)])
+    _, report = synthesize_narration('好，的。', 'zh', 'A', lambda *args: samples, 24000)
+    assert len(report['chunks'][0]['attempts']) == 1
 
 
 def test_atomic_synthesis_requires_matching_report_and_audio(tmp_path):

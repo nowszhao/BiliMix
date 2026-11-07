@@ -1,29 +1,9 @@
+"""Batch voice-cloning synthesis in supervised model subprocesses.
+
+Continuations, retries and direct TTS jobs all pass through this dispatcher.
+Fixed-reference Mandarin optionally uses an offline, duration-controlled model.
 """
-Step 3 (Confucius4-TTS-CPU): 声音克隆语音合成模块
-通过 subprocess 调用 Confucius4-TTS-CPU worker 进行零样本跨语言声音克隆。
-
-架构:
-  BiliMix ──subprocess──→ confucius_tts_worker.py
-                          ├── 加载 ConfuciusTTS 模型一次
-                          ├── 逐句合成中文 TTS
-                          │   ├── text: 待合成中文文本
-                          │   ├── prompt_wav: 参考音频（零样本音色克隆）
-                          │   └── lang: zh
-                          └── 输出 WAV 文件
-
-前置条件:
-  1. 已克隆 Confucius4-TTS-CPU:
-     git clone https://github.com/nowszhao/Confucius4-TTS-CPU.git
-  2. 已安装 Python 依赖（torch, transformers, safetensors 等）
-  3. 首次运行会自动从 HuggingFace 下载模型权重 (netease-youdao/Confucius4-TTS)
-
-特点:
-  - 零样本声音克隆，不需要微调
-  - 多语言支持（zh, en, ja, ko 等）
-  - 纯 CPU 推理（约 10x 实时速度）
-  - 音色克隆质量优秀
-"""
-import hashlib
+from dataclasses import dataclass
 import json
 import os
 import subprocess
@@ -32,7 +12,9 @@ import threading
 import time
 
 from core import config
+from pipeline.tts_cache import model_fingerprint, paced_model_fingerprint, synthesis_key
 from pipeline.tts_narration import cached_synthesis_valid
+from pipeline.tts_references import validate_reference_mode
 
 
 def _require_complete(jobs, audio_map):
@@ -52,13 +34,53 @@ def _get_confucius_root() -> str:
     return os.path.abspath(default)
 
 
+@dataclass
+class _Runtime:
+    script: str
+    python: str
+    env: dict
+    options: dict
+    model_id: str
+    cache_prefix: str
+    num_workers: int
+
+
+def _runtime(paced):
+    workers = os.path.join(config.BASE_DIR, "workers")
+    env = os.environ.copy()
+    device = config.CONFUCIUS4_TTS_DEVICE
+    if paced:
+        root = os.path.abspath(config.PACED_ZH_ROOT)
+        script = os.path.join(workers, "paced_mandarin_worker.py")
+        env["BILIMIX_PACED_ZH_ROOT"] = root
+        env.setdefault("OMP_NUM_THREADS", "2")
+        env.setdefault("MKL_NUM_THREADS", "2")
+        python = config.PACED_ZH_PYTHON or sys.executable
+        return _Runtime(script, python, env, {"device": device},
+                        paced_model_fingerprint(root, script), "paced_zh", 1)
+
+    root = _get_confucius_root()
+    script = os.path.join(workers, "confucius_tts_worker.py")
+    config_path = os.path.join(root, "config", "inference_config.yaml")
+    env["CONFUCIUS4_TTS_ROOT"] = root
+    options = {name: getattr(config, "CONFUCIUS4_TTS_" + name.upper())
+               for name in ("temperature", "top_p", "top_k", "num_beams",
+                            "repetition_penalty", "n_timesteps", "inference_cfg_rate", "device")}
+    options["config_path"] = config_path
+    return _Runtime(script, config.CONFUCIUS4_TTS_PYTHON or sys.executable, env, options,
+                    model_fingerprint(root, script, config_path), "confucius_tts",
+                    config.CONFUCIUS4_TTS_NUM_WORKERS)
+
+
+def _worker_task(options, jobs):
+    return {**options, "jobs": [{key: job[key] for key in ("text", "lang", "ref_audio", "output_path")}
+                                 for job in jobs]}
+
+
 def _synthesize_parallel(
     pending_jobs: list,
     num_workers: int,
-    config_path: str,
-    python_bin: str,
-    worker_script: str,
-    env: dict,
+    runtime: _Runtime,
     cache_dir: str,
     cancel_check,
     progress_cb,
@@ -79,34 +101,20 @@ def _synthesize_parallel(
             end = start + chunk_size
         chunks.append(pending_jobs[start:end])
 
-    print(f"[Step3-Confucius] 并行模式：{num_workers} 个 Worker，"
+    print(f"[Step3-TTS] 并行模式：{num_workers} 个 Worker，"
           f"分片 {[len(c) for c in chunks]}")
 
     # Write sub-task JSONs
     sub_task_files = []
     for i, chunk in enumerate(chunks):
-        sub_task = {
-            "config_path": config_path,
-            "device": getattr(config, "CONFUCIUS4_TTS_DEVICE", "cpu"),
-            "jobs": [{"text": j["text"], "ref_audio": j["ref_audio"],
-                      "output_path": j["output_path"],
-                      "lang": j.get("lang", "zh")} for j in chunk],
-            "temperature": getattr(config, "CONFUCIUS4_TTS_TEMPERATURE", 0.8),
-            "top_p": getattr(config, "CONFUCIUS4_TTS_TOP_P", 0.8),
-            "top_k": getattr(config, "CONFUCIUS4_TTS_TOP_K", 30),
-            "num_beams": getattr(config, "CONFUCIUS4_TTS_NUM_BEAMS", 3),
-            "repetition_penalty": getattr(config, "CONFUCIUS4_TTS_REPETITION_PENALTY", 10.0),
-            "n_timesteps": getattr(config, "CONFUCIUS4_TTS_N_TIMESTEPS", 25),
-            "inference_cfg_rate": getattr(config, "CONFUCIUS4_TTS_INFERENCE_CFG_RATE", 0.7),
-            "verbose": False,
-        }
+        sub_task = _worker_task(runtime.options, chunk)
         sub_file = os.path.join(cache_dir, f"confucius_tts_task_w{i}.json")
         with open(sub_file, "w", encoding="utf-8") as f:
             json.dump(sub_task, f, ensure_ascii=False, indent=2)
         sub_task_files.append(sub_file)
 
     # Set per-process thread limits
-    env_parallel = env.copy()
+    env_parallel = runtime.env.copy()
     threads_per = max(1, os.cpu_count() // (num_workers * 2))
     env_parallel["OMP_NUM_THREADS"] = str(threads_per)
     env_parallel["MKL_NUM_THREADS"] = str(threads_per)
@@ -114,7 +122,7 @@ def _synthesize_parallel(
     # Launch all workers
     procs = []
     for i, stf in enumerate(sub_task_files):
-        cmd = [python_bin, worker_script, stf]
+        cmd = [runtime.python, runtime.script, stf]
         print(f"  [Worker-{i}] {' '.join(cmd)}")
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -184,7 +192,7 @@ def _synthesize_parallel(
                 progress_cb(disk_count, total)
 
             if cancel_check and cancel_check():
-                print("[Step3-Confucius] 用户取消，终止所有 worker")
+                print("[Step3-TTS] 用户取消，终止所有 worker")
                 for p in procs:
                     if p.poll() is None:
                         p.kill(); p.wait()
@@ -231,7 +239,7 @@ def _synthesize_parallel(
     if progress_cb:
         progress_cb(total, total)
 
-    print(f"[Step3-Confucius] 并行合成完成: {len(tts_map) - len(cached_results)} 条新增")
+    print(f"[Step3-TTS] 并行合成完成: {len(tts_map) - len(cached_results)} 条新增")
     if failed_workers:
         print(f"  [警告] Worker {failed_workers} 异常退出，已从磁盘回收结果")
 
@@ -253,7 +261,7 @@ def synthesize_sentences_with_confucius_tts(
     reference_mode: str = "speaker",
 ) -> dict:
     """
-    使用 Confucius4-TTS-CPU 为句子翻译模式合成中文 TTS 音频。
+    按参考模式和目标语种选择合成引擎。
 
     每个完整配音句独立合成，参考音频由任务选择 speaker 或 segment 策略。
 
@@ -277,22 +285,46 @@ def synthesize_sentences_with_confucius_tts(
     os.makedirs(cache_dir, exist_ok=True)
 
     if not translated_indices or not translations:
-        print("[Step3-Confucius] 没有需要合成的句子")
+        print("[Step3-TTS] 没有需要合成的句子")
         return {}
 
-    total = len(translated_indices)
-    print(f"[Step3-Confucius] 准备为 {total} 个句子合成中文 TTS")
-
-    from pipeline.tts_cache import synthesis_key, model_fingerprint
-    from pipeline.tts_references import validate_reference_mode
     validate_reference_mode(reference_mode)
-    root = _get_confucius_root()
-    model_id = model_fingerprint(root, os.path.join(config.BASE_DIR, "workers", "confucius_tts_worker.py"),
-                                 os.path.join(root, "config", "inference_config.yaml"))
-    parameters = {name: getattr(config, "CONFUCIUS4_TTS_" + name.upper(), default)
-                  for name, default in (("temperature", .8), ("top_p", .8), ("top_k", 30),
-                      ("num_beams", 3), ("repetition_penalty", 10.), ("n_timesteps", 25),
-                      ("inference_cfg_rate", .7), ("device", "cpu"))}
+    batches = {}
+    for idx in translated_indices:
+        language = (seg_lang_map or {}).get(idx, lang)
+        paced = bool(config.PACED_ZH_ROOT and reference_mode == "speaker" and language == "zh")
+        batches.setdefault(paced, []).append(idx)
+
+    results = {}
+    done = 0
+    total = len(translated_indices)
+    for paced, indices in batches.items():
+        if cancel_check and cancel_check():
+            raise InterruptedError("任务已被用户终止")
+        def report_progress(current, group_total):
+            # Per-worker progress counts cache misses; include previously cached units.
+            progress_cb(done + len(indices) - group_total + current, total)
+
+        runtime = _runtime(paced)
+        batch = _synthesize_batch(
+            runtime, segments, indices, translations, cache_dir, ref_audio_map,
+            cancel_check, report_progress if progress_cb else None, task_id, lang,
+            seg_lang_map, reference_mode,
+        )
+        results.update(batch)
+        done += len(indices)
+        if progress_cb:
+            progress_cb(done, total)
+    return results
+
+
+def _synthesize_batch(runtime, segments, translated_indices, translations, cache_dir,
+                      ref_audio_map, cancel_check, progress_cb, task_id, lang,
+                      seg_lang_map, reference_mode):
+    total = len(translated_indices)
+    # Retain the existing Confucius cache keys; configuration contents already
+    # contribute to its model fingerprint.
+    parameters = {k: v for k, v in runtime.options.items() if k != "config_path"}
     # 构建合成任务
     jobs = []
     for seg_idx in translated_indices:
@@ -314,8 +346,8 @@ def synthesize_sentences_with_confucius_tts(
 
         # 缓存 key（含语种，避免切换 lang 时误命中旧缓存）
         speaker = segments[seg_idx].get("speaker", "") if isinstance(segments, list) and seg_idx < len(segments) else ""
-        cache_key = synthesis_key(chinese_text, eff_lang, ref_audio, model_id, parameters, speaker, reference_mode)
-        output_path = os.path.join(cache_dir, f"confucius_tts_{cache_key}.wav")
+        cache_key = synthesis_key(chinese_text, eff_lang, ref_audio, runtime.model_id, parameters, speaker, reference_mode)
+        output_path = os.path.join(cache_dir, f"{runtime.cache_prefix}_{cache_key}.wav")
 
         jobs.append({
             "text": chinese_text,
@@ -326,7 +358,7 @@ def synthesize_sentences_with_confucius_tts(
         })
 
     if not jobs:
-        print("[Step3-Confucius] 没有有效的合成任务")
+        print("[Step3-TTS] 没有有效的合成任务")
         return {}
 
     # 检查缓存
@@ -340,10 +372,10 @@ def synthesize_sentences_with_confucius_tts(
             pending_jobs.append(job)
 
     if not pending_jobs:
-        print(f"[Step3-Confucius] 全部命中缓存 ({len(cached_results)} 条)")
+        print(f"[Step3-TTS] 全部命中缓存 ({len(cached_results)} 条)")
         return cached_results
 
-    print(f"[Step3-Confucius] 需合成 {len(pending_jobs)} 条"
+    print(f"[Step3-TTS] 需合成 {len(pending_jobs)} 条"
           f"（缓存 {len(cached_results)} 条）")
 
     if cancel_check and cancel_check():
@@ -352,61 +384,31 @@ def synthesize_sentences_with_confucius_tts(
     if progress_cb:
         progress_cb(0, len(pending_jobs))
 
-    # 定位 worker 脚本和 Python 解释器
-    confucius_root = _get_confucius_root()
-    config_path = os.path.join(confucius_root, "config", "inference_config.yaml")
-    worker_script = os.path.join(config.BASE_DIR, "workers", "confucius_tts_worker.py")
-    python_bin = getattr(config, "CONFUCIUS4_TTS_PYTHON", "") or sys.executable
-    env = os.environ.copy()
-    env["CONFUCIUS4_TTS_ROOT"] = confucius_root
-
-    num_workers = getattr(config, "CONFUCIUS4_TTS_NUM_WORKERS", 1)
+    num_workers = runtime.num_workers
     num_workers = max(1, min(num_workers, len(pending_jobs)))
     num_workers = int(num_workers)
 
     if num_workers > 1:
         tts_map_partial = _synthesize_parallel(
-            pending_jobs, num_workers, config_path, python_bin, worker_script,
-            env, cache_dir, cancel_check, progress_cb, task_id, cached_results,
+            pending_jobs, num_workers, runtime, cache_dir, cancel_check, progress_cb, task_id, cached_results,
         )
         return tts_map_partial
 
     # ---- 单 Worker 模式 ----
-    worker_task = {
-        "config_path": config_path,
-        "device": getattr(config, "CONFUCIUS4_TTS_DEVICE", "cpu"),
-        "temperature": getattr(config, "CONFUCIUS4_TTS_TEMPERATURE", 0.8),
-        "top_p": getattr(config, "CONFUCIUS4_TTS_TOP_P", 0.8),
-        "top_k": getattr(config, "CONFUCIUS4_TTS_TOP_K", 30),
-        "num_beams": getattr(config, "CONFUCIUS4_TTS_NUM_BEAMS", 3),
-        "repetition_penalty": getattr(config, "CONFUCIUS4_TTS_REPETITION_PENALTY", 10.0),
-        "n_timesteps": getattr(config, "CONFUCIUS4_TTS_N_TIMESTEPS", 25),
-        "inference_cfg_rate": getattr(config, "CONFUCIUS4_TTS_INFERENCE_CFG_RATE", 0.7),
-        "verbose": False,
-        "jobs": [
-            {
-                "text": j["text"],
-                "ref_audio": j["ref_audio"],
-                "output_path": j["output_path"],
-                "lang": j.get("lang", "zh"),
-            }
-            for j in pending_jobs
-        ],
-    }
-
+    worker_task = _worker_task(runtime.options, pending_jobs)
     task_file = os.path.join(cache_dir, "confucius_tts_task.json")
     with open(task_file, "w", encoding="utf-8") as f:
         json.dump(worker_task, f, ensure_ascii=False, indent=2)
 
-    cmd = [python_bin, worker_script, task_file]
-    print(f"[Step3-Confucius] 启动 worker: {' '.join(cmd)}")
+    cmd = [runtime.python, runtime.script, task_file]
+    print(f"[Step3-TTS] 启动 worker: {' '.join(cmd)}")
 
     # 超时配置：CPU 推理较慢，每句约 30-90s
     per_job_timeout = getattr(config, "CONFUCIUS4_TTS_PER_JOB_TIMEOUT", 180)
     total_timeout = max(900, len(pending_jobs) * per_job_timeout + 600)
     stall_timeout = max(per_job_timeout * 2, 600)
 
-    print(f"[Step3-Confucius] 超时设置: 总计{total_timeout}s, "
+    print(f"[Step3-TTS] 超时设置: 总计{total_timeout}s, "
           f"单条卡住{stall_timeout}s ({len(pending_jobs)} 任务 × {per_job_timeout}s/任务 + 600s 模型加载)")
 
     import select as _select
@@ -418,7 +420,7 @@ def synthesize_sentences_with_confucius_tts(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=False,
-        env=env,
+        env=runtime.env,
     )
 
     # 后台线程持续读取 stdout，防止管道缓冲区填满导致 worker 死锁
@@ -475,37 +477,37 @@ def synthesize_sentences_with_confucius_tts(
                 progress_cb(disk_count, len(pending_jobs))
 
             if cancel_check and cancel_check():
-                print("[Step3-Confucius] 用户取消，终止 worker 进程")
+                print("[Step3-TTS] 用户取消，终止 worker 进程")
                 proc.kill()
                 proc.wait()
                 raise InterruptedError("任务已被用户终止")
 
             elapsed = time.time() - start_time
             if elapsed > total_timeout:
-                print(f"[Step3-Confucius] 总超时 ({elapsed:.0f}s > {total_timeout}s)，终止 worker")
+                print(f"[Step3-TTS] 总超时 ({elapsed:.0f}s > {total_timeout}s)，终止 worker")
                 proc.kill()
                 proc.wait()
                 raise RuntimeError(
-                    f"Confucius4-TTS worker 总超时 ({elapsed:.0f}s)，"
+                    f"{os.path.basename(runtime.script)} 总超时 ({elapsed:.0f}s)，"
                     f"已完成 {disk_count}/{len(pending_jobs)} 条")
 
             stall_elapsed = time.time() - last_output_time
             if stall_elapsed > stall_timeout:
                 disk_done = _count_disk()
                 if disk_done >= len(pending_jobs):
-                    print(f"[Step3-Confucius] Worker 卡住 ({stall_elapsed:.0f}s 无输出)，"
+                    print(f"[Step3-TTS] Worker 卡住 ({stall_elapsed:.0f}s 无输出)，"
                           f"但磁盘上已有 {disk_done}/{len(pending_jobs)} 个文件，强制终止并继续")
                     proc.kill()
                     proc.wait()
                     worker_stall_but_done = True
                     break
                 else:
-                    print(f"[Step3-Confucius] Worker 卡住 ({stall_elapsed:.0f}s 无输出)，"
+                    print(f"[Step3-TTS] Worker 卡住 ({stall_elapsed:.0f}s 无输出)，"
                           f"磁盘 {disk_done}/{len(pending_jobs)}，终止 worker")
                     proc.kill()
                     proc.wait()
                     raise RuntimeError(
-                        f"Confucius4-TTS worker 卡住 ({stall_elapsed:.0f}s 无输出)，"
+                        f"{os.path.basename(runtime.script)} 卡住 ({stall_elapsed:.0f}s 无输出)，"
                         f"已完成 {disk_done}/{len(pending_jobs)} 条")
 
             if proc.poll() is not None and not ready:
@@ -550,7 +552,7 @@ def synthesize_sentences_with_confucius_tts(
     if not worker_stall_but_done:
         if proc.returncode != 0:
             stderr_tail = "\n".join(stderr_lines[-10:]) if stderr_lines else "无日志"
-            print(f"[Step3-Confucius] Worker 异常退出 (code={proc.returncode})")
+            print(f"[Step3-TTS] Worker 异常退出 (code={proc.returncode})")
             # 尝试从磁盘回收
             for job in pending_jobs:
                 if cached_synthesis_valid(job["output_path"]):
@@ -558,7 +560,7 @@ def synthesize_sentences_with_confucius_tts(
             if len(tts_map) == len(cached_results):
                 # 磁盘也回收不到任何文件 → 真正失败
                 raise RuntimeError(
-                    f"Confucius4-TTS worker 异常退出 (code={proc.returncode}):\n{stderr_tail}")
+                    f"{os.path.basename(runtime.script)} 异常退出 (code={proc.returncode}):\n{stderr_tail}")
 
     # 从磁盘回收生成的音频
     for job in pending_jobs:
@@ -581,5 +583,5 @@ def synthesize_sentences_with_confucius_tts(
         progress_cb(len(pending_jobs), len(pending_jobs))
 
     completed = len(tts_map) - len(cached_results)
-    print(f"[Step3-Confucius] 合成完成: {len(tts_map)}/{total} 条 (新合成 {completed} 条)")
+    print(f"[Step3-TTS] 合成完成: {len(tts_map)}/{total} 条 (新合成 {completed} 条)")
     return _require_complete(jobs, tts_map)

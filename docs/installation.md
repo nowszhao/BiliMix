@@ -92,3 +92,43 @@ python scripts/release.py --output dist
 构建会检查共享字幕布局、生成 SDK wheel、Skill ZIP 和完整源码，写出版本与 SHA256 清单。成功后发布目录整体替换，仅保留当前发布内容；构建失败保留现有发布目录。
 
 当前统一 Skill 是 `nows-ytb-dubbing`。只安装 Skill ZIP 时可直接运行其中的 `scripts/workflow.py setup --workdir <项目目录>`，使用随包轻量 SDK wheel 初始化隔离客户端环境，无须在另一台电脑上寻找 BiliMix 源码路径。随后按 SKILL.md 的单一入口完成 FULL、精翻和配音。setup 安装客户端工具；它不在服务端部署模型或重启服务。
+
+## 固定中文的音素时长控制
+
+固定参考中文采用 MeloTTS 音素时长预测与 OpenVoice V2 音色转换。单个发音音素上限为 0.32 秒，适用于普通叙述。刻意拖长的感叹、强调和情绪化发音会受到约束，音色转换也可能改变音质细节和情绪表达，正式使用前应试听验收。
+
+服务端可将 Python 3.12 本体独立安装在 `/opt/bilimix/python`，再用其解释器创建以下虚拟环境；使用系统 Python 3.11 的安装方式如下。
+
+CPU 服务使用固定模型目录 `/opt/bilimix/models/paced-zh` 和独立解释器 `/opt/bilimix/venvs/paced-zh/bin/python`。以下命令在 BiliMix 根目录运行。
+
+```bash
+python3.11 -m venv /opt/bilimix/venvs/paced-zh
+/opt/bilimix/venvs/paced-zh/bin/python -m pip install \
+  --index-url https://download.pytorch.org/whl/cpu torch==2.8.0 torchaudio==2.8.0
+/opt/bilimix/venvs/paced-zh/bin/python -m pip install -r requirements-paced-zh.txt
+/opt/bilimix/venvs/paced-zh/bin/python -m pip install --no-deps \
+  git+https://github.com/myshell-ai/MeloTTS.git@209145371cff8fc3bd60d7be902ea69cbdb7965a \
+  git+https://github.com/myshell-ai/OpenVoice.git@74a1d147b17a8c3092dd5430504bd83ef6c7eb23
+/opt/bilimix/venvs/paced-zh/bin/python scripts/prepare_paced_zh.py \
+  --output /opt/bilimix/models/paced-zh
+```
+
+准备命令联网下载固定版本声学模型及前端资源，推理进程从模型包的 `frontend` 目录离线读取。Melo 的英文音素模块在导入时使用日文 tokenizer，因此准备过程也下载其 tokenizer。缺少资源会明确失败。
+
+通过 systemd 持久配置，模型进程使用独立环境。部署者在 `/etc/bilimix/paced-zh.env` 写入以下两项，并将文件权限设为 0600。
+
+```ini
+BILIMIX_PACED_ZH_ROOT=/opt/bilimix/models/paced-zh
+BILIMIX_PACED_ZH_PYTHON=/opt/bilimix/venvs/paced-zh/bin/python
+```
+
+在 `/etc/systemd/system/bilimix.service.d/paced-zh.conf` 写入以下内容，在任务队列空闲时执行 `systemctl daemon-reload && systemctl restart bilimix.service`。
+
+```ini
+[Service]
+EnvironmentFile=/etc/bilimix/paced-zh.env
+```
+
+新提交的固定参考中文及独立中文 TTS 使用该后端。分段参考和其他语种使用 Confucius。质量报告的 `engine` 应为 `paced_mandarin`，`timing.synthesis_seconds` 记录每段实际生成耗时，`guide_seconds` 与 `converted_seconds` 记录音色转换前后时长。更换后端、模型包内容或时长控制策略会更新合成缓存身份。
+
+每批任务加载一次模型，逐句复用；固定参考的音色特征按参考内容哈希在当前批次缓存。冷启动包含模型加载和前端首次初始化，长任务可摊薄该开销。CPU Worker 默认使用两条 OMP/MKL 线程，可在服务环境中用 `OMP_NUM_THREADS`、`MKL_NUM_THREADS` 覆盖。实际吞吐取决于 CPU、句长、人物数和输出时长。

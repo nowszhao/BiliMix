@@ -1,8 +1,8 @@
 """Reproducible narration, conservative acoustic checks and committed TTS files.
 
 No model is loaded here. The worker supplies generate(text, seed, segment_limit).
-Rate checks are a heuristic for sufficiently long, predominantly Chinese text;
-they cannot verify pronunciation, speaker identity or omitted/repeated words.
+Timing checks are acoustic heuristics. They cannot verify pronunciation,
+speaker identity or omitted/repeated words.
 """
 import hashlib
 import json
@@ -17,11 +17,14 @@ import numpy as np
 from core.files import atomic_json
 
 
-POLICY_VERSION = 1
+POLICY_VERSION = 2
+SEED_VERSION = 1  # Keep the same first reading when only the acceptance rules change.
 MAX_ATTEMPTS = 3
 TARGET_CPS = 4.8
 SOFT_CPS = (3.5, 6.0)
 HARD_CPS = (2.0, 8.0)
+SHORT_REPLY_ALLOWANCE_SECONDS = 1.0
+SHORT_ZH_TEXT = re.compile(r"""[\u3400-\u9fff\s，。！？、；：…—“”‘’「」『』（）,.!?;:'"()]+""")
 EDGE_KEEP_MS = 60
 
 
@@ -92,18 +95,26 @@ def _measure(audio, sample_rate, text, language):
         reasons.append('speech_too_short')
     if longest_pause > 1.2:
         reasons.append('long_internal_pause')
+    # For short replies, allow emphasis and count only active windows so a
+    # comma or quiet padding cannot turn an ordinary delivery into an outlier.
+    active_seconds = len(indices) * window / sample_rate
+    if language == 'zh' and 0 < han < 12 and SHORT_ZH_TEXT.fullmatch(text):
+        if active_seconds > SHORT_REPLY_ALLOWANCE_SECONDS + han / HARD_CPS[0]:
+            reasons.append('short_utterance_too_slow')
     if rate is not None and not HARD_CPS[0] <= rate <= HARD_CPS[1]:
         reasons.append('extreme_speech_rate')
     if float(np.mean(np.abs(audio) >= .999)) > .01:
         reasons.append('severe_clipping')
     return cleaned, dict(duration_seconds=round(len(cleaned)/sample_rate,4),
-        speech_span_seconds=round(span,4), chars_per_second=round(rate,3) if rate else None,
+        speech_span_seconds=round(span,4), active_seconds=round(active_seconds,4),
+        chars_per_second=round(rate,3) if rate else None,
         longest_internal_pause_seconds=round(longest_pause,4),
         trimmed_head_ms=round(start*1000/sample_rate),
         trimmed_tail_ms=round((len(audio)-end)*1000/sample_rate), reasons=reasons)
 
 
-def synthesize_narration(text, language, reference_hash, generate, sample_rate, seed_context=''):
+def synthesize_narration(text, language, reference_hash, generate, sample_rate, seed_context='',
+                         *, max_attempts=MAX_ATTEMPTS):
     """Retry outliers without time-stretching or switching speaker references.
 
     Typical Chinese rate candidates stop immediately. Up to three deterministic
@@ -120,8 +131,8 @@ def synthesize_narration(text, language, reference_hash, generate, sample_rate, 
         item = dict(index=index, text_sha256=hashlib.sha256(chunk.encode()).hexdigest(), attempts=[])
         report['chunks'].append(item)
         best = None
-        for attempt in range(MAX_ATTEMPTS):
-            identity = json.dumps([POLICY_VERSION, reference_hash, language, chunk,
+        for attempt in range(max_attempts):
+            identity = json.dumps([SEED_VERSION, reference_hash, language, chunk,
                                    seed_context, attempt], ensure_ascii=False)
             seed = int.from_bytes(hashlib.sha256(identity.encode()).digest()[:4], 'big')
             # BiliMix owns Chinese phrasing; prevent the engine from hard-cutting

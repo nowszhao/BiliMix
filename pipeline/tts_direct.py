@@ -10,14 +10,17 @@
   - 通过「伪 segment」把 (文本, 参考音频) 对喂给
     synthesize_sentences_with_confucius_tts，该函数在 ref_audio_map 完整时不依赖
     上游 segments / audio_path；
-  - 产物按文件名（文本+参考音频+语种的 md5）缓存，重复提交可秒级命中。
+  - 同一合成策略下可复用已完成任务及逐句缓存。
 """
 import hashlib
 import os
 
 from core import config
+from pipeline import tts_narration
+from pipeline.dubbing_plan import canonical_hash
 from pipeline.mixed_lang import build_speech_plan, splice_wavs
 from pipeline.step3_tts_confucius import synthesize_sentences_with_confucius_tts
+from pipeline.tts_cache import paced_model_fingerprint
 
 # Confucius4-TTS 支持的语种（见 confuciustts/utils/text_utils.py LANGUAGE_TOKEN_MAP）
 SUPPORTED_LANGS = ("zh", "en", "ja", "ko")
@@ -31,12 +34,15 @@ MAX_TEXT_CHARS = 5000
 
 
 def build_job_id(ref_audio: str, texts: list, lang: str) -> str:
-    """由「参考音频 + 文本列表 + 语种」生成确定性 job_id。
-
-    相同输入得到相同 ID，因此重复提交会复用同一目录与 TTS 磁盘缓存。
-    """
-    raw = "|".join([os.path.abspath(ref_audio), lang, *texts])
-    return "tts_" + hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
+    """按参考路径、文本列表、语种和合成策略标识可复用的任务。"""
+    identity = [os.path.abspath(ref_audio), texts, lang, tts_narration.POLICY_VERSION]
+    if config.PACED_ZH_ROOT and lang in (DEFAULT_LANG, AUTO_LANG):
+        items, _ = build_speech_plan(texts, lang)
+        if any(item["lang"] == "zh" for item in items):
+            script = os.path.join(config.BASE_DIR, "workers", "paced_mandarin_worker.py")
+            identity.extend([paced_model_fingerprint(config.PACED_ZH_ROOT, script, metadata_only=True),
+                             config.PACED_ZH_PYTHON, config.CONFUCIUS4_TTS_DEVICE])
+    return "tts_" + canonical_hash(identity)[:12]
 
 
 def get_job_dir(job_id: str) -> str:

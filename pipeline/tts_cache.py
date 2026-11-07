@@ -29,6 +29,38 @@ def model_fingerprint(root, worker, config_path):
     return canonical_hash(records)
 
 
+def paced_model_fingerprint(root, worker, *, metadata_only=False):
+    """Hash the offline resources and policy used by the Mandarin worker.
+
+    Direct TTS also has a completed-job cache above the worker queue. Its
+    submission identity uses cheap file metadata so HTTP never reads weights.
+    The worker's actual WAV key binds every resource by its contents.
+    """
+    root = Path(root)
+    worker = Path(worker)
+    files = [worker, worker.with_name("paced_mandarin.py"), Path(__file__).with_name("tts_narration.py")]
+    files.extend(root / name for name in (
+        "melo/config.json", "melo/checkpoint.pth", "converter/config.json",
+        "converter/checkpoint.pth", "base_speakers/ses/zh.pth",
+    ))
+    for folder in (root / "frontend" / "hf" / "hub", root / "frontend" / "nltk"):
+        files.extend(p for p in folder.rglob("*")
+                     if p.is_file() and ".locks" not in p.parts and p.suffix != ".lock")
+    records = []
+    for path in files:
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            if not metadata_only:
+                raise FileNotFoundError(f"Missing paced Mandarin resource: {path}") from None
+            identity = None  # Let the queued worker report the missing asset.
+        else:
+            identity = ((stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns) if metadata_only
+                        else _content(str(path), stat.st_size, stat.st_mtime_ns))
+        records.append((str(path), identity))
+    return canonical_hash(records)
+
+
 def synthesis_key(text, language, reference, model_id, parameters, speaker="", reference_mode="speaker"):
     return canonical_hash({"schema": 4, "text": text, "language": language,
                            "reference_sha256": file_sha256(reference), "speaker": speaker,

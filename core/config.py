@@ -90,9 +90,12 @@ LLM_TRANSLATE_TEMPERATURE = 0.3
 # 支持: CET-4, CET-6, IELTS-6, IELTS-7, ADVANCED
 
 # ========================
-# TTS 配置（仅支持 Confucius4-TTS-CPU）
+# TTS 配置
 # ========================
 TTS_ENGINE = "confucius-tts"
+# 配置离线模型目录后，固定参考的中文话语使用音素时长控制。
+PACED_ZH_ROOT = ""
+PACED_ZH_PYTHON = ""
 
 # --- Confucius4-TTS-CPU 配置（零样本多语言 TTS） ---
 # Confucius4-TTS-CPU 项目根目录路径
@@ -347,6 +350,8 @@ for _env_name, _setting in {
     "BILIMIX_WHISPERX_BIN":"WHISPERX_BIN",
     "BILIMIX_TTS_PYTHON":"CONFUCIUS4_TTS_PYTHON",
     "BILIMIX_TTS_ROOT":"CONFUCIUS4_TTS_ROOT",
+    "BILIMIX_PACED_ZH_ROOT":"PACED_ZH_ROOT",
+    "BILIMIX_PACED_ZH_PYTHON":"PACED_ZH_PYTHON",
 }.items():
     if os.environ.get(_env_name):
         globals()[_setting] = os.path.expanduser(os.environ[_env_name])
