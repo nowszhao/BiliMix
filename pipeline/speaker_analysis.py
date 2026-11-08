@@ -15,6 +15,10 @@ MIN_REFERENCE_SECONDS = 3.5
 # its own seconds beats borrowing someone else's timbre.
 MIN_REFERENCE_RUN_SECONDS = 1.0
 
+# Speakers whose clean speech never reaches this many seconds cannot be cloned
+# on their own; they borrow an existing voice instead of blocking the analysis.
+MERGE_SHORT_SPEAKER_SECONDS = float(os.environ.get('BILIMIX_MERGE_SHORT_SPEAKER_SECONDS') or 3.0)
+
 
 def _project_word(start, end, turns):
     """Return evidence and an optional owner; a missing owner is reviewable data."""
@@ -242,12 +246,54 @@ def _select_references(words, turns, native, require_verified, audio_path=None, 
     return references
 
 
+def _lend_references_to_short_speakers(words, turns, references):
+    """Give word-starved speakers the nearest existing voice, marked for audit."""
+    if not references or MERGE_SHORT_SPEAKER_SECONDS <= 0:
+        return references
+    totals, spans = {}, {}
+    for turn in turns:
+        speaker = turn["speaker"]
+        if not known_speaker(speaker):
+            continue
+        ids = turn["word_ids"]
+        own = [words[i] for i in ids if words[i].get("reference_eligible")]
+        if own:
+            totals[speaker] = totals.get(speaker, 0.0) + (own[-1]["end"] - own[0]["start"])
+        lo, hi = words[ids[0]]["start"], words[ids[-1]]["end"]
+        if speaker in spans:
+            lo, hi = min(spans[speaker][0], lo), max(spans[speaker][1], hi)
+        spans[speaker] = (lo, hi)
+    for speaker in sorted(totals):
+        if speaker in references or totals[speaker] >= MERGE_SHORT_SPEAKER_SECONDS:
+            continue
+        donor = None
+        for word in words:
+            if word.get("speaker") != speaker:
+                continue
+            donor = next((c for c in (word.get("speaker_candidates") or [])
+                          if c != speaker and c in references), None)
+            if donor:
+                break
+        if donor is None and speaker in spans:
+            lo, hi = spans[speaker]
+            donor = min((s for s in references if s in spans),
+                        key=lambda s: min(abs(spans[s][0] - hi), abs(spans[s][1] - lo)),
+                        default=None)
+        if donor is None:
+            donor = next(iter(references))
+        references[speaker] = dict(references[donor], borrowed_from=donor,
+                                   borrowed_for=speaker,
+                                   borrowed_seconds=round(totals[speaker], 2))
+    return references
+
+
 def _assemble_analysis(words, media_hash, native, require_verified, audio_path=None,
                        previous_references=None):
     turns, sentences = _group_words(words)
     references = _select_references(words, turns, native if native is not None else words,
                                     require_verified, audio_path=audio_path,
                                     previous=previous_references)
+    references = _lend_references_to_short_speakers(words, turns, references)
     unresolved = []
     for word in words:
         word["speaker_status"] = "assigned" if known_speaker(word["speaker"]) else "unresolved"

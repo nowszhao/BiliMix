@@ -36,13 +36,30 @@ def synthesize_job(engine, job, set_seed):
     try:
         audio, report = synthesize_narration(
             job['text'], 'zh', file_sha256(reference), generate, engine.sample_rate,
-            seed_context='paced_mandarin', max_attempts=1,
+            seed_context='paced_mandarin', max_attempts=3,
         )
     except NarrationQualityError as error:
-        atomic_json(report_path(output), {
-            **error.report, 'engine': 'paced_mandarin', 'timing': timing, 'error': str(error),
-        })
-        raise
+        # Some very short Chinese utterances make the paced model emit a silent
+        # or near-silent waveform for every seed. Retry once with a neutral
+        # colloquial lead-in. Captions stay untouched; the fallback is recorded
+        # in the quality report so every automatic rewrite stays auditable.
+        fallback = '嗯，' + job['text']
+        try:
+            audio, report = synthesize_narration(
+                fallback, 'zh', file_sha256(reference), generate, engine.sample_rate,
+                seed_context='paced_mandarin:lead_in', max_attempts=3,
+            )
+        except NarrationQualityError as fallback_error:
+            atomic_json(report_path(output), {
+                **fallback_error.report, 'engine': 'paced_mandarin',
+                'original_text': job['text'], 'fallback_text': fallback,
+                'original_error': str(error), 'error': str(fallback_error),
+                'timing': timing,
+            })
+            raise
+        report = {**report, 'original_text': job['text'],
+                  'fallback_text': fallback,
+                  'fallback_reason': 'silent_or_too_short_original'}
     write_synthesis(output, audio, engine.sample_rate, {
         **report, 'engine': 'paced_mandarin', 'timing': timing,
     })
@@ -70,10 +87,18 @@ def main(task_file):
         torch.manual_seed(seed)
 
     results = []
-    for job in task['jobs']:
-        synthesize_job(engine, job, set_seed)
-        results.append({'output_path': job['output_path'], 'error': None})
-    print(json.dumps({'success': len(results), 'failed': 0, 'results': results}))
+    failed = 0
+    for index, job in enumerate(task['jobs']):
+        try:
+            synthesize_job(engine, job, set_seed)
+            results.append({'output_path': job['output_path'], 'error': None})
+        except Exception as exc:
+            failed += 1
+            print(f"[PacedMandarin] [{index + 1}/{len(task['jobs'])}] 失败: {exc}",
+                  file=sys.stderr, flush=True)
+            results.append({'output_path': job['output_path'], 'error': str(exc)})
+    print(json.dumps({'success': len(results) - failed, 'failed': failed,
+                      'results': results}))
 
 
 if __name__ == '__main__':

@@ -19,9 +19,11 @@ from core.files import atomic_json
 
 POLICY_VERSION = 2
 SEED_VERSION = 1  # Keep the same first reading when only the acceptance rules change.
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 4
 TARGET_CPS = 4.8
-SOFT_CPS = (3.5, 6.0)
+# Keep neighbouring lines within ~±8% of the target rate; the old 3.5-6.0
+# band let consecutive sentences differ by 1.7x, which sounds uneven.
+SOFT_CPS = (4.4, 5.2)
 HARD_CPS = (2.0, 8.0)
 SHORT_REPLY_ALLOWANCE_SECONDS = 1.0
 SHORT_ZH_TEXT = re.compile(r"""[\u3400-\u9fff\s，。！？、；：…—“”‘’「」『』（）,.!?;:'"()]+""")

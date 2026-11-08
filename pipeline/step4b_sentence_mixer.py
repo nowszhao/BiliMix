@@ -72,7 +72,12 @@ def _normalize_tts_audio(audio: AudioSegment,
     # Float/PCM24 input must not be interpreted as PCM16 bytes at its old width.
     audio = audio.set_sample_width(2)
     if len(audio) < 400:
-        return audio if audio.dBFS == float('-inf') else audio.apply_gain(min(12, target_dbfs-audio.dBFS))
+        # Below the 400 ms gating block the LUFS meter is meaningless, but the
+        # fallback must still target the same perceived level: one-word replies
+        # used to sit ~3 dB above the sentence next to them.
+        if audio.dBFS == float('-inf'):
+            return audio
+        return audio.apply_gain(min(15, _TARGET_LUFS + 3.0 - audio.dBFS))
     try:
         import pyloudnorm as pyln
     except ImportError:
