@@ -1,7 +1,6 @@
 """Batch voice-cloning synthesis in supervised model subprocesses.
 
 Continuations, retries and direct TTS jobs all pass through this dispatcher.
-Fixed-reference Mandarin optionally uses an offline, duration-controlled model.
 """
 from dataclasses import dataclass
 import json
@@ -12,7 +11,7 @@ import threading
 import time
 
 from core import config
-from pipeline.tts_cache import model_fingerprint, paced_model_fingerprint, synthesis_key
+from pipeline.tts_cache import model_fingerprint, voxcpm_model_fingerprint, synthesis_key
 from pipeline.tts_narration import cached_synthesis_valid
 from pipeline.tts_references import validate_reference_mode
 
@@ -45,20 +44,38 @@ class _Runtime:
     num_workers: int
 
 
-def _runtime(paced):
+def _runtime():
+    """Pick the synthesis backend; Confucius stays the default."""
+    if getattr(config, "TTS_ENGINE", "confucius-tts") == "voxcpm":
+        return _voxcpm_runtime()
+    return _confucius_runtime()
+
+
+def _voxcpm_runtime():
+    workers = os.path.join(config.BASE_DIR, "workers")
+    script = os.path.join(workers, "voxcpm_worker.py")
+    env = os.environ.copy()
+    model_ref = str(getattr(config, "VOXCPM_MODEL", "openbmb/VoxCPM2"))
+    env["BILIMIX_VOXCPM_MODEL"] = model_ref
+    env.setdefault("OMP_NUM_THREADS", "4")
+    options = {
+        "model": model_ref,
+        "device": getattr(config, "VOXCPM_DEVICE", "cpu"),
+        "cfg_value": getattr(config, "VOXCPM_CFG_VALUE", 2.0),
+        "inference_timesteps": getattr(config, "VOXCPM_INFERENCE_TIMESTEPS", 10),
+        "target_cps": getattr(config, "VOXCPM_TARGET_CPS", 5.8),
+        "soft_cps": list(getattr(config, "VOXCPM_SOFT_CPS", (4.2, 7.0))),
+    }
+    return _Runtime(
+        script, getattr(config, "VOXCPM_PYTHON", "") or sys.executable, env, options,
+        voxcpm_model_fingerprint(script, model_ref), "voxcpm2",
+        max(1, int(getattr(config, "VOXCPM_NUM_WORKERS", 2))))
+
+
+def _confucius_runtime():
     workers = os.path.join(config.BASE_DIR, "workers")
     env = os.environ.copy()
     device = config.CONFUCIUS4_TTS_DEVICE
-    if paced:
-        root = os.path.abspath(config.PACED_ZH_ROOT)
-        script = os.path.join(workers, "paced_mandarin_worker.py")
-        env["BILIMIX_PACED_ZH_ROOT"] = root
-        env.setdefault("OMP_NUM_THREADS", "2")
-        env.setdefault("MKL_NUM_THREADS", "2")
-        python = config.PACED_ZH_PYTHON or sys.executable
-        return _Runtime(script, python, env, {"device": device},
-                        paced_model_fingerprint(root, script), "paced_zh", 1)
-
     root = _get_confucius_root()
     script = os.path.join(workers, "confucius_tts_worker.py")
     config_path = os.path.join(root, "config", "inference_config.yaml")
@@ -289,32 +306,24 @@ def synthesize_sentences_with_confucius_tts(
         return {}
 
     validate_reference_mode(reference_mode)
-    batches = {}
-    for idx in translated_indices:
-        language = (seg_lang_map or {}).get(idx, lang)
-        paced = bool(config.PACED_ZH_ROOT and reference_mode == "speaker" and language == "zh")
-        batches.setdefault(paced, []).append(idx)
+    indices = list(translated_indices)
+    total = len(indices)
+    if cancel_check and cancel_check():
+        raise InterruptedError("任务已被用户终止")
 
-    results = {}
-    done = 0
-    total = len(translated_indices)
-    for paced, indices in batches.items():
-        if cancel_check and cancel_check():
-            raise InterruptedError("任务已被用户终止")
-        def report_progress(current, group_total):
-            # Per-worker progress counts cache misses; include previously cached units.
-            progress_cb(done + len(indices) - group_total + current, total)
-
-        runtime = _runtime(paced)
-        batch = _synthesize_batch(
-            runtime, segments, indices, translations, cache_dir, ref_audio_map,
-            cancel_check, report_progress if progress_cb else None, task_id, lang,
-            seg_lang_map, reference_mode,
-        )
-        results.update(batch)
-        done += len(indices)
+    def report_progress(current, group_total):
+        # Per-worker progress counts cache misses; include previously cached units.
         if progress_cb:
-            progress_cb(done, total)
+            progress_cb(total - group_total + current, total)
+
+    runtime = _runtime()
+    results = _synthesize_batch(
+        runtime, segments, indices, translations, cache_dir, ref_audio_map,
+        cancel_check, report_progress if progress_cb else None, task_id, lang,
+        seg_lang_map, reference_mode,
+    )
+    if progress_cb:
+        progress_cb(total, total)
     return results
 
 

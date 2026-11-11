@@ -18,9 +18,9 @@ import os
 from core import config
 from pipeline import tts_narration
 from pipeline.dubbing_plan import canonical_hash
+from pipeline.tts_cache import voxcpm_model_fingerprint
 from pipeline.mixed_lang import build_speech_plan, splice_wavs
 from pipeline.step3_tts_confucius import synthesize_sentences_with_confucius_tts
-from pipeline.tts_cache import paced_model_fingerprint
 
 # Confucius4-TTS 支持的语种（见 confuciustts/utils/text_utils.py LANGUAGE_TOKEN_MAP）
 SUPPORTED_LANGS = ("zh", "en", "ja", "ko")
@@ -36,12 +36,16 @@ MAX_TEXT_CHARS = 5000
 def build_job_id(ref_audio: str, texts: list, lang: str) -> str:
     """按参考路径、文本列表、语种和合成策略标识可复用的任务。"""
     identity = [os.path.abspath(ref_audio), texts, lang, tts_narration.POLICY_VERSION]
-    if config.PACED_ZH_ROOT and lang in (DEFAULT_LANG, AUTO_LANG):
-        items, _ = build_speech_plan(texts, lang)
-        if any(item["lang"] == "zh" for item in items):
-            script = os.path.join(config.BASE_DIR, "workers", "paced_mandarin_worker.py")
-            identity.extend([paced_model_fingerprint(config.PACED_ZH_ROOT, script, metadata_only=True),
-                             config.PACED_ZH_PYTHON, config.CONFUCIUS4_TTS_DEVICE])
+    engine = getattr(config, "TTS_ENGINE", "confucius-tts")
+    if engine == "voxcpm":
+        script = os.path.join(config.BASE_DIR, "workers", "voxcpm_worker.py")
+        identity.extend([
+            engine,
+            voxcpm_model_fingerprint(script, config.VOXCPM_MODEL, metadata_only=True),
+            getattr(config, "VOXCPM_PYTHON", ""),
+            getattr(config, "VOXCPM_CFG_VALUE", 2.0),
+            getattr(config, "VOXCPM_INFERENCE_TIMESTEPS", 10),
+        ])
     return "tts_" + canonical_hash(identity)[:12]
 
 

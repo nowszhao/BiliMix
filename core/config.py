@@ -92,10 +92,18 @@ LLM_TRANSLATE_TEMPERATURE = 0.3
 # ========================
 # TTS 配置
 # ========================
-TTS_ENGINE = "confucius-tts"
-# 配置离线模型目录后，固定参考的中文话语使用音素时长控制。
-PACED_ZH_ROOT = ""
-PACED_ZH_PYTHON = ""
+TTS_ENGINE = "voxcpm"                # 默认 VoxCPM2；可改回 "confucius-tts"
+
+# --- VoxCPM2 可选后端（零样本中文克隆）---
+# 仅 Linux CPU 可用；Apple Silicon MPS 的 bf16 精度会产出乱码
+VOXCPM_PYTHON = ""
+VOXCPM_MODEL = "openbmb/VoxCPM2"    # HF repo id 或本地权重目录
+VOXCPM_DEVICE = "cpu"
+VOXCPM_CFG_VALUE = 2.0
+VOXCPM_INFERENCE_TIMESTEPS = 10
+VOXCPM_NUM_WORKERS = 2             # 单进程约 9GB，30GB 内存最多 2 个
+VOXCPM_TARGET_CPS = 5.8            # 实测 VoxCPM2 中文语速
+VOXCPM_SOFT_CPS = (4.2, 7.0)
 
 # --- Confucius4-TTS-CPU 配置（零样本多语言 TTS） ---
 # Confucius4-TTS-CPU 项目根目录路径
@@ -350,8 +358,8 @@ for _env_name, _setting in {
     "BILIMIX_WHISPERX_BIN":"WHISPERX_BIN",
     "BILIMIX_TTS_PYTHON":"CONFUCIUS4_TTS_PYTHON",
     "BILIMIX_TTS_ROOT":"CONFUCIUS4_TTS_ROOT",
-    "BILIMIX_PACED_ZH_ROOT":"PACED_ZH_ROOT",
-    "BILIMIX_PACED_ZH_PYTHON":"PACED_ZH_PYTHON",
+    "BILIMIX_VOXCPM_PYTHON":"VOXCPM_PYTHON",
+    "BILIMIX_VOXCPM_MODEL":"VOXCPM_MODEL",
 }.items():
     if os.environ.get(_env_name):
         globals()[_setting] = os.path.expanduser(os.environ[_env_name])

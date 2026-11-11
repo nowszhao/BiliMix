@@ -1,0 +1,4 @@
+# VoxCPM2 可选后端（仅服务端 Linux CPU 使用）
+# torch / torchaudio 由部署环境提供，此处不重复安装
+voxcpm==2.0.3
+einops

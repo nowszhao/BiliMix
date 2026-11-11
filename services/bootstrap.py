@@ -188,6 +188,16 @@ def _check_required_dependencies():
     if not os.path.isfile(worker_script):
         missing_hints.append(f"  - TTS worker 脚本缺失: {worker_script}")
 
+    if getattr(config, "TTS_ENGINE", "confucius-tts") == "voxcpm":
+        vox_python = getattr(config, "VOXCPM_PYTHON", "") or sys.executable
+        if not os.path.isfile(vox_python):
+            missing_hints.append(
+                f"  - VoxCPM2 Python 解释器不存在: {vox_python}\n"
+                f"    配置项 VOXCPM_PYTHON（需已安装 voxcpm==2.0.3）")
+        vox_worker = os.path.join(config.BASE_DIR, "workers", "voxcpm_worker.py")
+        if not os.path.isfile(vox_worker):
+            missing_hints.append(f"  - VoxCPM2 worker 脚本缺失: {vox_worker}")
+
     # ---- 5. Ollama 服务（LLM 翻译依赖）----
     ollama_url = getattr(config, "OLLAMA_BASE_URL", "http://localhost:11434")
     try:

@@ -1603,6 +1603,7 @@ function renderSettingsForm(cfg) {
                     <div class="settings-item-control">
                         <select class="settings-select" id="cfg-tts_engine" onchange="onTTSEngineChange()">
                             <option value="confucius-tts" ${cfg.tts_engine === 'confucius-tts' ? 'selected' : ''}>Confucius4-TTS (CPU)</option>
+                            <option value="voxcpm" ${cfg.tts_engine === 'voxcpm' ? 'selected' : ''}>VoxCPM2 (Linux CPU)</option>
                         </select>
                     </div>
                 </div>

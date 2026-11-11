@@ -1,4 +1,5 @@
 """Content-addressed synthesis cache; shared by initial and resumed synthesis."""
+import os
 from functools import lru_cache
 from pathlib import Path
 from pipeline.dubbing_plan import canonical_hash, file_sha256
@@ -29,35 +30,27 @@ def model_fingerprint(root, worker, config_path):
     return canonical_hash(records)
 
 
-def paced_model_fingerprint(root, worker, *, metadata_only=False):
-    """Hash the offline resources and policy used by the Mandarin worker.
+def voxcpm_model_fingerprint(worker, model_ref, *, metadata_only=False):
+    """Bind worker code, narration policy and the VoxCPM2 model identity.
 
-    Direct TTS also has a completed-job cache above the worker queue. Its
-    submission identity uses cheap file metadata so HTTP never reads weights.
-    The worker's actual WAV key binds every resource by its contents.
+    A Hugging Face repo id is hashed as a string; a local weight directory
+    also contributes its weight files so a model swap invalidates the cache.
     """
-    root = Path(root)
     worker = Path(worker)
-    files = [worker, worker.with_name("paced_mandarin.py"), Path(__file__).with_name("tts_narration.py")]
-    files.extend(root / name for name in (
-        "melo/config.json", "melo/checkpoint.pth", "converter/config.json",
-        "converter/checkpoint.pth", "base_speakers/ses/zh.pth",
-    ))
-    for folder in (root / "frontend" / "hf" / "hub", root / "frontend" / "nltk"):
-        files.extend(p for p in folder.rglob("*")
-                     if p.is_file() and ".locks" not in p.parts and p.suffix != ".lock")
+    files = [worker, Path(__file__).with_name("tts_narration.py")]
+    root = Path(os.path.expanduser(str(model_ref)))
+    if root.is_dir():
+        for pattern in ("*.safetensors", "*.pt", "*.pth", "config.json"):
+            files.extend(sorted(root.rglob(pattern)))
     records = []
     for path in files:
-        try:
-            stat = path.stat()
-        except FileNotFoundError:
-            if not metadata_only:
-                raise FileNotFoundError(f"Missing paced Mandarin resource: {path}") from None
-            identity = None  # Let the queued worker report the missing asset.
-        else:
-            identity = ((stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns) if metadata_only
-                        else _content(str(path), stat.st_size, stat.st_mtime_ns))
+        if not path.is_file():
+            continue
+        st = path.stat()
+        identity = ((st.st_size, st.st_mtime_ns) if metadata_only
+                    else _content(str(path), st.st_size, st.st_mtime_ns))
         records.append((str(path), identity))
+    records.append(("model_ref", str(model_ref)))
     return canonical_hash(records)
 
 

@@ -116,7 +116,7 @@ def _measure(audio, sample_rate, text, language):
 
 
 def synthesize_narration(text, language, reference_hash, generate, sample_rate, seed_context='',
-                         *, max_attempts=MAX_ATTEMPTS):
+                         *, max_attempts=MAX_ATTEMPTS, rate_profile=None):
     """Retry outliers without time-stretching or switching speaker references.
 
     Typical Chinese rate candidates stop immediately. Up to three deterministic
@@ -125,6 +125,7 @@ def synthesize_narration(text, language, reference_hash, generate, sample_rate, 
     """
     if sample_rate <= 0:
         raise ValueError('Invalid sample rate')
+    target_cps, soft_cps = rate_profile or (TARGET_CPS, SOFT_CPS)
     chunks = plan_narration(text, language)
     report = dict(schema_version=1, policy_version=POLICY_VERSION, language=language,
                   reference_sha256=reference_hash, chunk_count=len(chunks), chunks=[])
@@ -147,17 +148,17 @@ def synthesize_narration(text, language, reference_hash, generate, sample_rate, 
             if metrics['reasons']:
                 continue
             rate = metrics['chars_per_second']
-            score = abs(math.log(rate/TARGET_CPS)) if rate else 0
+            score = abs(math.log(rate/target_cps)) if rate else 0
             if best is None or score < best[0]:
                 best = score, audio, attempt
-            if rate is None or SOFT_CPS[0] <= rate <= SOFT_CPS[1]:
+            if rate is None or soft_cps[0] <= rate <= soft_cps[1]:
                 break
         if best is None:
             raise NarrationQualityError(report)
         _, audio, selected = best
         item['selected_attempt'] = selected
         rate = item['attempts'][selected]['chars_per_second']
-        item['warnings'] = ['rate_outside_preferred_range'] if rate and not SOFT_CPS[0] <= rate <= SOFT_CPS[1] else []
+        item['warnings'] = ['rate_outside_preferred_range'] if rate and not soft_cps[0] <= rate <= soft_cps[1] else []
         # A 5ms edge ramp prevents clicks when a model emits no quiet margin.
         # This changes neither duration nor the ordering of voiced samples.
         fade = min(round(sample_rate*.005), len(audio)//2)
