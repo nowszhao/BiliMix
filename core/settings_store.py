@@ -36,6 +36,14 @@ UPDATABLE_CONFIGS = {
     "confucius_tts_n_timesteps": ("CONFUCIUS4_TTS_N_TIMESTEPS", int),
     "confucius_tts_inference_cfg_rate": ("CONFUCIUS4_TTS_INFERENCE_CFG_RATE", float),
     "confucius_tts_num_workers": ("CONFUCIUS4_TTS_NUM_WORKERS", int),
+    # --- VoxCPM2 后端 ---
+    "voxcpm_python": ("VOXCPM_PYTHON", str),
+    "voxcpm_model": ("VOXCPM_MODEL", str),
+    "voxcpm_device": ("VOXCPM_DEVICE", str),
+    "voxcpm_cfg_value": ("VOXCPM_CFG_VALUE", float),
+    "voxcpm_inference_timesteps": ("VOXCPM_INFERENCE_TIMESTEPS", int),
+    "voxcpm_num_workers": ("VOXCPM_NUM_WORKERS", int),
+    "voxcpm_target_cps": ("VOXCPM_TARGET_CPS", float),
     "auto_retry_max": ("AUTO_RETRY_MAX", int),
     # 登录认证
     "auth_enabled": ("AUTH_ENABLED", bool),

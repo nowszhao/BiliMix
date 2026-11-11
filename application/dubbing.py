@@ -549,6 +549,9 @@ def continue_after_sentence_confirmation(task_id: str):
                     task_id, segments, translated_indices
                 )
 
+            def _tts_engine_label():
+                return "VoxCPM2" if getattr(config, "TTS_ENGINE", "") == "voxcpm" else "Confucius4-TTS"
+
             def _confucius_progress(current, total):
                 # 防止 TTS 完成后回调仍然修改 message 导致 step/message 不同步
                 task_cur = get_task(task_id)
@@ -559,7 +562,7 @@ def continue_after_sentence_confirmation(task_id: str):
                     task_id,
                     step="synthesize",
                     progress=pct,
-                    message=f"Step 3/4: Confucius4-TTS 句子合成 ({current}/{total})",
+                    message=f"Step 3/4: {_tts_engine_label()} 句子合成 ({current}/{total})",
                     _tts_completed_count=current,
                 )
 

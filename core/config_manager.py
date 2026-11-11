@@ -52,6 +52,14 @@ def get_all_config() -> dict:
         "confucius_tts_n_timesteps": getattr(config, "CONFUCIUS4_TTS_N_TIMESTEPS", 25),
         "confucius_tts_inference_cfg_rate": getattr(config, "CONFUCIUS4_TTS_INFERENCE_CFG_RATE", 0.7),
         "confucius_tts_num_workers": getattr(config, "CONFUCIUS4_TTS_NUM_WORKERS", 2),
+        # VoxCPM2
+        "voxcpm_python": getattr(config, "VOXCPM_PYTHON", ""),
+        "voxcpm_model": getattr(config, "VOXCPM_MODEL", "openbmb/VoxCPM2"),
+        "voxcpm_device": getattr(config, "VOXCPM_DEVICE", "cpu"),
+        "voxcpm_cfg_value": getattr(config, "VOXCPM_CFG_VALUE", 2.0),
+        "voxcpm_inference_timesteps": getattr(config, "VOXCPM_INFERENCE_TIMESTEPS", 10),
+        "voxcpm_num_workers": getattr(config, "VOXCPM_NUM_WORKERS", 2),
+        "voxcpm_target_cps": getattr(config, "VOXCPM_TARGET_CPS", 5.8),
         # 重试
         "auto_retry_max": getattr(config, "AUTO_RETRY_MAX", 3),
         # 登录认证

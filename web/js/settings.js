@@ -1598,7 +1598,7 @@ function renderSettingsForm(cfg) {
                 <div class="settings-item">
                     <div class="settings-item-label">
                         <span class="settings-item-name">TTS 引擎</span>
-                        <span class="settings-item-desc">Confucius4-TTS CPU 本地合成</span>
+                        <span class="settings-item-desc">本地合成后端；VoxCPM2 仅支持 Linux CPU</span>
                     </div>
                     <div class="settings-item-control">
                         <select class="settings-select" id="cfg-tts_engine" onchange="onTTSEngineChange()">
@@ -1742,6 +1742,92 @@ function renderSettingsForm(cfg) {
                             min="0.1" max="1.0" step="0.05" value="${cfg.confucius_tts_inference_cfg_rate}"
                             oninput="document.getElementById('val-conf_cfg').textContent = this.value">
                         <span class="settings-range-val" id="val-conf_cfg">${cfg.confucius_tts_inference_cfg_rate}</span>
+                    </div>
+                </div>
+            </div>
+            </div>
+        </div>
+
+        <!-- VoxCPM2 -->
+        <div class="settings-group" id="settings-group-voxcpm">
+            <div class="settings-group-title collapsible collapsed" onclick="toggleSettingsGroup(this)">
+                🎙️ VoxCPM2 (Linux CPU)
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="settings-group-body">
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">Python 解释器</span>
+                    <span class="settings-item-desc">需已安装 voxcpm==2.0.3；留空则用服务端当前解释器</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="text" class="settings-input" id="cfg-voxcpm_python" value="${cfg.voxcpm_python || ''}" placeholder="/opt/bilimix/venvs/voxcpm/bin/python">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">模型</span>
+                    <span class="settings-item-desc">Hugging Face repo id 或本地权重目录</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="text" class="settings-input" id="cfg-voxcpm_model" value="${cfg.voxcpm_model || ''}" placeholder="openbmb/VoxCPM2">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">推理设备</span>
+                    <span class="settings-item-desc">Apple Silicon 的 MPS 会产出乱码，仅 Linux CPU / CUDA 可用</span>
+                </div>
+                <div class="settings-item-control">
+                    <select class="settings-select" id="cfg-voxcpm_device">
+                        <option value="cpu" ${cfg.voxcpm_device === 'cpu' ? 'selected' : ''}>CPU</option>
+                        <option value="cuda" ${cfg.voxcpm_device === 'cuda' ? 'selected' : ''}>CUDA</option>
+                    </select>
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">CFG 强度</span>
+                    <span class="settings-item-desc">越高越贴参考音色，过高会发平</span>
+                </div>
+                <div class="settings-item-control">
+                    <div class="settings-range-wrap">
+                        <input type="range" class="settings-range" id="cfg-voxcpm_cfg_value"
+                            min="1.0" max="4.0" step="0.1" value="${cfg.voxcpm_cfg_value}"
+                            oninput="document.getElementById('val-vox_cfg').textContent = this.value">
+                        <span class="settings-range-val" id="val-vox_cfg">${cfg.voxcpm_cfg_value}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">推理步数</span>
+                    <span class="settings-item-desc">提高可降低采样方差，代价是更慢</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-voxcpm_inference_timesteps" min="1" max="50" step="1" value="${cfg.voxcpm_inference_timesteps}">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">并行 worker</span>
+                    <span class="settings-item-desc">单进程约 9GB 内存，30GB 机器建议 2</span>
+                </div>
+                <div class="settings-item-control">
+                    <input type="number" class="settings-input" id="cfg-voxcpm_num_workers" min="1" max="4" step="1" value="${cfg.voxcpm_num_workers}">
+                </div>
+            </div>
+            <div class="settings-item">
+                <div class="settings-item-label">
+                    <span class="settings-item-name">目标语速</span>
+                    <span class="settings-item-desc">字/秒；VoxCPM2 实测 5.5–6.8</span>
+                </div>
+                <div class="settings-item-control">
+                    <div class="settings-range-wrap">
+                        <input type="range" class="settings-range" id="cfg-voxcpm_target_cps"
+                            min="4.0" max="7.5" step="0.1" value="${cfg.voxcpm_target_cps}"
+                            oninput="document.getElementById('val-vox_cps').textContent = this.value">
+                        <span class="settings-range-val" id="val-vox_cps">${cfg.voxcpm_target_cps}</span>
                     </div>
                 </div>
             </div>
@@ -2109,11 +2195,13 @@ function renderSettingsForm(cfg) {
 }
 
 function onTTSEngineChange() {
-    // 当前仅支持 Confucius4-TTS，确保其配置组始终可见
+    // 按选中的引擎显示对应配置组，避免两套参数同时露出
+    const select = document.getElementById('cfg-tts_engine');
+    const engine = select ? select.value : 'confucius-tts';
     const confGroup = document.getElementById('settings-group-confucius-tts');
-    if (confGroup) {
-        confGroup.classList.remove('hidden');
-    }
+    const voxGroup = document.getElementById('settings-group-voxcpm');
+    if (confGroup) confGroup.classList.toggle('hidden', engine === 'voxcpm');
+    if (voxGroup) voxGroup.classList.toggle('hidden', engine !== 'voxcpm');
 }
 
 function onSettingsModeChange() { /* Always sentence_translate mode */ }
@@ -2162,6 +2250,13 @@ async function saveSettings() {
         confucius_tts_repetition_penalty: getValue('cfg-confucius_tts_repetition_penalty'),
         confucius_tts_n_timesteps: getValue('cfg-confucius_tts_n_timesteps'),
         confucius_tts_inference_cfg_rate: getValue('cfg-confucius_tts_inference_cfg_rate'),
+        voxcpm_python: getValue('cfg-voxcpm_python'),
+        voxcpm_model: getValue('cfg-voxcpm_model'),
+        voxcpm_device: getValue('cfg-voxcpm_device'),
+        voxcpm_cfg_value: getValue('cfg-voxcpm_cfg_value'),
+        voxcpm_inference_timesteps: getValue('cfg-voxcpm_inference_timesteps'),
+        voxcpm_num_workers: getValue('cfg-voxcpm_num_workers'),
+        voxcpm_target_cps: getValue('cfg-voxcpm_target_cps'),
         auto_retry_max: getValue('cfg-auto_retry_max'),
         auth_enabled: getValue('cfg-auth_enabled'),
         auth_username: getValue('cfg-auth_username'),
