@@ -28,10 +28,13 @@ def test_real_long_utterance_is_paginated_without_changing_text_or_time(dimensio
         assert page['speaker']=='A' and page['end']>page['start']
         assert len(page['chinese_lines'])<=2 and len(page['english_lines'])<=2
         assert page['line_count']<=4
-        assert page['estimated_height']<=dimensions[1]*.25
+        assert page['estimated_height']<=dimensions[1]*layout.max_height_ratio
         if i:assert page['start']==pages[i-1]['end']
-        for line in page['chinese_lines']:assert text_width(line,layout.font_size)<=layout.text_width
-        for line in page['english_lines']:assert text_width(line,layout.english_size)<=layout.text_width
+        # 单句可能被 shrink-to-fit 缩小过，断言必须用该页的实际字号
+        assert all(text_width(line,page['chinese_size'])<=layout.text_width
+                   for line in page['chinese_lines'])
+        assert all(text_width(line,page['english_size'])<=layout.text_width
+                   for line in page['english_lines'])
 
 
 @pytest.mark.parametrize('language',['chinese','english'])
@@ -41,7 +44,7 @@ def test_long_unbroken_content_and_combining_characters_stay_bounded(language):
     layout = SubtitleLayout(480,270,40)
     pages = layout.paginate(entry)
     assert compact(''.join(p[language]for p in pages))==compact(text)
-    assert all(p['line_count']<=4 and p['estimated_height']<=67.5 for p in pages)
+    assert all(p['line_count']<=4 and p['estimated_height']<=270*layout.max_height_ratio for p in pages)
 
 
 def test_fixed_seed_variable_bilingual_lengths_preserve_all_content():

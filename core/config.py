@@ -316,7 +316,7 @@ ASS_FONT_SIZE_USER_MIN = 14
 ASS_FONT_SIZE_USER_MAX = 120
 # 新建视频任务时「字幕字号」的默认值（px）
 # 设为 -1 或 0 表示不指定，由视频高度自动计算
-ASS_FONT_SIZE_DEFAULT = 40
+ASS_FONT_SIZE_DEFAULT = 38
 # 底部边距最小值（字幕整体贴近底部，减少对画面的遮挡）
 ASS_MARGIN_V_MIN = 20
 # 底部边距比例（相对视频高度）
@@ -324,16 +324,26 @@ ASS_MARGIN_V_RATIO = 0.03
 # 字幕左右边距（像素，居中留白，避免字幕贴边铺满画面）
 ASS_MARGIN_LR = 30
 # 英文字号相对中文的比例（英文明显小于中文，40px 中文对应 30px 英文）
-ASS_EN_FONT_RATIO = 0.75
-# 字幕描边宽度（ASS 样式字段要求整数）
-ASS_OUTLINE = 2
-# 字幕阴影深度
-ASS_SHADOW = 0
+ASS_EN_FONT_RATIO = 0.78
+# 字幕字体：Light 字重，接近蓝光/影展字幕的轻盈感（服务端 Noto Sans CJK 支持 Light）
+ASS_FONT_FAMILY = "Noto Sans CJK SC Light"
+# 字幕描边宽度（支持小数；1.5px 在深色画面更干净，纯白底也不至于完全空心）
+ASS_OUTLINE = 1.5
+# 字幕背景：1=透明背景 + 描边/阴影（业界标准做法）；3=不透明黑框
+ASS_BORDER_STYLE = 1
+# 字幕阴影偏移；透明背景下用轻微阴影增强与亮背景的分离
+ASS_SHADOW = 1
+# 中英之间的间隔，相对字号的比例；0 表示单换行紧贴
+ASS_GAP_RATIO = 0.16
+# 字幕颜色（ASS 为 &HAABBGGRR&）：中文暖黄、英文浅灰，保持原有辨识度
+ASS_CN_COLOR = "&H0000D7FF&"
+ASS_EN_COLOR = "&H00E6E6E6&"
 
 # Display-only subtitle budget; never split TTS to satisfy these limits.
 ASS_MAX_LINES = 4
 ASS_MAX_LANGUAGE_LINES = 2
-ASS_MAX_HEIGHT_RATIO = 0.25
+# 0.27 而非 0.25：中英之间留一行小字号间隔，四行字幕需要约 26% 画面高度
+ASS_MAX_HEIGHT_RATIO = 0.27
 
 # ========================
 # 本地配置覆盖（不影响服务端默认值）

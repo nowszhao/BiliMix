@@ -210,9 +210,12 @@ def generate_bilingual_ass(
         margin_lr=getattr(config, "ASS_MARGIN_LR", 30),
         max_lines=getattr(config, "ASS_MAX_LINES", 4),
         max_language_lines=getattr(config, "ASS_MAX_LANGUAGE_LINES", 2),
-        max_height_ratio=getattr(config, "ASS_MAX_HEIGHT_RATIO", .25),
+        max_height_ratio=getattr(config, "ASS_MAX_HEIGHT_RATIO", .27),
         bilingual=subtitle_mode == "bilingual",
-        outline=max(0, int(round(float(getattr(config, "ASS_OUTLINE", 2))))))
+        outline=max(0.0, float(getattr(config, "ASS_OUTLINE", 1.5))),
+        border_style=int(getattr(config, "ASS_BORDER_STYLE", 1)),
+        shadow=max(0, int(round(float(getattr(config, "ASS_SHADOW", 1))))),
+        gap_ratio=float(getattr(config, "ASS_GAP_RATIO", .16)))
     visible = []
     for entry in entries:
         display = dict(entry)
@@ -223,7 +226,8 @@ def generate_bilingual_ass(
         visible = []
     document, report = ass_document(visible, layout, margin_v=margin_v,
         font_family=getattr(config, "ASS_FONT_FAMILY", "Noto Sans CJK SC"),
-        shadow=getattr(config, "ASS_SHADOW", 0))
+        chinese_color=getattr(config, "ASS_CN_COLOR", "&H00FFFFFF&"),
+        english_color=getattr(config, "ASS_EN_COLOR", "&H00E6E6E6&"))
     with open(output_path, "w", encoding="utf-8") as stream:
         stream.write(document)
     with open(output_path+".layout.json", "w", encoding="utf-8") as stream:
