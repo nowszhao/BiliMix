@@ -207,14 +207,14 @@ class SubtitleLayout:
 
         32 glyphs at 38px need 1216px against 1200px available. Hard-wrapping
         that yields 17+15 with both lines half-full and wide margins on both
-        sides; dropping to 37px keeps it on one line. Only gaps under 6% are
+        sides; dropping to 37px keeps it on one line. Only gaps under 7% are
         absorbed — anything wider genuinely needs two lines.
         """
         need = text_width(chinese, self.font_size)
         if not chinese or need <= self.text_width:
             return self.font_size, self.english_size
         scale = self.text_width/need
-        if scale < .94:
+        if scale < .93:
             return self.font_size, self.english_size
         chinese_size = max(1, int(self.font_size*scale))
         return chinese_size, max(1, int(round(chinese_size*self.english_ratio)))
