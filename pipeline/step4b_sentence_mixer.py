@@ -29,7 +29,7 @@ _TTS_TARGET_DBFS = getattr(config, "TTS_TARGET_DBFS", -20.0)
 _DEFAULT_GAP_MS = getattr(config, "MIXER_DEFAULT_GAP_MS", 150)
 
 # 句首/句尾淡入淡出（毫秒），平滑音色衔接
-_FADE_MS = getattr(config, "MIXER_FADE_MS", 60)
+_FADE_MS = getattr(config, "MIXER_FADE_MS", 20)
 
 # 动态间隙约束：基于原始音频 inter-segment gap 的 min/max 硬限制
 _DYNAMIC_GAP_MIN_MS = getattr(config, "DYNAMIC_GAP_MIN_MS", 120)
@@ -48,16 +48,22 @@ _COMPRESSOR_RELEASE_MS = getattr(config, "COMPRESSOR_RELEASE_MS", 50.0)
 _LIMITER_THRESHOLD_DB = getattr(config, "LIMITER_THRESHOLD_DB", -1.0)
 
 
-def _trim_edge_silence(audio: AudioSegment) -> AudioSegment:
-    """Remove only quiet outer padding, leaving 60ms around speech on each side."""
+def _trim_edge_silence(audio: AudioSegment, *, silence_db: float = -42.0,
+                       keep_ms: int = 30) -> AudioSegment:
+    """裁掉首尾静音，只保留 keep_ms 缓冲。
+
+    VoxCPM2 每句尾部会带一段低电平底噪（约 -45dB），用 -50dB 阈值检测不到，
+    拼接后会累积成明显的句间停顿；-42dB 能吃掉这段底噪，同时保留 30ms
+    缓冲避免切到句首轻声辅音。
+    """
     from pydub.silence import detect_leading_silence
     if audio.dBFS == float('-inf'):
         return audio
-    head = detect_leading_silence(audio, silence_threshold=-50, chunk_size=5)
-    tail = detect_leading_silence(audio.reverse(), silence_threshold=-50, chunk_size=5)
+    head = detect_leading_silence(audio, silence_threshold=silence_db, chunk_size=5)
+    tail = detect_leading_silence(audio.reverse(), silence_threshold=silence_db, chunk_size=5)
     if head + tail >= len(audio):
         return audio
-    return audio[max(0, head-60):len(audio)-max(0, tail-60)]
+    return audio[max(0, head-keep_ms):len(audio)-max(0, tail-keep_ms)]
 
 
 def _normalize_tts_audio(audio: AudioSegment,
