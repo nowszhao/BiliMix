@@ -309,7 +309,9 @@ def _assemble_analysis(words, media_hash, native, require_verified, audio_path=N
         issue["word_ids"].append(word["word_id"])
         issue["speaker_candidates"] = sorted(set(issue["speaker_candidates"]) | set(word["speaker_candidates"]))
     expected = {word["speaker"] for word in words if known_speaker(word["speaker"])}
-    expected.update(s for word in words for s in word["speaker_candidates"] if known_speaker(s))
+    # Acoustic shortlists are evidence, not assigned speakers. A voice that
+    # never owns a word needs no cloning reference; counting it here used to
+    # make single-speaker talks look like someone was missing a reference.
     missing = sorted(expected - references.keys())
     value = dict(schema_version=1, analysis_revision=ANALYSIS_REVISION, source_media_sha256=media_hash,
                  words=words, turns=turns, references=references, speaker_turns=native or [], sentences=sentences,
