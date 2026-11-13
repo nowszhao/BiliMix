@@ -244,6 +244,9 @@ SUBSCRIPTION_REFRESH_INTERVAL_MINUTES = 60
 # 动态句间间隙：基于原始音频 inter-segment gap 的硬限制
 # 是否启用动态间隙（False 则回退到 SENTENCE_GAP_MS / SENTENCE_FULL_GAP_MS）
 DYNAMIC_GAP_ENABLED = True
+# 句间间隙至少保留原片长度：原片停顿里往往正在操作界面，压缩会让画面
+# 以 3-10 倍速跳过，观感是「画面跑到别的地方了」。False 可回到旧的压缩行为。
+PRESERVE_SOURCE_GAP = True
 # 动态间隙最小毫秒数（防止抢话粘连感）
 DYNAMIC_GAP_MIN_MS = 120
 # 动态间隙最大毫秒数（防止过长停顿感）

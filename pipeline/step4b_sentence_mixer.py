@@ -410,6 +410,15 @@ def mix_sentence_audio(
             if audio_first:
                 cur_gap_ms = additional_pause_ms(seg, segments[next_seg_idx],
                     edge_silence[seg_idx][1], edge_silence[next_seg_idx][0])
+                # 原片句间的停顿里往往正在操作界面。把 1-2 秒压成 220ms 会让画面
+                # 以 3-10 倍速跳过去，观众看到的是「画面跑到别的地方了」。
+                # 这里保留原片间隙长度，只扣掉 TTS 自身的首尾静音。
+                if getattr(config, "PRESERVE_SOURCE_GAP", True):
+                    _tail = edge_silence.get(seg_idx, (0.0, 0.0))[1]
+                    _head = edge_silence.get(next_seg_idx, (0.0, 0.0))[0]
+                    _orig_gap_ms = max(0.0, (segments[next_seg_idx].get("start", 0.0)
+                                             - seg.get("end", 0.0)) * 1000.0)
+                    cur_gap_ms = max(cur_gap_ms, _orig_gap_ms - _tail - _head)
             elif use_dynamic:
                 cur_gap_ms = _compute_dynamic_gap_ms(
                     segments, seg_idx, next_seg_idx)
