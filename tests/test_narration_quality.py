@@ -187,6 +187,15 @@ def test_short_reply_duration_check_excludes_silence():
     assert len(report['chunks'][0]['attempts']) == 1
 
 
+def test_persistently_drawn_out_short_reply_is_rejected():
+    from pipeline.tts_narration import synthesize_narration, NarrationQualityError
+    with pytest.raises(NarrationQualityError) as error:
+        synthesize_narration('嗯。', 'zh', 'A', lambda *args: waveform(3), 24000)
+    attempts = error.value.report['chunks'][0]['attempts']
+    assert len(attempts) == 3
+    assert all('short_utterance_too_slow' in attempt['reasons'] for attempt in attempts)
+
+
 def test_atomic_synthesis_requires_matching_report_and_audio(tmp_path):
     from pipeline.tts_narration import write_synthesis, cached_synthesis_valid
     path = tmp_path/'speech.wav'

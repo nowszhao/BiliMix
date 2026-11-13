@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core import config
 from core import tts_jobs
-from pipeline import tts_direct
+from pipeline import tts_direct, tts_narration
 from services.tts_api import tts_bp
 
 TERMINAL = ("completed", "error", "cancelled")
@@ -250,8 +250,8 @@ class TestTtsApi:
         result = client.get(f"/api/tts/{job_id}/result").get_json()
         assert result["texts"] == ["单条文本"]
 
-    def test_resubmit_is_idempotent(self, client, job_root, ref_audio,
-                                    monkeypatch):
+    def test_resubmit_reuses_only_same_narration_policy(self, client, job_root,
+                                                        ref_audio, monkeypatch):
         monkeypatch.setattr("services.tts_api.synthesize_texts",
                             _fake_synthesize)
         body = {"ref_audio": ref_audio, "texts": ["幂等"]}
@@ -263,6 +263,14 @@ class TestTtsApi:
         assert second.status_code == 200
         assert second.get_json()["reused"] is True
         assert second.get_json()["job_id"] == job_id
+
+        monkeypatch.setattr(tts_narration, "POLICY_VERSION", tts_narration.POLICY_VERSION + 1)
+        upgraded = client.post("/api/tts/synthesize", json=body)
+        assert upgraded.status_code == 202
+        new_id = upgraded.get_json()["job_id"]
+        assert new_id != job_id
+        assert _wait_terminal(client, new_id)["status"] == "completed"
+        assert client.get(f"/api/tts/{job_id}/result").get_json()["output_count"] == 1
 
     def test_rejects_ref_outside_data_dir(self, client):
         resp = client.post("/api/tts/synthesize", json={
