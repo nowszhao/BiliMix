@@ -144,11 +144,16 @@ function findSegmentByOriginalTime(originalTime) {
     let newIndex = -1;
     for (let i = 0; i < segmentsData.length; i++) {
         const seg = segmentsData[i];
-        if (originalTime >= seg.start && originalTime <= seg.end) {
+        const start = seg.start_orig !== undefined ? seg.start_orig : seg.start;
+        const end = seg.end_orig !== undefined ? seg.end_orig : seg.end;
+        if (originalTime >= start && originalTime <= end) {
             newIndex = i;
             break;
         }
-        if (i > 0 && originalTime > segmentsData[i - 1].end && originalTime < seg.start) {
+        const prevEnd = i > 0
+            ? (segmentsData[i - 1].end_orig !== undefined ? segmentsData[i - 1].end_orig : segmentsData[i - 1].end)
+            : -1;
+        if (i > 0 && originalTime > prevEnd && originalTime < start) {
             newIndex = i - 1;
             break;
         }
@@ -156,9 +161,55 @@ function findSegmentByOriginalTime(originalTime) {
 
     if (newIndex === -1 && segmentsData.length > 0) {
         const last = segmentsData[segmentsData.length - 1];
-        if (originalTime >= last.start) newIndex = segmentsData.length - 1;
+        const lastStart = last.start_orig !== undefined ? last.start_orig : last.start;
+        if (originalTime >= lastStart) newIndex = segmentsData.length - 1;
     }
     return newIndex;
+}
+
+function _segmentNumber(value, fallback) {
+    const number = parseFloat(value);
+    return Number.isFinite(number) ? number : fallback;
+}
+
+/** Start time of a segment on the requested clock. */
+function segmentStart(seg, timeline) {
+    if (!seg) return 0;
+    if (timeline === 'original') {
+        return _segmentNumber(seg.start_orig, _segmentNumber(seg.start, 0));
+    }
+    return _segmentNumber(seg.start_mixed, _segmentNumber(seg.start, 0));
+}
+
+/**
+ * Seek the transcript row using the clock of whichever player is active.
+ * Source time must never be written into the compressed dubbed timeline.
+ */
+function seekToSegmentEl(el) {
+    if (!el) return;
+    const original = _segmentNumber(el.dataset.startOrig,
+                                    _segmentNumber(el.dataset.start, 0));
+    const mixed = _segmentNumber(el.dataset.startMixed, original);
+    if (typeof isFullscreen !== 'undefined' && isFullscreen) {
+        const fsAudio = document.getElementById('fullscreen-audio');
+        if (fsAudio) {
+            fsAudio.currentTime = fullscreenAudioSource === 'original' ? original : mixed;
+            if (fsAudio.paused) fsAudio.play().catch(() => {});
+        }
+        return;
+    }
+    const originalAudio = document.getElementById('original-audio');
+    const mixedAudio = document.getElementById('mixed-audio');
+    // Rows show the dubbed clock; only prefer source time while the original
+    // track is actually the one playing.
+    const mixedActive = mixedAudio && mixedAudio.src && (!originalAudio || originalAudio.paused);
+    if (mixedActive) {
+        mixedAudio.currentTime = mixed;
+        mixedAudio.play().catch(() => {});
+    } else if (originalAudio) {
+        originalAudio.currentTime = original;
+        originalAudio.play().catch(() => {});
+    }
 }
 
 function highlightSegment(index) {
@@ -266,10 +317,7 @@ function toggleTranscriptFullscreen() {
         }
 
         fsContainer.querySelectorAll('.transcript-segment').forEach(seg => {
-            seg.addEventListener('click', () => {
-                const start = parseFloat(seg.dataset.start);
-                seekToSegment(start);
-            });
+            seg.addEventListener('click', () => seekToSegmentEl(seg));
         });
 
         overlay.classList.add('open');

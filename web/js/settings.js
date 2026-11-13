@@ -1018,7 +1018,8 @@ function renderTaskDetailPage(data) {
     window._taskDetailData = data;
     switchDetailSource('dubbed');
 
-    const segs = data.segments||[];
+    const segs = (data.display_segments && data.display_segments.length)
+        ? data.display_segments : (data.segments||[]);
     let sp = data.sentence_pairs||[];
     if (sp.length===0 && data.translations && data.translated_indices) {
         const idxs = [...data.translated_indices].sort((a,b)=>a-b);
@@ -1038,8 +1039,12 @@ function _renderCompletedTaskDetail(task) {
     const basename = task.basename || ((task.result || {}).basename) || '';
     const mixedAudio = (task.result || {}).mixed_audio || '';
     const originalAudio = (task.result || {}).original_audio || '';
-    const segments = task.segments || [];
+    const segments = (task.display_segments && task.display_segments.length)
+        ? task.display_segments : (task.segments || []);
     const pairs = task.sentence_pairs || [];
+    const mixedTimes = {};
+    pairs.forEach(p => { mixedTimes[p.index] = p; });
+    window._panelSource = 'dubbed';
     const mixedDur = formatTime(task.mixed_duration || 0);
     const dlMedia = task.resolved_mixed_url || '';
     const safeTitle = _safeFilename(task.title || '配音');
@@ -1055,7 +1060,9 @@ function _renderCompletedTaskDetail(task) {
         html += `<button class="task-detail-source-tab active" id="dp-tab-dub" onclick="_switchPanelSource('dubbed')">配音</button>`;
         html += `<button class="task-detail-source-tab" id="dp-tab-orig" onclick="_switchPanelSource('original')">原始</button>`;
         html += `</div>`;
-        html += `<div class="task-detail-player-box" id="dp-video-box"><video id="dp-video" controls preload="metadata"></video></div>`;
+        const initialVideo = (task.video_result || {}).video_url || '';
+        const videoSrc = initialVideo ? ` src="${escapeAttr(initialVideo)}"` : '';
+        html += `<div class="task-detail-player-box" id="dp-video-box"><video id="dp-video" controls preload="metadata"${videoSrc}></video></div>`;
     } else {
         // 音频：双轨播放
         html += `<div class="task-detail-player-box">`;
@@ -1095,34 +1102,30 @@ function _renderCompletedTaskDetail(task) {
         const tmap = {};
         if (pairs) pairs.forEach(p => { tmap[p.index] = p.chinese; });
         html += segments.map((seg, i) => {
-            const t = formatTime(seg.start || 0);
+            const times = _panelSegmentTimes(seg, i, mixedTimes);
             const en = (seg.text || '').trim();
-            const cn = tmap[i] || '';
-            return `<div class="transcript-segment ${cn ? 'has-translation' : ''}" data-start="${seg.start || 0}" data-end="${seg.end || (seg.start || 0) + 5}"
-                onclick="(function(){var a=document.getElementById('dp-mixed-audio')||document.getElementById('dp-original-audio');if(a){a.currentTime=${seg.start || 0};a.play().catch(function(){})}})()">
-                <span class="segment-time">${t}</span><div class="segment-content"><span class="segment-text">${escapeHtml(en)}</span>
+            const cn = seg.chinese || tmap[seg.index !== undefined ? seg.index : i] || '';
+            return `<div class="transcript-segment ${cn ? 'has-translation' : ''}"
+                data-start="${times.mixedStart}" data-end="${times.mixedEnd}"
+                data-start-orig="${times.origStart}" data-end-orig="${times.origEnd}"
+                data-start-mixed="${times.mixedStart}" data-end-mixed="${times.mixedEnd}"
+                onclick="_seekPanelTranscript(this)">
+                <span class="segment-time">${formatTime(times.mixedStart)}</span><div class="segment-content"><span class="segment-text">${escapeHtml(en)}</span>
                 ${cn ? `<span class="segment-chinese">${escapeHtml(cn)}</span>` : ''}</div></div>`;
         }).join('');
         html += `</div></div>`;
     }
 
-    // 时间轴同步
+    // 时间轴同步：配音视频/混合音频用混合时间，原始视频/原声用源时间
     setTimeout(() => {
-        const containers = document.querySelectorAll('#dp-transcript');
-        const audioEls = document.querySelectorAll('#dp-mixed-audio, #dp-original-audio');
-        if (containers.length && audioEls.length) {
-            audioEls.forEach(audio => {
-                audio.ontimeupdate = function () {
-                    const ct = audio.currentTime;
-                    containers.forEach(c => {
-                        c.querySelectorAll('.transcript-segment').forEach(el => {
-                            const s = parseFloat(el.dataset.start || 0), e = parseFloat(el.dataset.end || s + 5);
-                            el.classList.toggle('active', ct >= s - 0.1 && ct < e);
-                        });
-                    });
-                };
-            });
-        }
+        const hook = (element, clock) => {
+            if (element) element.ontimeupdate = function () {
+                _highlightPanelTranscript(clock || _panelClock(), element.currentTime);
+            };
+        };
+        hook(document.getElementById('dp-video'), null);
+        hook(document.getElementById('dp-mixed-audio'), 'mixed');
+        hook(document.getElementById('dp-original-audio'), 'original');
     }, 200);
 
     // 操作按钮
@@ -1135,12 +1138,90 @@ function _renderCompletedTaskDetail(task) {
 function _switchPanelSource(src) {
     const data = window._taskDetailData;
     if (!data) return;
+    // Without an original media URL the player keeps the dubbed source, so the
+    // transcript must keep the dubbed clock as well.
+    const originalUrl = data.original_video_url || '';
+    window._panelSource = (src === 'original' && !originalUrl) ? 'dubbed' : src;
     document.getElementById('dp-tab-dub').classList.toggle('active', src === 'dubbed');
     document.getElementById('dp-tab-orig').classList.toggle('active', src === 'original');
     const ve = document.getElementById('dp-video');
     if (!ve) return;
     let url = src === 'dubbed' ? ((data.video_result || {}).video_url || '') : (data.original_video_url || '');
     if (url) { ve.src = url; ve.load(); }
+    _refreshPanelTranscriptClock();
+}
+
+/** Keep the panel's time labels and highlight on the active source clock. */
+function _refreshPanelTranscriptClock() {
+    const panel = document.getElementById('dp-transcript');
+    if (!panel) return;
+    const clock = _panelClock();
+    panel.querySelectorAll('.transcript-segment').forEach(function(el) {
+        const start = clock === 'original' ? el.dataset.startOrig : el.dataset.startMixed;
+        const end = clock === 'original' ? el.dataset.endOrig : el.dataset.endMixed;
+        if (start !== undefined) el.dataset.start = start;
+        if (end !== undefined) el.dataset.end = end;
+        const label = el.querySelector('.segment-time');
+        if (label && typeof formatTime === 'function') {
+            label.textContent = formatTime(parseFloat(start || '0'));
+        }
+    });
+    const video = document.getElementById('dp-video');
+    if (video) _highlightPanelTranscript(clock, video.currentTime);
+}
+
+function _panelSegmentTimes(seg, index, mixedTimes) {
+    const times = _detailSegmentTimes(seg);
+    const pair = mixedTimes ? mixedTimes[index] : null;
+    if ((seg.start_mixed === undefined || seg.start_mixed === null) && pair
+            && pair.start !== undefined) {
+        times.mixedStart = parseFloat(pair.start) || 0;
+        times.mixedEnd = parseFloat(pair.end) || times.mixedStart;
+    }
+    return times;
+}
+
+function _panelClock() {
+    return window._panelSource === 'original' ? 'original' : 'mixed';
+}
+
+function _highlightPanelTranscript(clock, seconds) {
+    const panel = document.getElementById('dp-transcript');
+    if (!panel) return;
+    panel.querySelectorAll('.transcript-segment').forEach(function(el) {
+        const start = clock === 'original'
+            ? parseFloat(el.dataset.startOrig || '0')
+            : parseFloat(el.dataset.startMixed || '0');
+        const end = clock === 'original'
+            ? parseFloat(el.dataset.endOrig || String(start + 5))
+            : parseFloat(el.dataset.endMixed || String(start + 5));
+        el.classList.toggle('active', seconds >= start - 0.05 && seconds < end);
+    });
+}
+
+function _seekPanelTranscript(el) {
+    if (!el) return;
+    const original = parseFloat(el.dataset.startOrig || '0') || 0;
+    const mixed = parseFloat(el.dataset.startMixed || el.dataset.startOrig || '0') || 0;
+    const video = document.getElementById('dp-video');
+    const mixedAudio = document.getElementById('dp-mixed-audio');
+    const originalAudio = document.getElementById('dp-original-audio');
+    let target = null, time = original;
+    if (video && video.src) {
+        target = video;
+        time = _panelClock() === 'original' ? original : mixed;
+    } else if (mixedAudio && mixedAudio.src
+            && (!originalAudio || !originalAudio.paused || mixedAudio.currentTime > 0)) {
+        target = mixedAudio;
+        time = mixed;
+    } else if (originalAudio) {
+        target = originalAudio;
+        time = original;
+    } else if (mixedAudio) {
+        target = mixedAudio;
+        time = mixed;
+    }
+    if (target) { target.currentTime = time; target.play().catch(function(){}); }
 }
 
 // 完整任务详情页
@@ -1148,6 +1229,10 @@ function _switchPanelSource(src) {
 function switchDetailSource(src) {
     const data = window._taskDetailData; if (!data) return;
     const isVideo = (data.type==='video'||data.process_mode==='video');
+    // The original tab cannot load without a URL; keep the dubbed clock so a
+    // row click never seeks the dubbed file with source time.
+    window._detailSource = (isVideo && src === 'original' && !(data.original_video_url || ''))
+        ? 'dubbed' : src;
     document.getElementById('dt-orig').classList.toggle('active', src==='original');
     document.getElementById('dt-dub').classList.toggle('active', src==='dubbed');
     const ve = document.getElementById('detail-video');
@@ -1179,26 +1264,97 @@ function switchDetailSource(src) {
         if (path) { ae.src = path; ae.load(); }
         ds.href = src==='dubbed' ? ('/api/audio/'+encodePath(bn)+'/'+encodePath(bn)+'.srt') : '#';
     }
+    _refreshDetailTranscriptClock();
+}
+
+function _detailSegmentTimes(seg) {
+    const origStart = parseFloat(seg.start_orig !== undefined ? seg.start_orig : (seg.start || 0)) || 0;
+    let origEnd = parseFloat(seg.end_orig !== undefined ? seg.end_orig : (seg.end || 0));
+    if (!Number.isFinite(origEnd)) origEnd = origStart + 5;
+    const hasMixed = seg.start_mixed !== undefined && seg.start_mixed !== null;
+    const mixedStart = parseFloat(hasMixed ? seg.start_mixed : (seg.start || 0)) || 0;
+    let mixedEnd = parseFloat(seg.end_mixed !== undefined && seg.end_mixed !== null
+        ? seg.end_mixed : (seg.end || 0));
+    if (!Number.isFinite(mixedEnd)) mixedEnd = mixedStart + 5;
+    return {origStart: origStart, origEnd: origEnd, mixedStart: mixedStart, mixedEnd: mixedEnd};
+}
+
+function _detailClock() {
+    return window._detailSource === 'original' ? 'original' : 'mixed';
+}
+
+function _seekDetailTranscript(el) {
+    if (!el) return;
+    const original = parseFloat(el.dataset.startOrig || '0') || 0;
+    const mixed = parseFloat(el.dataset.startMixed || el.dataset.startOrig || '0') || 0;
+    const time = _detailClock() === 'original' ? original : mixed;
+    const video = document.getElementById('detail-video');
+    const audio = document.getElementById('detail-audio');
+    const target = (video && video.src) ? video : audio;
+    if (target) {
+        target.currentTime = time;
+        target.play().catch(function(){});
+    }
+}
+
+function _highlightDetailTranscript(seconds) {
+    const c = document.getElementById('detail-transcript-container');
+    if (!c) return;
+    const clock = _detailClock();
+    c.querySelectorAll('.transcript-segment').forEach(function(el){
+        const start = clock === 'original'
+            ? parseFloat(el.dataset.startOrig || '0')
+            : parseFloat(el.dataset.startMixed || '0');
+        const end = clock === 'original'
+            ? parseFloat(el.dataset.endOrig || String(start + 5))
+            : parseFloat(el.dataset.endMixed || String(start + 5));
+        el.classList.toggle('active', seconds >= start - 0.05 && seconds < end);
+    });
+}
+
+/** Keep the visible time labels on the clock of the active source. */
+function _refreshDetailTranscriptClock() {
+    const c = document.getElementById('detail-transcript-container');
+    if (!c) return;
+    const clock = _detailClock();
+    c.querySelectorAll('.transcript-segment').forEach(function(el){
+        const start = clock === 'original' ? el.dataset.startOrig : el.dataset.startMixed;
+        const end = clock === 'original' ? el.dataset.endOrig : el.dataset.endMixed;
+        if (start !== undefined) el.dataset.start = start;
+        if (end !== undefined) el.dataset.end = end;
+        const label = el.querySelector('.segment-time');
+        if (label && typeof formatTime === 'function') {
+            label.textContent = formatTime(parseFloat(start || '0'));
+        }
+    });
+    const video = document.getElementById('detail-video');
+    if (video) _highlightDetailTranscript(video.currentTime);
+    const audio = document.getElementById('detail-audio');
+    if (audio) _highlightDetailTranscript(audio.currentTime);
 }
 
 function _renderDetailTranscript(segments, pairs) {
     const c = document.getElementById('detail-transcript-container'); if (!c||!segments) return;
     const tmap={}; if(pairs)pairs.forEach(p=>{tmap[p.index]=p.chinese;});
+    const clock = _detailClock();
     c.innerHTML = segments.map((seg,i)=>{
-        const t=typeof formatTime==='function'?formatTime(seg.start||0):'0:00';
-        const en=(seg.text||'').trim(); const cn=tmap[i]||'';
-        return `<div class="transcript-segment ${cn?'has-translation':''}" data-start="${seg.start||0}" data-end="${seg.end||(seg.start||0)+5}"
-            onclick="(function(){var v=document.getElementById('detail-video');var a=document.getElementById('detail-audio');var m=v&&v.src?v:a;if(m){m.currentTime=${seg.start||0};m.play().catch(function(){})}})()">
-            <span class="segment-time">${t}</span><div class="segment-content"><span class="segment-text">${escapeHtml(en)}</span>
+        const times = _detailSegmentTimes(seg);
+        const start = clock === 'original' ? times.origStart : times.mixedStart;
+        const end = clock === 'original' ? times.origEnd : times.mixedEnd;
+        const en=(seg.text||'').trim();
+        const cn=seg.chinese || tmap[seg.index !== undefined ? seg.index : i] || '';
+        return `<div class="transcript-segment ${cn?'has-translation':''}"
+            data-start="${start}" data-end="${end}"
+            data-start-orig="${times.origStart}" data-end-orig="${times.origEnd}"
+            data-start-mixed="${times.mixedStart}" data-end-mixed="${times.mixedEnd}"
+            onclick="_seekDetailTranscript(this)">
+            <span class="segment-time">${typeof formatTime==='function'?formatTime(start):'0:00'}</span><div class="segment-content"><span class="segment-text">${escapeHtml(en)}</span>
             ${cn?`<span class="segment-chinese">${escapeHtml(cn)}</span>`:''}</div></div>`;
     }).join('');
     var ve=document.getElementById('detail-video');
-    if(ve) ve.ontimeupdate=function(){ var ct=ve.currentTime;
-        c.querySelectorAll('.transcript-segment').forEach(function(el){
-            var s=parseFloat(el.dataset.start||0), e=parseFloat(el.dataset.end||s+5);
-            el.classList.toggle('active', ct>=s-0.1 && ct<e);
-        });
-    };
+    if(ve) ve.ontimeupdate=function(){ _highlightDetailTranscript(ve.currentTime); };
+    var ae=document.getElementById('detail-audio');
+    if(ae) ae.ontimeupdate=function(){ _highlightDetailTranscript(ae.currentTime); };
 }
 
 function renderProcessingTaskDetail(task) {

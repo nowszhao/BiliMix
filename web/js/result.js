@@ -110,9 +110,12 @@ async function renderVideoResult(data) {
         dlSrtBtn.download = (data.title || 'subtitles') + '.ass';
     }
 
-    // 双语字幕渲染
-    if (sentencePairs.length > 0) {
-        renderVideoTranscript(data.segments, sentencePairs);
+    // 双语字幕渲染：优先使用服务端返回的双时间轴，配音视频按混合时间轴定位
+    const displaySegments = data.display_segments || [];
+    if (displaySegments.length > 0) {
+        renderVideoTranscript(displaySegments);
+    } else if (sentencePairs.length > 0) {
+        renderVideoTranscript(data.segments || [], sentencePairs);
     }
 }
 
@@ -129,22 +132,27 @@ function renderVideoTranscript(segments, sentencePairs) {
 
     const infoEl = document.getElementById('vtranscript-info');
     if (infoEl) {
-        infoEl.textContent = `共 ${(segments || []).length} 个句子，${sentencePairs?.length || 0} 句翻译`;
+        const translated = (segments || []).filter(
+            (s, i) => s.chinese || translationMap[s.index !== undefined ? s.index : i]).length;
+        infoEl.textContent = `共 ${(segments || []).length} 个句子，${translated} 句翻译`;
     }
 
     let html = '';
     (segments || []).forEach((seg, idx) => {
-        const time = formatTime(seg.start);
+        const startMixed = segmentStart(seg, 'mixed');
+        const endMixed = _segmentNumber(seg.end_mixed, _segmentNumber(seg.end, startMixed + 5));
+        const startOrig = segmentStart(seg, 'original');
         const english = (seg.text || '').trim();
-        const chinese = translationMap[idx] || '';
+        const chinese = seg.chinese || translationMap[seg.index !== undefined ? seg.index : idx] || '';
         segmentsData[idx] = segmentsData[idx] || {};
         segmentsData[idx]._chinese = chinese;
 
         html += `
             <div class="transcript-segment ${chinese ? 'has-translation' : ''}"
-                 data-index="${idx}" data-start="${seg.start}" data-end="${seg.end}"
-                 onclick="seekVideoToSegment(${seg.start})">
-                <span class="segment-time">${time}</span>
+                 data-index="${idx}" data-start="${startMixed}" data-end="${endMixed}"
+                 data-start-orig="${startOrig}" data-start-mixed="${startMixed}"
+                 onclick="seekVideoToSegment(${startMixed})">
+                <span class="segment-time">${formatTime(startMixed)}</span>
                 <div class="segment-content">
                     <span class="segment-text">${escapeHtml(english)}</span>
                     ${chinese ? `<span class="segment-chinese">${escapeHtml(chinese)}</span>` : ''}
@@ -154,6 +162,19 @@ function renderVideoTranscript(segments, sentencePairs) {
     });
 
     container.innerHTML = html;
+
+    // 高亮跟随配音视频的混合时间轴，不能复用原始时间。
+    const video = document.getElementById('dubbed-video');
+    if (video) {
+        video.ontimeupdate = function () {
+            const current = video.currentTime;
+            container.querySelectorAll('.transcript-segment').forEach(el => {
+                const start = parseFloat(el.dataset.start || '0');
+                const end = parseFloat(el.dataset.end || String(start + 5));
+                el.classList.toggle('active-segment', current >= start - 0.05 && current < end);
+            });
+        };
+    }
 }
 
 function seekVideoToSegment(time) {
@@ -216,7 +237,9 @@ function renderResult(data) {
         return;
     }
 
-    renderTranscriptSentenceMode(data.segments, sentencePairs, null);
+    const transcriptSegments = (data.display_segments && data.display_segments.length)
+        ? data.display_segments : data.segments;
+    renderTranscriptSentenceMode(transcriptSegments, sentencePairs, null);
 }
 
 // ============================================================
@@ -243,7 +266,9 @@ function renderTranscript(segments, difficultWords) {
 
     let html = '';
     segments.forEach((seg, idx) => {
-        const time = formatTime(seg.start);
+        const startMixed = segmentStart(seg, 'mixed');
+        const endMixed = _segmentNumber(seg.end_mixed, _segmentNumber(seg.end, startMixed + 5));
+        const startOrig = segmentStart(seg, 'original');
         let text = seg.text || '';
 
         Object.keys(dwSet).sort((a, b) => b.length - a.length).forEach(eng => {
@@ -252,8 +277,11 @@ function renderTranscript(segments, difficultWords) {
         });
 
         html += `
-            <div class="transcript-segment" data-index="${idx}" data-start="${seg.start}" data-end="${seg.end}" onclick="seekToSegment(${seg.start})">
-                <span class="segment-time">${time}</span>
+            <div class="transcript-segment" data-index="${idx}"
+                 data-start="${startMixed}" data-end="${endMixed}"
+                 data-start-orig="${startOrig}" data-start-mixed="${startMixed}"
+                 onclick="seekToSegmentEl(this)">
+                <span class="segment-time">${formatTime(startMixed)}</span>
                 <span class="segment-text">${text}</span>
             </div>
         `;
@@ -295,9 +323,12 @@ function renderTranscriptSentenceMode(segments, sentencePairs, difficultWords) {
 
     let html = '';
     segments.forEach((seg, idx) => {
-        const time = formatTime(seg.start);
+        const startMixed = segmentStart(seg, 'mixed');
+        const endMixed = _segmentNumber(seg.end_mixed, _segmentNumber(seg.end, startMixed + 5));
+        const startOrig = segmentStart(seg, 'original');
+        const endOrig = _segmentNumber(seg.end_orig, _segmentNumber(seg.end, startMixed + 5));
         let text = seg.text || '';
-        const chinese = translationMap[idx];
+        const chinese = seg.chinese || translationMap[idx];
         segmentsData[idx]._chinese = chinese;  // 供 copyTranscript 使用
 
         if (hasDW) {
@@ -313,8 +344,12 @@ function renderTranscriptSentenceMode(segments, sentencePairs, difficultWords) {
         }
 
         html += `
-            <div class="transcript-segment ${chinese ? 'has-translation' : ''}" data-index="${idx}" data-start="${seg.start}" data-end="${seg.end}" onclick="seekToSegment(${seg.start})">
-                <span class="segment-time">${time}</span>
+            <div class="transcript-segment ${chinese ? 'has-translation' : ''}" data-index="${idx}"
+                 data-start="${startMixed}" data-end="${endMixed}"
+                 data-start-orig="${startOrig}" data-end-orig="${endOrig}"
+                 data-start-mixed="${startMixed}" data-end-mixed="${endMixed}"
+                 onclick="seekToSegmentEl(this)">
+                <span class="segment-time">${formatTime(startMixed)}</span>
                 <div class="segment-content">
                     <span class="segment-text">${text}</span>
                     ${chinese ? `<span class="segment-chinese">${escapeHtml(chinese)}</span>` : ''}

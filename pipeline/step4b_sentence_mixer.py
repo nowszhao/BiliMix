@@ -180,6 +180,58 @@ def _compute_dynamic_gap_ms(segments: list, seg_idx: int,
     return max(_DYNAMIC_GAP_MIN_MS, min(raw_gap_ms, _DYNAMIC_GAP_MAX_MS))
 
 
+def _speech_spans_ms(audio: AudioSegment, *, window_ms: int = 10,
+                     min_gap_ms: int = 120, min_span_ms: int = 40,
+                     pad_ms: int = 40) -> list:
+    """Measure voiced spans inside one synthesized clip (milliseconds).
+
+    Caption pages are positioned by real speech progress, not by character
+    count, so an inserted punctuation pause must stay visible as a gap here.
+    """
+    import numpy as np
+    if not len(audio):
+        return []
+    samples = np.asarray(audio.get_array_of_samples(), dtype=np.float32)
+    if audio.channels > 1:
+        samples = samples.reshape(-1, audio.channels).mean(axis=1)
+    scale = float(1 << (audio.sample_width * 8 - 1)) or 1.0
+    samples = samples / scale
+    window = max(1, int(round(audio.frame_rate * window_ms / 1000)))
+    usable = (len(samples) // window) * window
+    if usable <= 0:
+        return []
+    rms = np.sqrt(np.mean(samples[:usable].reshape(-1, window) ** 2, axis=1))
+    peak = float(rms.max())
+    if peak <= 1e-4:
+        return []
+    # VoxCPM2 leaves a ~-45dB floor between words. Treat anything more than
+    # ~18dB below the loudest syllable as a pause, not as speech.
+    active = rms > max(2e-3, peak * .12)
+    spans, start = [], None
+    for index, voiced in enumerate(active):
+        if voiced and start is None:
+            start = index
+        elif not voiced and start is not None:
+            spans.append((start, index))
+            start = None
+    if start is not None:
+        spans.append((start, len(active)))
+    merged = []
+    for left, right in spans:
+        if merged and (left - merged[-1][1]) * window_ms < min_gap_ms:
+            merged[-1] = (merged[-1][0], right)
+        else:
+            merged.append((left, right))
+    result = []
+    duration_ms = len(audio)
+    for left, right in merged:
+        begin = max(0, left * window_ms - pad_ms)
+        finish = min(duration_ms, right * window_ms + pad_ms)
+        if finish - begin >= min_span_ms:
+            result.append([begin, finish])
+    return result
+
+
 def mix_sentence_audio(
     audio_path: str,
     segments: list,
@@ -314,6 +366,7 @@ def mix_sentence_audio(
             tts_clip = _apply_dynamics_processing(tts_clip)
             tts_clip = tts_clip.fade_in(_FADE_MS).fade_out(_FADE_MS)
             tts_len_ms = tts_clip.frame_count() * 1000.0 / target_sr
+            spans_ms = _speech_spans_ms(tts_clip)
 
             result += tts_clip
 
@@ -323,6 +376,7 @@ def mix_sentence_audio(
         else:
             # TTS 缺失：插入固定间隙，保持时间轴连贯
             tts_len_ms = _DEFAULT_GAP_MS
+            spans_ms = []
             entry_type = "silence"
             print(f"  [{seg_idx}] [跳过] TTS 文件缺失，停顿 {tts_len_ms}ms")
 
@@ -341,6 +395,11 @@ def mix_sentence_audio(
             "unit_id": seg.get("unit_id", str(seg_idx)),
             "speaker": seg.get("speaker", ""),
             "chinese": chinese_text if entry_type == "tts_chinese" else "",
+            # Absolute voiced spans on the mixed timeline: caption pagination
+            # uses these instead of assuming an even character rate.
+            "speech_spans": [[round(start_s + left / 1000.0, 3),
+                              round(start_s + right / 1000.0, 3)]
+                             for left, right in spans_ms],
         })
 
         mixed_pos_ms += tts_len_ms

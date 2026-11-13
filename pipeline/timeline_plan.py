@@ -61,16 +61,28 @@ def video_chains(entries, fps=25, include_trailing_gap=False):
     return parts
 
 
-def caption_entries(segment, start, end, english, chinese):
+def caption_entries(segment, start, end, english, chinese, speech_spans=None):
+    from pipeline.subtitle_layout import voiced_boundaries
     captions = segment.get("captions") or []
+    spans = speech_spans or []
     if not captions:
-        return [{"start": start, "end": end, "english": english, "chinese": chinese, "speaker": segment.get("speaker", "")}]
-    # Display-only estimate. It never splits/resynthesizes speech or adds gaps.
-    total = sum(max(1, len(c["text_zh"])) for c in captions)
-    cursor, result = start, []
+        return [{"start": start, "end": end, "english": english, "chinese": chinese,
+                 "speaker": segment.get("speaker", ""), "speech_spans": list(spans)}]
+    # Display-only split. Time follows measured voiced spans, never synthesis.
+    weights = [max(1, len(c["text_zh"])) for c in captions]
+    total, fractions, accumulated = sum(weights), [], 0
+    for weight in weights:
+        accumulated += weight
+        fractions.append(accumulated/total)
+    boundaries = voiced_boundaries(start, end, spans, fractions)
+    result, cursor = [], start
     for i, caption in enumerate(captions):
-        stop = end if i == len(captions)-1 else cursor + (end-start)*max(1, len(caption["text_zh"]))/total
-        result.append({"start": cursor, "end": stop, "english": caption.get("text_en", ""),
-                       "chinese": caption["text_zh"], "speaker": segment.get("speaker", "")})
+        stop = boundaries[i+1]
+        clipped = [[max(cursor, left), min(stop, right)] for left, right in spans
+                   if min(stop, right) > max(cursor, left)]
+        result.append({"start": cursor, "end": stop,
+                       "english": caption.get("text_en", ""),
+                       "chinese": caption["text_zh"], "speaker": segment.get("speaker", ""),
+                       "speech_spans": clipped})
         cursor = stop
     return result

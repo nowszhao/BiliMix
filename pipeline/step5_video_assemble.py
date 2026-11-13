@@ -159,9 +159,15 @@ def generate_bilingual_ass(
     tts_time_map = {}
     for entry in time_mapping:
         if entry.get("type") == "tts_chinese" and entry.get("segment_index", -1) >= 0:
+            spans = []
+            for left, right in entry.get("speech_spans") or []:
+                left, right = max(0, left - time_offset), max(0, right - time_offset)
+                if right > left:
+                    spans.append([left, right])
             tts_time_map[entry["segment_index"]] = {
                 "start": max(0, entry["mixed_start"] - time_offset),
                 "end": max(0, entry["mixed_end"] - time_offset),
+                "spans": spans,
             }
     orig_time_map = {}
     for entry in time_mapping:
@@ -187,7 +193,9 @@ def generate_bilingual_ass(
             end = max(0, seg.get("end", 0) - time_offset)
         if end <= start:
             continue
-        entries.extend(caption_entries(seg, start, end, eng, chn))
+        entries.extend(caption_entries(
+            seg, start, end, eng, chn,
+            tts_time_map.get(idx, {}).get("spans", [])))
 
     if not entries:
         return ""
@@ -274,6 +282,72 @@ def _probe_video_fps(video_path):
         return fps if 1 <= fps <= 240 else 25.0
     except (ValueError, ZeroDivisionError, subprocess.SubprocessError):
         return 25.0
+
+
+def _probe_stream_timing(path):
+    """Read stream start times and durations for the final sync audit."""
+    try:
+        raw = subprocess.check_output([
+            "ffprobe", "-v", "error",
+            "-show_entries", "stream=codec_type,start_time,duration,nb_frames",
+            "-of", "json", path], text=True, timeout=60)
+        streams = json.loads(raw).get("streams", [])
+    except (subprocess.SubprocessError, ValueError, OSError):
+        return {}
+    summary = {}
+    for stream in streams:
+        kind = stream.get("codec_type")
+        if kind not in ("video", "audio") or kind in summary:
+            continue
+        try:
+            summary[kind] = {
+                "start": float(stream.get("start_time") or 0),
+                "duration": float(stream.get("duration") or 0),
+            }
+        except (TypeError, ValueError):
+            continue
+    return summary
+
+
+def _verify_mux_sync(path, time_mapping, fps):
+    """Fail explicitly when the container no longer carries one shared timeline."""
+    timing = _probe_stream_timing(path)
+    if not timing.get("video") or not timing.get("audio"):
+        raise RuntimeError(f"Assembled file is missing a stream: {path}")
+    fallback = _probe_video_duration(path)
+    for kind, info in timing.items():
+        if info["duration"] <= 0:
+            info["duration"] = fallback
+        if abs(info["start"]) > .05:
+            raise RuntimeError(
+                f"{kind} stream starts at {info['start']:.3f}s instead of 0: {path}")
+    video, audio = timing["video"], timing["audio"]
+    entries = [e for e in time_mapping
+               if e.get("type") == "tts_chinese" and "mixed_end" in e]
+    tolerance = max(.25, 2.0/fps)
+    drift = abs(video["duration"] - audio["duration"])
+    if entries and drift > tolerance:
+        raise RuntimeError(
+            f"Audio/video duration drift {drift:.3f}s > {tolerance:.3f}s: {path}")
+    if entries:
+        expected = entries[-1]["mixed_end"] - entries[0]["mixed_start"]
+        if abs(video["duration"] - expected) > tolerance:
+            raise RuntimeError(
+                f"Video length {video['duration']:.3f}s does not match the mixed "
+                f"timeline {expected:.3f}s: {path}")
+    print(f"[Step5] 同步校验: 视频 {video['duration']:.3f}s / 音频 "
+          f"{audio['duration']:.3f}s，漂移 {drift*1000:.0f}ms")
+
+
+def _warn_source_stream_offset(video_path):
+    """Report a source whose audio stream does not start with its video."""
+    timing = _probe_stream_timing(video_path)
+    if not timing.get("video") or not timing.get("audio"):
+        return
+    offset = timing["audio"]["start"] - timing["video"]["start"]
+    if abs(offset) > .05:
+        print(f"[Step5] 警告: 源视频音频流相对画面偏移 {offset:+.3f}s，"
+              f"逐句裁剪可能整体错位；请检查源文件时间轴")
 
 
 def _escape_path_for_filter(path: str) -> str:
@@ -743,6 +817,7 @@ def _assemble_video_blocks(
         result = _apply_watermark(output_path)
         expected = round(tts_entries[-1]["mixed_end"]*fps)-round(tts_entries[0]["mixed_start"]*fps)
         _validate_video_frames(result, expected)
+        _verify_mux_sync(result, tts_entries, fps)
         return result
     return ""
 
@@ -808,6 +883,7 @@ def assemble_video(
     video_duration = _probe_video_duration(video_path)
     mixed_duration = _probe_video_duration(mixed_audio_path)
     has_subtitles = dialogue_count > 0
+    _warn_source_stream_offset(video_path)
 
     # ---- 尝试生成逐句变速 filter graph ----
     filter_graph_path = None
@@ -912,10 +988,12 @@ def assemble_video(
         final_dur = _probe_video_duration(output_path)
         print(f"[Step5] 组装完成: {os.path.basename(output_path)} ({size_mb:.1f} MB, {final_dur:.2f}s)")
         result = _apply_watermark(output_path)
+        entries = [e for e in (time_mapping or []) if e.get("type") == "tts_chinese"
+                   and e.get("orig_end", 0) > e.get("orig_start", 0)]
+        fps_for_check = output_fps if filter_graph_path else _probe_video_fps(video_path)
         if filter_graph_path:
-            entries = [e for e in time_mapping if e.get("type") == "tts_chinese"
-                       and e.get("orig_end", 0) > e.get("orig_start", 0)]
-            expected = round(entries[-1]["mixed_end"]*output_fps)-round(entries[0]["mixed_start"]*output_fps)
+            expected = round(entries[-1]["mixed_end"]*fps_for_check)-round(entries[0]["mixed_start"]*fps_for_check)
             _validate_video_frames(result, expected)
+        _verify_mux_sync(result, entries, fps_for_check)
         return result
     return ""

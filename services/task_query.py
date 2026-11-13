@@ -229,6 +229,64 @@ def get_task_status(task_id):
 
 # ── Task Result ─────────────────────────────────────────────
 
+
+def _display_segments(segments, mixed_segments, translations, time_mapping=None):
+    """One row per source segment with both the source and dubbed timelines.
+
+    The dubbed player runs on the mixed timeline while the original player runs
+    on source time. Returning both clocks together is what lets the console
+    highlight and seek the right one instead of reusing source time for the
+    compressed video. Segments that were never synthesized keep source time.
+    """
+    def number(value):
+        try:
+            return round(float(value), 3)
+        except (TypeError, ValueError):
+            return 0.0
+
+    translated = {}
+    for key, value in (translations or {}).items():
+        try:
+            translated[int(key)] = value
+        except (TypeError, ValueError):
+            continue
+    mapped = set()
+    for entry in time_mapping or []:
+        if entry.get("type") != "tts_chinese":
+            continue
+        try:
+            mapped.add(int(entry.get("segment_index")))
+        except (TypeError, ValueError):
+            continue
+    rows = []
+    for index in range(max(len(segments), len(mixed_segments))):
+        source = segments[index] if index < len(segments) else {}
+        mixed = mixed_segments[index] if index < len(mixed_segments) else {}
+        start_orig = number(source.get("start"))
+        end_orig = number(source.get("end"))
+        has_mixed = (index in mapped and mixed.get("start") is not None
+                     and mixed.get("end") is not None)
+        start_mixed = number(mixed.get("start")) if has_mixed else None
+        end_mixed = number(mixed.get("end")) if has_mixed else None
+        rows.append({
+            "index": index,
+            "unit_id": source.get("unit_id") or mixed.get("unit_id") or "",
+            "speaker": source.get("speaker") or mixed.get("speaker") or "",
+            "text": (source.get("text") or "").strip(),
+            "chinese": translated.get(index, mixed.get("chinese") or ""),
+            "dubbed": has_mixed,
+            "start_orig": start_orig,
+            "end_orig": end_orig,
+            "start_mixed": start_mixed,
+            "end_mixed": end_mixed,
+            # Default playback clock for the dubbed output. Clients must read
+            # the explicit *_orig/*_mixed fields when switching sources.
+            "start": start_mixed if has_mixed else start_orig,
+            "end": end_mixed if has_mixed else end_orig,
+        })
+    return rows
+
+
 @task_query_bp.route("/task/<task_id>/result")
 def get_task_result(task_id):
     task = get_task(task_id)
@@ -243,6 +301,7 @@ def get_task_result(task_id):
     tmap = task.get("time_mapping", [])
     translations = task.get("translations", {})
     sentence_pairs = task.get("sentence_pairs", [])
+    display_segments = _display_segments(segments, mixed_segments, translations, tmap)
     video_result = task.get("video_result") or _load_video_result_from_disk(task)
     if video_result and video_result.get("subtitle_path"):
         layout_path = video_result["subtitle_path"]+".layout.json"
@@ -268,8 +327,12 @@ def get_task_result(task_id):
         "process_mode": task.get("process_mode", "sentence_translate"),
         "transcription_text": task.get("transcription_text", ""),
         "segments_count": len(segments),
-        "segments": segments[:20] if segments else [],
-        "segments_mixed": mixed_segments[:20] if mixed_segments else [],
+        # Full transcript, with explicit source and dubbed clocks. The web
+        # console must not truncate here: a 20-row cap silently kills subtitle
+        # sync for every long video.
+        "display_segments": display_segments,
+        "segments": segments,
+        "segments_mixed": mixed_segments,
         "total_segments": len(segments),
         "difficult_words": task.get("difficult_words", []),
         "translations": translations,

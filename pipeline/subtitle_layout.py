@@ -104,6 +104,65 @@ def wrap_lines(text, size, width, fill=.12):
     return [''.join(items[a:b]).strip() for a, b in spans if ''.join(items[a:b]).strip()]
 
 
+def _clamped_spans(start, end, spans):
+    """Clip measured voiced spans to the caption interval and merge overlaps."""
+    cleaned = []
+    for span in spans or []:
+        try:
+            left, right = float(span[0]), float(span[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        left, right = max(start, left), min(end, right)
+        if right <= left:
+            continue
+        if cleaned and left <= cleaned[-1][1]:
+            cleaned[-1] = (cleaned[-1][0], max(cleaned[-1][1], right))
+        else:
+            cleaned.append((left, right))
+    return cleaned
+
+
+def voiced_boundaries(start, end, spans, fractions):
+    """Map cumulative text fractions to times over measured voiced spans.
+
+    Distributing caption pages by character count stretches them evenly across
+    pauses the synthesizer inserted at punctuation. Mapping the same fractions
+    onto the voiced time instead keeps a page on screen while the voice is
+    actually speaking it, and lets the next page appear during a real pause.
+    """
+    start, end = float(start), float(end)
+    fractions = [min(1.0, max(0.0, float(value))) for value in fractions]
+    linear = [start + (end - start) * value for value in fractions]
+    if end <= start or not fractions:
+        return [start] + linear
+    voiced = _clamped_spans(start, end, spans)
+    total = sum(right - left for left, right in voiced)
+    if not voiced or total <= 0:
+        return [start] + linear
+    times = []
+    for fraction in fractions:
+        if fraction >= 1.0:
+            times.append(end)
+            continue
+        target = fraction * total
+        walked, boundary = 0.0, end
+        for left, right in voiced:
+            if target <= walked + (right - left):
+                boundary = left + (target - walked)
+                break
+            walked += right - left
+        times.append(boundary)
+    # ASS precision is a centisecond, and a page that rounds to zero duration
+    # would be rejected. Fall back to an even split when there is no room.
+    boundaries = [start]
+    for value in times[:-1]:
+        boundaries.append(max(value, boundaries[-1] + .01))
+    boundaries.append(end)
+    if any(boundaries[index] >= end for index in range(1, len(boundaries) - 1)):
+        return [start] + linear
+    return boundaries
+
+
 def _balanced_chunks(text, count, size, width):
     items = tokens(plain_text(text), size, width)
     if not items:
@@ -259,8 +318,14 @@ class SubtitleLayout:
             raise ValueError('Subtitle pagination changed source text')
         weights = [max(len(c), len(e)/3, 1) for c,e in pairs]
         total, cursor, result = sum(weights), entry['start'], []
+        fractions, accumulated = [], 0.0
+        for weight in weights:
+            accumulated += weight
+            fractions.append(accumulated/total)
+        boundaries = voiced_boundaries(entry['start'], entry['end'],
+                                       entry.get('speech_spans') or [], fractions)
         for i, ((c,e), weight) in enumerate(zip(pairs, weights)):
-            stop = entry['end'] if i == len(pairs)-1 else cursor+(entry['end']-entry['start'])*weight/total
+            stop = boundaries[i+1]
             cn, en, height, cn_size, en_size = self.measurements(c,e)
             result.append({**entry, 'start':cursor, 'end':stop, 'chinese':c, 'english':e,
                            'chinese_lines':cn, 'english_lines':en,

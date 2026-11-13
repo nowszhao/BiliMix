@@ -59,6 +59,28 @@ def test_fixed_seed_variable_bilingual_lengths_preserve_all_content():
         assert all(p['line_count']<=4 for p in pages)
 
 
+def test_voiced_boundaries_skip_synthesized_pauses():
+    from pipeline.subtitle_layout import voiced_boundaries
+    # Speech 0-2s, inserted pause 2-4s, speech 4-6s. Half the text is voiced
+    # after 2s, so the page must change at the pause instead of at 3s.
+    assert voiced_boundaries(0, 6, [[0, 2], [4, 6]], [.5, 1.0]) == pytest.approx([0, 2, 6])
+    assert voiced_boundaries(0, 6, [], [.5, 1.0]) == pytest.approx([0, 3, 6])
+
+
+def test_pagination_holds_page_through_inserted_pause():
+    layout = SubtitleLayout(1280, 720, 40)
+    entry = dict(start=0, end=6, speech_spans=[[0, 2], [4, 6]],
+                 chinese='这是一段足够长的中文句子，' * 6,
+                 english='A sufficiently long English sentence for pagination. ' * 3)
+    pages = layout.paginate(entry)
+    assert len(pages) > 1
+    assert pages[-1]['end'] == entry['end']
+    # The first page ends as the voice does, not halfway through the pause.
+    assert pages[0]['end'] <= 2.001
+    for index, page in enumerate(pages[1:], 1):
+        assert page['start'] == pages[index-1]['end']
+
+
 def test_source_ass_controls_cannot_override_font_or_create_hidden_lines():
     layout=SubtitleLayout(1280,720,40)
     document,report=ass_document([dict(start=0,end=10,chinese=r'完整{\fs400}句子\n后半句',english='Complete sentence.',speaker='A')],layout)

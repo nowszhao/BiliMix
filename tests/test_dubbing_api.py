@@ -83,6 +83,13 @@ def test_queued_analysis_manifest_submission_and_persistence(tmp_path,monkeypatc
     result=client.get(f'/api/task/{tid}/result').get_json()
     assert result['tts_reference_mode'] == reference_mode
     assert all(u['actual_mode'] == reference_mode for u in result['tts_reference_manifest']['units'])
+    # The console needs both clocks: dubbed playback must not be seeked with
+    # source time, and long videos must not be truncated at 20 rows.
+    display = result['display_segments']
+    assert len(display) == 3
+    assert display[1]['start_mixed'] == 1 and display[1]['start_orig'] == 4
+    assert display[1]['start'] == 1  # default playback clock is the dubbed one
+    assert display[1]['chinese']
 
 
 def test_bad_or_unready_analysis_is_400(tmp_path,monkeypatch):

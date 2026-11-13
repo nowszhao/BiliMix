@@ -112,6 +112,37 @@ def test_audio_timeline_uses_actual_clips_and_no_duplicate_edge_pause(tmp_path, 
     assert result['mixed_duration'] == 2
 
 
+def test_audio_timeline_records_real_voiced_spans(tmp_path, monkeypatch):
+    """Caption pages must be anchored to the synthesized voice, not char count."""
+    import math
+    import struct
+    import wave
+    from pipeline import step4b_sentence_mixer as mixer
+    rate = 22050
+    frames = bytearray()
+    for n in range(int(rate * 1.2)):
+        value = 0
+        if .2 * rate <= n < .8 * rate:
+            value = int(12000 * math.sin(2 * math.pi * 440 * n / rate))
+        frames += struct.pack('<h', value)
+    clip = tmp_path / 'tone.wav'
+    with wave.open(str(clip), 'wb') as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(rate)
+        stream.writeframes(bytes(frames))
+    monkeypatch.setattr(mixer, '_trim_edge_silence', lambda audio: audio)
+    monkeypatch.setattr(mixer, '_normalize_tts_audio', lambda audio: audio)
+    monkeypatch.setattr(mixer, '_apply_dynamics_processing', lambda audio: audio)
+    result = mix_sentence_audio('', [dict(start=0, end=1, unit_id='u1', speaker='A')],
+                                [0], {0: '一句话。'}, {0: str(clip)},
+                                str(tmp_path / 'out.wav'))
+    spans = result['time_mapping'][0]['speech_spans']
+    assert len(spans) == 1
+    assert .14 <= spans[0][0] <= .21
+    assert .79 <= spans[0][1] <= .86
+
+
 def test_missing_tts_is_failure(tmp_path):
     with pytest.raises(ValueError, match='Missing synthesized'):
         mix_sentence_audio('',[dict(start=0,end=1)],[0],{0:'不能漏掉的句子'}, {}, str(tmp_path/'out.wav'))
