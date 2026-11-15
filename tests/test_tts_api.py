@@ -82,7 +82,8 @@ def _wait_terminal(client, job_id, timeout=10.0):
 
 
 def _fake_synthesize(texts, ref_audio, job_id, lang=tts_direct.DEFAULT_LANG,
-                     cancel_check=None, progress_cb=None, ref_text="", style=""):
+                     cancel_check=None, progress_cb=None, ref_text="", style="",
+                     cfg_value=None):
     """桩：为每条文本写一个假 WAV，并按真实实现上报进度"""
     job_dir = tts_direct.get_job_dir(job_id)
     os.makedirs(job_dir, exist_ok=True)
@@ -159,6 +160,16 @@ class TestTtsDirectValidation:
         assert direct.build_job_id(ref_audio, ["你好"], "zh") == plain_before
         assert direct.build_job_id(ref_audio, ["你好"], "zh",
                                    style="语气温柔") != styled_before
+
+    def test_style_job_id_tracks_guidance_strength(self, ref_audio):
+        """不同 cfg 会产生不同波形，不能共用同一个任务身份。"""
+        from pipeline import tts_direct as direct
+
+        weak = direct.build_job_id(ref_audio, ["你好"], "zh", style="语气温柔",
+                                   cfg_value=2.0)
+        strong = direct.build_job_id(ref_audio, ["你好"], "zh", style="语气温柔",
+                                     cfg_value=2.8)
+        assert weak != strong
 
     def test_synthesis_key_matches_previous_implementation(self, ref_audio):
         """未使用续写克隆时，缓存键必须与新增字段之前逐字节一致。"""

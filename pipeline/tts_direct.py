@@ -33,13 +33,14 @@ MAX_TEXTS = 200
 MAX_TEXT_CHARS = 5000
 # 同步接口单条上限：等待发生在一次 HTTP 请求内，长文本必然超时
 MAX_SYNC_TEXT_CHARS = 500
-# 语气指令的校验协议版本。引擎可能把指令当正文朗读，校验策略变化时必须
-# 让旧的 style 任务失效；未使用 style 的任务身份不受影响。
-STYLE_PROTOCOL = 1
+# 语气指令的校验协议版本。引擎可能把指令当正文朗读，校验或引导强度策略变化时
+# 必须让旧的 style 任务失效；未使用 style 的任务身份不受影响。
+STYLE_PROTOCOL = 2
 
 
 def build_job_id(ref_audio: str, texts: list, lang: str, ref_text: str = "",
-                 include_words: bool = False, style: str = "") -> str:
+                 include_words: bool = False, style: str = "",
+                 cfg_value: float = None) -> str:
     """按参考路径、文本列表、语种、参考转写、风格指令和合成策略标识任务。
 
     可选能力只在开启时进入身份，未使用这些能力的既有任务 ID 保持不变。
@@ -52,6 +53,9 @@ def build_job_id(ref_audio: str, texts: list, lang: str, ref_text: str = "",
     if style:
         identity.append(["style", style])
         identity.append(["style_protocol", STYLE_PROTOCOL])
+    if cfg_value is not None:
+        # 引导强度直接改变波形，必须进入身份，否则会复用另一个强度的结果
+        identity.append(["cfg_value", float(cfg_value)])
     engine = getattr(config, "TTS_ENGINE", "confucius-tts")
     if engine == "voxcpm":
         script = os.path.join(config.BASE_DIR, "workers", "voxcpm_worker.py")
@@ -107,7 +111,8 @@ def validate_lang(lang: str) -> str:
 
 def synthesize_texts(texts: list, ref_audio: str, job_id: str,
                      lang: str = DEFAULT_LANG, cancel_check=None,
-                     progress_cb=None, ref_text: str = "", style: str = "") -> list:
+                     progress_cb=None, ref_text: str = "", style: str = "",
+                     cfg_value: float = None) -> list:
     """用一段参考音频合成多段文本，返回有序的产物列表。
 
     Args:
@@ -119,6 +124,7 @@ def synthesize_texts(texts: list, ref_audio: str, job_id: str,
         progress_cb: 进度回调 (current, total)，current 为已完成片段数
         ref_text: 参考音频的逐字转写；非空且引擎支持时启用续写克隆
         style: 语气/节奏指令；非空且引擎支持时进入合成条件，不影响度量文本
+        cfg_value: 覆盖本次合成的引导强度；None 沿用部署配置
 
     Returns:
         [{"index": int, "text": str, "output_path": str, "part_count": int}, ...]
@@ -157,6 +163,7 @@ def synthesize_texts(texts: list, ref_audio: str, job_id: str,
         seg_lang_map=seg_lang_map,
         ref_text_map=ref_text_map,
         style_map=style_map,
+        cfg_value=cfg_value,
     )
 
     outputs = []

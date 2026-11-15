@@ -82,7 +82,7 @@ def server_ref(ref_wav):
 
 
 def _fake_synthesize(texts, ref_audio, job_id, lang="zh", cancel_check=None,
-                     progress_cb=None, ref_text="", style=""):
+                     progress_cb=None, ref_text="", style="", cfg_value=None):
     job_dir = tts_direct.get_job_dir(job_id)
     os.makedirs(job_dir, exist_ok=True)
     outputs = []
@@ -272,6 +272,20 @@ class TestSyncSynthesis:
         assert payload["style_warning"] == "verification_unavailable"
         assert calls == ["语气温柔", ""]
 
+    def test_style_raises_guidance_strength(self, client, job_root, ref_wav, stubs):
+        """默认 cfg 2.0 下指令几乎无效；带 style 时必须提高到 STYLE_CFG_VALUE。"""
+        seen = []
+        original = _fake_synthesize
+
+        def recording(texts, ref_audio, job_id, **kwargs):
+            seen.append(kwargs.get("cfg_value"))
+            return original(texts, ref_audio, job_id, **kwargs)
+
+        stubs.setattr("services.tts_api.synthesize_texts", recording)
+        _multipart(client, ref_wav, text="引导强度", style="语气温柔")
+        _multipart(client, ref_wav, text="引导强度")
+        assert seen == [2.8, None]
+
     def test_style_rejects_too_long_and_wrong_engine(self, client, job_root,
                                                      ref_wav, stubs):
         response = _multipart(client, ref_wav, text="太长", style="语" * 41)
@@ -390,6 +404,16 @@ class TestWordAlignment:
         assert tts_words.instruction_spoken(leaked, style) is True
         assert tts_words.instruction_spoken("一格格英语每天一句", style) is False
         assert tts_words.instruction_spoken("anything", "") is False
+
+    def test_guidance_override_keeps_shared_runtime_intact(self):
+        from pipeline.step3_tts_confucius import _Runtime, _with_cfg
+
+        runtime = _Runtime("script", "python", {}, {"cfg_value": 2.0, "model": "m"},
+                           "model-id", "voxcpm2", 1)
+        boosted = _with_cfg(runtime, 2.8)
+        assert boosted.options["cfg_value"] == 2.8
+        assert runtime.options["cfg_value"] == 2.0, "共享运行时不得被修改"
+        assert _with_cfg(runtime, None) is runtime
 
     def test_word_unit_for_english(self):
         tokens = [{"text": "hello", "start": 0.0, "end": 0.3},

@@ -98,7 +98,7 @@ bmx tts say --ref-audio reference.wav --text "完整中文话语。" --style "�
 | 参数 | 用途 |
 |---|---|
 | `--ref-text` | 参考音频的逐字转写；提供时启用续写克隆（仅 VoxCPM2），必须与音频一致 |
-| `--style` | 语气/节奏指令，如 `语速稍快 语气兴奋`（≤40 字符，仅 VoxCPM2）；服务端会回读校验，指令被朗读时自动回退为无指令音频并返回 `style_applied=false` |
+| `--style` | 语气/节奏指令，如 `语速稍快 语气兴奋`（≤40 字符，仅 VoxCPM2）；服务端会提高引导强度并回读校验，指令被朗读时自动回退为无指令音频并返回 `style_applied=false` |
 | `--with-words` | 返回逐词转录，时间索引入参文本的字符区间，并给出 `coverage` |
 | `--words-out <路径>` | 把逐词报告另存为 JSON |
 | `--timeout-ms` | 服务端等待上限，默认 180000 |

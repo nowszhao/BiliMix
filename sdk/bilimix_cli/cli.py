@@ -1232,6 +1232,8 @@ def cmd_tts_say(args, client):
         "job_id": result.get("job_id", ""),
         "text": result.get("text", ""),
         "style": result.get("style"),
+        "style_applied": result.get("style_applied"),
+        "style_warning": result.get("style_warning"),
         "path": output,
         "size_bytes": downloaded,
         "audio": audio,

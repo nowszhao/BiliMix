@@ -2,7 +2,7 @@
 
 Continuations, retries and direct TTS jobs all pass through this dispatcher.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import os
 import subprocess
@@ -87,6 +87,19 @@ def _confucius_runtime():
     return _Runtime(script, config.CONFUCIUS4_TTS_PYTHON or sys.executable, env, options,
                     model_fingerprint(root, script, config_path), "confucius_tts",
                     config.CONFUCIUS4_TTS_NUM_WORKERS)
+
+
+def _with_cfg(runtime: _Runtime, cfg_value):
+    """Return a runtime with one generation parameter overridden.
+
+    Only the pending batch is affected: the dataclass copy leaves the shared
+    runtime untouched, and the overridden value enters the cache key because it
+    is part of `parameters`.
+    """
+    if cfg_value is None:
+        return runtime
+    options = {**runtime.options, "cfg_value": float(cfg_value)}
+    return replace(runtime, options=options)
 
 
 def _worker_task(options, jobs):
@@ -291,6 +304,7 @@ def synthesize_sentences_with_confucius_tts(
     reference_mode: str = "speaker",
     ref_text_map: dict = None,
     style_map: dict = None,
+    cfg_value: float = None,
 ) -> dict:
     """
     按参考模式和目标语种选择合成引擎。
@@ -314,6 +328,7 @@ def synthesize_sentences_with_confucius_tts(
             提供时引擎改用续写克隆（音色更贴），缺省只做参考音频克隆
         style_map: {segment_index: style} 语气/节奏指令；只由支持指令的引擎消费，
             缺省不改变任何既有合成
+        cfg_value: 覆盖本次批次的引导强度；None 表示沿用部署配置
 
     Returns:
         dict: {segment_index: tts_wav_path} 映射
@@ -339,7 +354,7 @@ def synthesize_sentences_with_confucius_tts(
     results = _synthesize_batch(
         runtime, segments, indices, translations, cache_dir, ref_audio_map,
         cancel_check, report_progress if progress_cb else None, task_id, lang,
-        seg_lang_map, reference_mode, ref_text_map, style_map,
+        seg_lang_map, reference_mode, ref_text_map, style_map, cfg_value,
     )
     if progress_cb:
         progress_cb(total, total)
@@ -348,7 +363,9 @@ def synthesize_sentences_with_confucius_tts(
 
 def _synthesize_batch(runtime, segments, translated_indices, translations, cache_dir,
                       ref_audio_map, cancel_check, progress_cb, task_id, lang,
-                      seg_lang_map, reference_mode, ref_text_map=None, style_map=None):
+                      seg_lang_map, reference_mode, ref_text_map=None, style_map=None,
+                      cfg_value=None):
+    runtime = _with_cfg(runtime, cfg_value)
     total = len(translated_indices)
     # Retain the existing Confucius cache keys; configuration contents already
     # contribute to its model fingerprint.

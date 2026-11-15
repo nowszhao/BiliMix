@@ -58,6 +58,8 @@ SYNC_REF_MAX_SECONDS = 15.0
 SYNC_REF_EXTENSIONS = (".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac")
 # 语气/节奏指令：只作为合成条件，不参与朗读与节奏度量
 SYNC_MAX_STYLE_CHARS = 40
+# 指令遵循依赖引导强度：默认 cfg 2.0 下几乎听不出差异，实测 2.8 才拉开语气与时长
+STYLE_CFG_VALUE = 2.8
 _STYLE_SEPARATORS = str.maketrans({"，": " ", ",": " ", "。": " ", "；": " ",
                                    ";": " ", "：": " ", ":": " ", "\n": " ",
                                    "\r": " "})
@@ -254,6 +256,8 @@ def _run_job(job_id: str):
                 progress_cb=_progress,
                 ref_text=ref_text,
                 style=current_style,
+                # 带指令时提高引导强度，否则指令几乎不改变韵律
+                cfg_value=STYLE_CFG_VALUE if current_style else None,
             )
             if job.get("mode") == "sync":
                 result = _pin_sync_audio(job_id, result)
@@ -642,7 +646,8 @@ def synthesize_sync():
     job_id = build_job_id(parsed["ref_audio"], [parsed["text"]], parsed["lang"],
                           ref_text=parsed["ref_text"],
                           include_words=parsed["include_words"],
-                          style=parsed["style"])
+                          style=parsed["style"],
+                          cfg_value=STYLE_CFG_VALUE if parsed["style"] else None)
     queue_started = time.time()
     cache_hit = False
     job = get_job(job_id)
