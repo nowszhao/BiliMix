@@ -122,3 +122,5 @@ bmx --server <服务URL> tts say --ref-audio reference.wav --text "这是一次�
 ```
 
 首次调用包含模型加载和中文对齐模型下载，耗时明显长于后续请求；相同输入再次提交会命中缓存并秒级返回。`--ref-text`（参考转写续写克隆）与 `--style`（语气指令）只在 VoxCPM2 后端可用，其它引擎会显式拒绝而不是静默忽略。
+
+`style` 是模型的条件前缀，不是硬开关：同一指令有时会被当成正文朗读。服务端因此在返回前做一次回读校验，发现指令出现在识别文本里就丢弃该音频、改用无指令重合成，并在响应里标记 `style_applied=false`、`style_warning=instruction_spoken_by_engine`。这会多花一次 ASR（以及必要时一次重合成），属于正确性成本。

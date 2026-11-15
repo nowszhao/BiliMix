@@ -148,6 +148,18 @@ class TestTtsDirectValidation:
         assert plain == again, "参考转写为空时保持既有缓存身份"
         assert plain != prompt, "续写克隆必须与参考克隆区分缓存"
 
+    def test_style_job_id_tracks_verification_protocol(self, ref_audio, monkeypatch):
+        """校验策略升级后旧 style 任务必须失效；无 style 的任务身份不变。"""
+        from pipeline import tts_direct as direct
+
+        plain_before = direct.build_job_id(ref_audio, ["你好"], "zh")
+        styled_before = direct.build_job_id(ref_audio, ["你好"], "zh",
+                                            style="语气温柔")
+        monkeypatch.setattr(direct, "STYLE_PROTOCOL", direct.STYLE_PROTOCOL + 1)
+        assert direct.build_job_id(ref_audio, ["你好"], "zh") == plain_before
+        assert direct.build_job_id(ref_audio, ["你好"], "zh",
+                                   style="语气温柔") != styled_before
+
     def test_synthesis_key_matches_previous_implementation(self, ref_audio):
         """未使用续写克隆时，缓存键必须与新增字段之前逐字节一致。"""
         from pipeline.dubbing_plan import canonical_hash, file_sha256

@@ -137,6 +137,22 @@ def _align_words(text, tokens):
     return items, " ".join(item["text"] for item in asr_words), len(spans), len(matched)
 
 
+def instruction_spoken(asr_text, instruction):
+    """Detect the engine reading a control prefix back as speech.
+
+    VoxCPM2's `(control)text` prefix is a soft condition, not a hard channel:
+    depending on seed and reference the model sometimes reads it aloud. The
+    caller must verify before publishing, never assume it was honored.
+    """
+    def content(value):
+        return "".join(ch.lower() for ch in str(value or "") if _CONTENT.match(ch))
+
+    needle = content(instruction)
+    if len(needle) < 2:
+        return False
+    return needle in content(asr_text)
+
+
 def align_to_text(text, tokens, language="zh"):
     """Return timings that index `text` plus an honest coverage report."""
     unit = "char" if language in ("zh", "ja") else "word"

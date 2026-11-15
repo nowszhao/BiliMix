@@ -198,10 +198,79 @@ class TestSyncSynthesis:
         payload = _multipart(client, ref_wav, text="语气测试",
                              style="语速稍快，语气兴奋。").get_json()
         assert payload["style"] == "语速稍快 语气兴奋", "标点必须被替换，避免被长句规划切断"
+        assert payload["style_applied"] is True
+        assert payload["style_warning"] is None
 
         plain = _multipart(client, ref_wav, text="语气测试").get_json()
         assert plain["style"] is None
         assert plain["job_id"] != payload["job_id"], "风格指令必须改变任务身份"
+
+    def test_style_falls_back_when_instruction_is_read_aloud(self, client, job_root,
+                                                             ref_wav, stubs):
+        """引擎把指令当正文念出时必须丢弃该音频，改用无指令重合成。"""
+        calls = []
+        original = _fake_synthesize
+
+        def recording(texts, ref_audio, job_id, **kwargs):
+            calls.append(kwargs.get("style", ""))
+            return original(texts, ref_audio, job_id, **kwargs)
+
+        stubs.setattr("services.tts_api.synthesize_texts", recording)
+        stubs.setattr(
+            tts_words, "analyze_words",
+            lambda audio_path, text, language="zh", work_dir=None: {
+                "version": 1, "unit": "char", "source": "asr_align",
+                "language": language, "text": text,
+                "asr_text": "语气亲切语速适中" + text,
+                "coverage": 1.0, "items": [], "warnings": [], "duration": 1.0})
+
+        payload = _multipart(client, ref_wav, text="一格格英语每天一句。",
+                             style="语气亲切 语速适中").get_json()
+        assert payload["status"] == "completed"
+        assert payload["style_applied"] is False
+        assert payload["style_warning"] == "instruction_spoken_by_engine"
+        assert calls == ["语气亲切 语速适中", ""], "失败后必须无指令重合成"
+        assert payload["audio"]["url"].endswith("speech.wav")
+
+    def test_fallback_recomputes_words_from_clean_audio(self, client, job_root,
+                                                        ref_wav, stubs):
+        """回退后逐词必须来自重合成后的音频，不能沿用被污染的识别结果。"""
+        seen = []
+
+        def staged(audio_path, text, language="zh", work_dir=None):
+            seen.append(audio_path)
+            asr = ("语气亲切" if len(seen) == 1 else "") + text
+            return {"version": 1, "unit": "char", "source": "asr_align",
+                    "language": language, "text": text, "asr_text": asr,
+                    "coverage": 1.0, "items": [], "warnings": [], "duration": 1.0}
+
+        stubs.setattr(tts_words, "analyze_words", staged)
+        payload = _multipart(client, ref_wav, text="逐词回退", style="语气亲切",
+                             include_words="true").get_json()
+        assert payload["style_applied"] is False
+        assert payload["words"]["asr_text"] == "逐词回退"
+        assert len(seen) == 2, "回退后必须重新回读"
+
+    def test_style_falls_back_when_verification_unavailable(self, client, job_root,
+                                                            ref_wav, stubs):
+        calls = []
+        original = _fake_synthesize
+
+        def recording(texts, ref_audio, job_id, **kwargs):
+            calls.append(kwargs.get("style", ""))
+            return original(texts, ref_audio, job_id, **kwargs)
+
+        def broken(*args, **kwargs):
+            raise RuntimeError("whisperx missing")
+
+        stubs.setattr("services.tts_api.synthesize_texts", recording)
+        stubs.setattr(tts_words, "analyze_words", broken)
+
+        payload = _multipart(client, ref_wav, text="校验不可用",
+                             style="语气温柔").get_json()
+        assert payload["style_applied"] is False
+        assert payload["style_warning"] == "verification_unavailable"
+        assert calls == ["语气温柔", ""]
 
     def test_style_rejects_too_long_and_wrong_engine(self, client, job_root,
                                                      ref_wav, stubs):
@@ -314,6 +383,13 @@ class TestWordAlignment:
         assert report["coverage"] == 0.0
         assert "asr_empty" in report["warnings"]
         assert all(item["start"] is None for item in report["items"])
+
+    def test_instruction_spoken_detects_read_aloud_control(self):
+        style = "语气亲切 语速适中"
+        leaked = "语气亲切语速适中一格格英语每天一句"
+        assert tts_words.instruction_spoken(leaked, style) is True
+        assert tts_words.instruction_spoken("一格格英语每天一句", style) is False
+        assert tts_words.instruction_spoken("anything", "") is False
 
     def test_word_unit_for_english(self):
         tokens = [{"text": "hello", "start": 0.0, "end": 0.3},

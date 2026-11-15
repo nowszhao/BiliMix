@@ -43,6 +43,7 @@ from pipeline.tts_direct import (
 )
 from pipeline.dubbing_plan import file_sha256
 from pipeline.media_io import _probe_audio_duration
+from pipeline.tts_words import instruction_spoken
 from core.processes import _kill_task_subprocesses
 
 tts_bp = Blueprint('tts', __name__, url_prefix='/api/tts')
@@ -246,23 +247,50 @@ def _run_job(job_id: str):
             update_job(job_id, progress=max(1, pct),
                        message=f"合成中 ({current}/{current_total})")
 
-        outputs = synthesize_texts(
-            texts, ref_audio, job_id, lang=lang,
-            cancel_check=lambda: is_cancelled(job_id),
-            progress_cb=_progress,
-            ref_text=ref_text,
-            style=style,
-        )
-        if job.get("mode") == "sync":
-            outputs = _pin_sync_audio(job_id, outputs)
+        def _synthesize(current_style):
+            result = synthesize_texts(
+                texts, ref_audio, job_id, lang=lang,
+                cancel_check=lambda: is_cancelled(job_id),
+                progress_cb=_progress,
+                ref_text=ref_text,
+                style=current_style,
+            )
+            if job.get("mode") == "sync":
+                result = _pin_sync_audio(job_id, result)
+            return result
+
+        outputs = _synthesize(style)
+
+        # VoxCPM2 的 `(指令)正文` 是软条件：同一条指令可能被当正文念出来。
+        # 因此带指令时先回读校验，发现被朗读就丢弃该音频并改用无指令重合成，
+        # 宁可少一层语气，也不交付把指令读进正文的结果。
+        style_applied, style_warning = bool(style), ""
+        verified = None
+        if style:
+            update_job(job_id, progress=99, message="正在校验语气指令...")
+            verified = _analyze_output(job_id, outputs[0], lang)
+            if verified.get("error"):
+                style_warning = "verification_unavailable"
+            elif instruction_spoken(verified.get("asr_text", ""), style):
+                style_warning = "instruction_spoken_by_engine"
+            if style_warning:
+                print(f"[TTS] 语气指令未被引擎正确消费（{style_warning}），"
+                      f"回退为无指令合成 {job_id}")
+                verified = None
+                style_applied = False
+                outputs = _synthesize("")
 
         words, words_error = [], ""
         if include_words:
             update_job(job_id, progress=99, message="合成完成，正在生成逐词转录...")
-            for output in outputs:
-                if is_cancelled(job_id):
-                    raise InterruptedError("任务已被用户终止")
-                words.append(_analyze_output(job_id, output, lang))
+            if verified is not None and len(outputs) == 1:
+                words = [verified]
+            else:
+                for output in outputs:
+                    if is_cancelled(job_id):
+                        raise InterruptedError("任务已被用户终止")
+                    words.append(_analyze_output(job_id, output, lang))
+            verified = None
             failures = [item["error"] for item in words if item.get("error")]
             if failures:
                 words_error = failures[0]
@@ -277,10 +305,13 @@ def _run_job(job_id: str):
             error="",
             words=words,
             words_error=words_error,
+            style_applied=style_applied,
+            style_warning=style_warning,
         )
         update_job(job_id, **completion)
         print(f"[TTS] 任务完成 {job_id}: {len(outputs)} 条"
-              f"{'（含逐词转录）' if include_words else ''}")
+              f"{'（含逐词转录）' if include_words else ''}"
+              f"{'' if not style else '，style_applied=' + str(style_applied)}")
 
     except InterruptedError:
         update_job(job_id, status="cancelled", message="任务已被终止",
@@ -560,6 +591,8 @@ def _sync_response(job: dict, parsed: dict, cache_hit: bool,
         "text": parsed["text"],
         "language": parsed["lang"],
         "style": parsed["style"] or None,
+        "style_applied": bool(job.get("style_applied")),
+        "style_warning": job.get("style_warning") or None,
         "audio": {
             "url": descriptor.get("url", ""),
             "filename": descriptor.get("filename", ""),
@@ -720,6 +753,9 @@ def get_job_result(job_id):
         "audio_path": outputs[0]["filename"] if outputs else "",
         "words": words,
         "words_error": job.get("words_error", ""),
+        "style": job.get("style", ""),
+        "style_applied": bool(job.get("style_applied")),
+        "style_warning": job.get("style_warning", ""),
         "error": job.get("error", ""),
     })
 

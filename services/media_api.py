@@ -470,7 +470,7 @@ def api_index():
                       "params": {"resolutions": "[{word_ids: [整数], speaker_id: 已有合格参考人物}]"}})
     return jsonify({
         "name": "BiliMix API",
-        "version": "2.2.0",
+        "version": "2.2.1",
         "description": "中英混合播客/视频学习工具",
         "dubbing_protocol": 1,
         "tts_reference_modes": ["speaker", "segment"],

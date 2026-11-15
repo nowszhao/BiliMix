@@ -33,6 +33,9 @@ MAX_TEXTS = 200
 MAX_TEXT_CHARS = 5000
 # 同步接口单条上限：等待发生在一次 HTTP 请求内，长文本必然超时
 MAX_SYNC_TEXT_CHARS = 500
+# 语气指令的校验协议版本。引擎可能把指令当正文朗读，校验策略变化时必须
+# 让旧的 style 任务失效；未使用 style 的任务身份不受影响。
+STYLE_PROTOCOL = 1
 
 
 def build_job_id(ref_audio: str, texts: list, lang: str, ref_text: str = "",
@@ -48,6 +51,7 @@ def build_job_id(ref_audio: str, texts: list, lang: str, ref_text: str = "",
         identity.append(["include_words", True])
     if style:
         identity.append(["style", style])
+        identity.append(["style_protocol", STYLE_PROTOCOL])
     engine = getattr(config, "TTS_ENGINE", "confucius-tts")
     if engine == "voxcpm":
         script = os.path.join(config.BASE_DIR, "workers", "voxcpm_worker.py")
