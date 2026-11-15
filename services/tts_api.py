@@ -60,6 +60,11 @@ SYNC_REF_EXTENSIONS = (".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac")
 SYNC_MAX_STYLE_CHARS = 40
 # 指令遵循依赖引导强度：默认 cfg 2.0 下几乎听不出差异，实测 2.8 才拉开语气与时长
 STYLE_CFG_VALUE = 2.8
+# 节奏档位：normal 原句；slow 整句变速；word 词间停顿 + 变速
+SYNC_PACE_MODES = ("normal", "slow", "word")
+SYNC_TEMPO_DEFAULT = 0.75
+SYNC_TEMPO_MIN = 0.60
+SYNC_TEMPO_MAX = 1.00
 _STYLE_SEPARATORS = str.maketrans({"，": " ", ",": " ", "。": " ", "；": " ",
                                    ";": " ", "：": " ", ":": " ", "\n": " ",
                                    "\r": " "})
@@ -231,6 +236,8 @@ def _run_job(job_id: str):
     ref_text = job.get("ref_text", "")
     style = job.get("style", "")
     lang = job.get("lang", DEFAULT_LANG)
+    pace = job.get("pace", "normal")
+    tempo = float(job.get("tempo") or 1.0)
     include_words = bool(job.get("include_words"))
     total = len(texts)
     started = time.time()
@@ -258,6 +265,10 @@ def _run_job(job_id: str):
                 style=current_style,
                 # 带指令时提高引导强度，否则指令几乎不改变韵律
                 cfg_value=STYLE_CFG_VALUE if current_style else None,
+                pace=pace,
+                tempo=tempo,
+                # 同步接口显式放开中英；配音任务不携带这个字段
+                allowed_langs=["zh", "en"] if job.get("mode") == "sync" else None,
             )
             if job.get("mode") == "sync":
                 result = _pin_sync_audio(job_id, result)
@@ -494,6 +505,8 @@ def _parse_sync_request() -> dict:
         language = data.get("language") or data.get("lang")
         title = (data.get("title") or "").strip()
         style = _normalize_style(data.get("style"))
+        pace = (data.get("pace") or "normal").strip().lower()
+        tempo_raw = data.get("tempo")
         timeout_raw = data.get("timeout_ms")
         stream = request.files.get("ref_audio")
         if stream is None:
@@ -507,6 +520,8 @@ def _parse_sync_request() -> dict:
         language = data.get("language") or data.get("lang")
         title = str(data.get("title") or "").strip()
         style = _normalize_style(data.get("style"))
+        pace = str(data.get("pace") or "normal").strip().lower()
+        tempo_raw = data.get("tempo")
         timeout_raw = data.get("timeout_ms")
         ref_audio = str(data.get("ref_audio_path") or data.get("ref_audio") or "").strip()
         if not ref_audio:
@@ -533,8 +548,8 @@ def _parse_sync_request() -> dict:
     engine = getattr(config, "TTS_ENGINE", "confucius-tts")
     if lang == "auto":
         raise _SyncError("同步接口不接受 lang=auto，请指定具体语种", "unsupported_language")
-    if engine == "voxcpm" and lang != "zh":
-        raise _SyncError("VoxCPM2 后端只支持 zh", "unsupported_language")
+    if engine == "voxcpm" and lang not in ("zh", "en"):
+        raise _SyncError("VoxCPM2 后端当前支持 zh/en", "unsupported_language")
     if raw_ref_text and engine != "voxcpm":
         # 不静默忽略：参考转写只影响续写克隆，当前引擎没有该能力
         raise _SyncError("当前合成引擎不支持 ref_text 续写克隆，请去掉该字段",
@@ -542,6 +557,23 @@ def _parse_sync_request() -> dict:
     if style and engine != "voxcpm":
         raise _SyncError("当前合成引擎不支持 style 语气指令，请去掉该字段",
                          "unsupported_style")
+
+    if pace not in SYNC_PACE_MODES:
+        raise _SyncError(f"pace 必须是 {'/'.join(SYNC_PACE_MODES)}", "invalid_pace")
+    if pace == "normal":
+        if tempo_raw not in (None, ""):
+            raise _SyncError("tempo 仅在 pace=slow/word 时可用", "invalid_tempo")
+        tempo = 1.0
+    else:
+        try:
+            tempo = (float(tempo_raw) if tempo_raw not in (None, "")
+                     else SYNC_TEMPO_DEFAULT)
+        except (TypeError, ValueError):
+            raise _SyncError("tempo 必须是数字，如 0.75", "invalid_tempo")
+        if not SYNC_TEMPO_MIN <= tempo <= SYNC_TEMPO_MAX:
+            raise _SyncError(
+                f"tempo 范围 {SYNC_TEMPO_MIN}–{SYNC_TEMPO_MAX}，0.75 表示慢 25%",
+                "invalid_tempo")
 
     try:
         timeout_ms = int(timeout_raw) if timeout_raw not in (None, "") else SYNC_TIMEOUT_DEFAULT_MS
@@ -553,7 +585,7 @@ def _parse_sync_request() -> dict:
     return {"text": raw_text, "ref_audio": ref_audio, "ref_sha256": ref_sha,
             "ref_duration": duration, "ref_text": raw_ref_text, "lang": lang,
             "include_words": include_words, "title": title, "style": style,
-            "timeout_ms": timeout_ms}
+            "pace": pace, "tempo": tempo, "timeout_ms": timeout_ms}
 
 
 def _sync_artifacts_ready(job: dict, include_words: bool) -> bool:
@@ -597,6 +629,8 @@ def _sync_response(job: dict, parsed: dict, cache_hit: bool,
         "style": parsed["style"] or None,
         "style_applied": bool(job.get("style_applied")),
         "style_warning": job.get("style_warning") or None,
+        "pace": job.get("pace", "normal"),
+        "tempo": float(job.get("tempo") or 1.0),
         "audio": {
             "url": descriptor.get("url", ""),
             "filename": descriptor.get("filename", ""),
@@ -647,7 +681,8 @@ def synthesize_sync():
                           ref_text=parsed["ref_text"],
                           include_words=parsed["include_words"],
                           style=parsed["style"],
-                          cfg_value=STYLE_CFG_VALUE if parsed["style"] else None)
+                          cfg_value=STYLE_CFG_VALUE if parsed["style"] else None,
+                          pace=parsed["pace"], tempo=parsed["tempo"])
     queue_started = time.time()
     cache_hit = False
     job = get_job(job_id)
@@ -666,7 +701,8 @@ def synthesize_sync():
                              title=parsed["title"], message="已排队", mode="sync",
                              ref_text=parsed["ref_text"],
                              include_words=parsed["include_words"],
-                             style=parsed["style"])
+                             style=parsed["style"], pace=parsed["pace"],
+                             tempo=parsed["tempo"])
             os.makedirs(get_job_dir(job_id), exist_ok=True)
             _start_job(job_id)
             print(f"[TTS][sync] 已提交 {job_id}: ref={os.path.basename(parsed['ref_audio'])}, "
@@ -761,6 +797,8 @@ def get_job_result(job_id):
         "style": job.get("style", ""),
         "style_applied": bool(job.get("style_applied")),
         "style_warning": job.get("style_warning", ""),
+        "pace": job.get("pace", "normal"),
+        "tempo": float(job.get("tempo") or 1.0),
         "error": job.get("error", ""),
     })
 

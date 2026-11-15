@@ -82,7 +82,8 @@ def server_ref(ref_wav):
 
 
 def _fake_synthesize(texts, ref_audio, job_id, lang="zh", cancel_check=None,
-                     progress_cb=None, ref_text="", style="", cfg_value=None):
+                     progress_cb=None, ref_text="", style="", cfg_value=None,
+                     pace="normal", tempo=1.0, allowed_langs=None):
     job_dir = tts_direct.get_job_dir(job_id)
     os.makedirs(job_dir, exist_ok=True)
     outputs = []
@@ -194,6 +195,23 @@ class TestSyncSynthesis:
         assert second["cache"]["hit"] is True
         assert len(calls) == 1
 
+    def test_pace_and_tempo_propagate(self, client, job_root, ref_wav, stubs):
+        seen = {}
+        original = _fake_synthesize
+
+        def recording(texts, ref_audio, job_id, **kwargs):
+            seen.update(kwargs)
+            return original(texts, ref_audio, job_id, **kwargs)
+
+        stubs.setattr("services.tts_api.synthesize_texts", recording)
+        payload = _multipart(client, ref_wav, text="Learning English is easier.",
+                             language="en", pace="word", tempo="0.8").get_json()
+        assert payload["status"] == "completed"
+        assert payload["pace"] == "word"
+        assert payload["tempo"] == 0.8
+        assert seen["pace"] == "word" and seen["tempo"] == 0.8
+        assert seen["allowed_langs"] == ["zh", "en"], "同步接口显式放开中英"
+
     def test_style_is_echoed_and_sanitized(self, client, job_root, ref_wav, stubs):
         payload = _multipart(client, ref_wav, text="语气测试",
                              style="语速稍快，语气兴奋。").get_json()
@@ -286,6 +304,19 @@ class TestSyncSynthesis:
         _multipart(client, ref_wav, text="引导强度")
         assert seen == [2.8, None]
 
+    def test_rejects_invalid_pace_and_tempo(self, client, job_root, ref_wav, stubs):
+        response = _multipart(client, ref_wav, text="节奏", pace="bogus")
+        assert response.status_code == 400
+        assert response.get_json()["code"] == "invalid_pace"
+
+        response = _multipart(client, ref_wav, text="节奏", tempo="0.8")
+        assert response.status_code == 400
+        assert response.get_json()["code"] == "invalid_tempo"
+
+        response = _multipart(client, ref_wav, text="节奏", pace="slow", tempo="0.4")
+        assert response.status_code == 400
+        assert response.get_json()["code"] == "invalid_tempo"
+
     def test_style_rejects_too_long_and_wrong_engine(self, client, job_root,
                                                      ref_wav, stubs):
         response = _multipart(client, ref_wav, text="太长", style="语" * 41)
@@ -368,6 +399,24 @@ class TestSyncValidation:
         response = client.post("/api/tts/sync", json={"text": "缺参考"})
         assert response.status_code == 400
         assert response.get_json()["code"] == "missing_ref_audio"
+
+
+class TestPaceProcessing:
+
+    def test_word_pace_inserts_separators(self):
+        assert tts_direct.apply_pace("Learning English is easier.", "en",
+                                     "word") == "Learning, English, is, easier."
+        assert tts_direct.apply_pace("学习英语", "zh", "word") == "学，习，英，语"
+        assert tts_direct.apply_pace("Learning English", "en", "slow") == "Learning English"
+        assert tts_direct.apply_pace("学习英语", "zh", "normal") == "学习英语"
+
+    def test_tempo_slows_audio_without_resampling(self, tmp_path):
+        path = _write_wav(str(tmp_path / "tempo.wav"), seconds=1.0)
+        slowed = tts_direct._apply_tempo(path, 0.75)
+        with wave.open(slowed, "rb") as stream:
+            duration = stream.getnframes() / stream.getframerate()
+            assert stream.getframerate() == 8000, "采样率不变，说明不是重采样"
+        assert duration == pytest.approx(1.33, abs=0.06)
 
 
 class TestWordAlignment:

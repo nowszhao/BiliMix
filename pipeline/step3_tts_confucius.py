@@ -305,6 +305,7 @@ def synthesize_sentences_with_confucius_tts(
     ref_text_map: dict = None,
     style_map: dict = None,
     cfg_value: float = None,
+    allowed_langs: list = None,
 ) -> dict:
     """
     按参考模式和目标语种选择合成引擎。
@@ -329,6 +330,7 @@ def synthesize_sentences_with_confucius_tts(
         style_map: {segment_index: style} 语气/节奏指令；只由支持指令的引擎消费，
             缺省不改变任何既有合成
         cfg_value: 覆盖本次批次的引导强度；None 表示沿用部署配置
+        allowed_langs: 本次批次允许的语种；None 表示沿用中文限定（配音链路）
 
     Returns:
         dict: {segment_index: tts_wav_path} 映射
@@ -355,6 +357,7 @@ def synthesize_sentences_with_confucius_tts(
         runtime, segments, indices, translations, cache_dir, ref_audio_map,
         cancel_check, report_progress if progress_cb else None, task_id, lang,
         seg_lang_map, reference_mode, ref_text_map, style_map, cfg_value,
+        allowed_langs,
     )
     if progress_cb:
         progress_cb(total, total)
@@ -364,8 +367,12 @@ def synthesize_sentences_with_confucius_tts(
 def _synthesize_batch(runtime, segments, translated_indices, translations, cache_dir,
                       ref_audio_map, cancel_check, progress_cb, task_id, lang,
                       seg_lang_map, reference_mode, ref_text_map=None, style_map=None,
-                      cfg_value=None):
+                      cfg_value=None, allowed_langs=None):
     runtime = _with_cfg(runtime, cfg_value)
+    if allowed_langs:
+        # 仅同步接口会显式声明；配音链路不传，保持 worker 的中文限定
+        runtime = replace(runtime, options={
+            **runtime.options, "allowed_langs": list(allowed_langs)})
     total = len(translated_indices)
     # Retain the existing Confucius cache keys; configuration contents already
     # contribute to its model fingerprint.

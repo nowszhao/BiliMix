@@ -44,8 +44,12 @@ def synthesize_job(model, job, set_seed, sample_rate, cfg):
     output = job["output_path"]
     text = job["text"]
     lang = job.get("lang", "zh")
-    if lang != "zh":
-        raise ValueError("VoxCPM2 worker handles Chinese utterances only")
+    # Dubbing jobs carry no allow-list and stay Chinese-only; the synchronous
+    # endpoint opts into extra languages explicitly.
+    allowed = job.get("allowed_langs") or ["zh"]
+    if lang not in allowed:
+        raise ValueError(
+            f"VoxCPM2 worker does not allow language {lang!r}; allowed={allowed}")
     if cached_synthesis_valid(output):
         return
     with open(reference, "rb") as stream:
@@ -75,7 +79,7 @@ def synthesize_job(model, job, set_seed, sample_rate, cfg):
         kwargs = dict(common, text=style_prefix + chunk,
                       max_len=max(256, len(chunk) * 4))
         han = _han_count(chunk)
-        if han <= 3:
+        if 0 < han <= 3:
             target = 0.55 * han + 0.5
             candidates = []
             for k in range(3):
@@ -134,6 +138,10 @@ def main():
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
+
+    allowed = task.get("allowed_langs") or ["zh"]
+    for job in jobs:
+        job["allowed_langs"] = allowed
 
     results, failed = [], 0
     for i, job in enumerate(jobs, 1):

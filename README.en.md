@@ -80,7 +80,7 @@ Original on the left, Chinese dubbing on the right. Click a cover to play the fu
 | **Video dubbing** | Translate an English video sentence by sentence and read the Chinese in the original speaker's voice | Chinese-dubbed MP4 + bilingual ASS |
 | **Audio dubbing** | English podcasts, interviews, or audio files | Chinese-dubbed MP3 |
 | **Subtitles only** | Run FULL, translation, and subtitle layout without connecting to the BiliMix server | Bilingual ASS |
-| **Standalone TTS** | Reference audio plus text; one call returns audio, with optional word timings and delivery style | Speech in the reference voice / word JSON |
+| **Standalone TTS** | Reference audio plus text; one call returns audio, with optional word timings, delivery style, and pitch-preserving slow reading | Speech in the reference voice / word JSON |
 
 Subtitles place Chinese above English by default, allow at most two lines per language, and keep text height within 25% of the frame. Subtitle pagination is independent of TTS sentence boundaries.
 

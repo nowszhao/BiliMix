@@ -267,7 +267,9 @@ def api_index():
                    "ref_text": "参考音频逐字转写；提供时启用续写克隆（仅 VoxCPM2）",
                    "style": "语气/节奏指令，≤40 字符（仅 VoxCPM2）",
                    "include_words": "是否返回逐词转录，默认 false",
-                   "language": "合成语种，默认 zh",
+                   "language": "合成语种，默认 zh；同步接口支持 zh/en",
+                   "pace": "normal|slow|word：整句降速或词间停顿后降速",
+                   "tempo": "降速倍率 0.6–1.0，默认 0.75，保音高",
                    "timeout_ms": "服务端等待上限，默认 180000，超时返回 202 与 job_id"},
     })
     endpoints.append({
@@ -470,7 +472,7 @@ def api_index():
                       "params": {"resolutions": "[{word_ids: [整数], speaker_id: 已有合格参考人物}]"}})
     return jsonify({
         "name": "BiliMix API",
-        "version": "2.2.2",
+        "version": "2.3.0",
         "description": "中英混合播客/视频学习工具",
         "dubbing_protocol": 1,
         "tts_reference_modes": ["speaker", "segment"],

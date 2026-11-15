@@ -37,7 +37,7 @@ _PERSIST_FIELDS = (
     # 同步接口：参考转写、逐词分析开关与结果都随任务保存，
     # 这样等待超时后仍能按 job_id 取回同一份结果。
     "mode", "ref_text", "include_words", "words", "words_error", "style",
-    "style_applied", "style_warning",
+    "style_applied", "style_warning", "pace", "tempo",
 )
 
 
@@ -91,6 +91,8 @@ def create_job(job_id: str, **fields) -> dict:
         "style": "",
         "style_applied": False,
         "style_warning": "",
+        "pace": "normal",
+        "tempo": 1.0,
     }
     job.update({k: v for k, v in fields.items() if k in _PERSIST_FIELDS})
     with tts_jobs_lock:

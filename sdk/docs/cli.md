@@ -91,6 +91,7 @@ bmx tts say --ref-audio reference.wav --text "完整中文话语。" -o speech.w
 bmx tts say --ref-audio reference.wav --ref-text "参考音频的逐字转写" --text "完整中文话语。" --with-words --words-out words.json -o speech.wav
 bmx tts say --ref-path <上传后的路径> --text "完整中文话语。" -o speech.wav
 bmx tts say --ref-audio reference.wav --text "完整中文话语。" --style "语速稍快，语气兴奋" -o speech.wav
+bmx tts say --ref-audio reference.wav --text "Learning English is easier..." --lang en --pace word --tempo 0.75 -o slow.wav
 ```
 
 一次调用完成合成，不需要轮询：成功时返回 `audio`（地址、时长、哈希、采样率）和（可选）`words`。`--text` 只接受单条，最多 500 字符；批量仍用 `tts synth`。
@@ -99,6 +100,9 @@ bmx tts say --ref-audio reference.wav --text "完整中文话语。" --style "�
 |---|---|
 | `--ref-text` | 参考音频的逐字转写；提供时启用续写克隆（仅 VoxCPM2），必须与音频一致 |
 | `--style` | 语气/节奏指令，如 `语速稍快 语气兴奋`（≤40 字符，仅 VoxCPM2）；服务端会提高引导强度并回读校验，指令被朗读时自动回退为无指令音频并返回 `style_applied=false` |
+| `--lang zh\|en` | 合成语种，默认 `zh`；同步接口支持中英双语 |
+| `--pace normal\|slow\|word` | `slow` 整句降速；`word` 词间停顿后再降速；默认 `normal` |
+| `--tempo 0.6–1.0` | 降速倍率，默认 0.75；保音高变速，不是重采样 |
 | `--with-words` | 返回逐词转录，时间索引入参文本的字符区间，并给出 `coverage` |
 | `--words-out <路径>` | 把逐词报告另存为 JSON |
 | `--timeout-ms` | 服务端等待上限，默认 180000 |

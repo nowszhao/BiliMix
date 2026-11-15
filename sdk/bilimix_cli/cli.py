@@ -1176,16 +1176,24 @@ def cmd_tts_say(args, client):
         raise CLIError("--text 不能为空")
     ref_text = (getattr(args, "ref_text", "") or "").strip()
     style = (getattr(args, "style", "") or "").strip()
+    lang = (getattr(args, "lang", "") or "zh").strip()
+    pace = (getattr(args, "pace", "") or "normal").strip()
+    tempo = getattr(args, "tempo", None)
     timeout_ms = int(getattr(args, "timeout_ms", 0) or 180000)
     request_timeout = timeout_ms / 1000 + 60
 
     if getattr(args, "ref_path", None):
         body = {"text": text, "ref_audio_path": args.ref_path,
-                "include_words": bool(args.with_words), "timeout_ms": timeout_ms}
+                "include_words": bool(args.with_words), "timeout_ms": timeout_ms,
+                "language": lang}
         if ref_text:
             body["ref_text"] = ref_text
         if style:
             body["style"] = style
+        if pace != "normal":
+            body["pace"] = pace
+        if tempo:
+            body["tempo"] = tempo
         result = client.post_json("/api/tts/sync", body, timeout=request_timeout)
     else:
         local = getattr(args, "ref_audio", None)
@@ -1196,11 +1204,16 @@ def cmd_tts_say(args, client):
         if not args.quiet:
             log_err(f"[tts] 上传参考音频: {local}")
         form = {"text": text, "timeout_ms": str(timeout_ms),
-                "include_words": "true" if args.with_words else "false"}
+                "include_words": "true" if args.with_words else "false",
+                "language": lang}
         if ref_text:
             form["ref_text"] = ref_text
         if style:
             form["style"] = style
+        if pace != "normal":
+            form["pace"] = pace
+        if tempo:
+            form["tempo"] = str(tempo)
         with open(local, "rb") as handle:
             result = client.request(
                 "POST", "/api/tts/sync", data=form,
@@ -1234,6 +1247,8 @@ def cmd_tts_say(args, client):
         "style": result.get("style"),
         "style_applied": result.get("style_applied"),
         "style_warning": result.get("style_warning"),
+        "pace": result.get("pace"),
+        "tempo": result.get("tempo"),
         "path": output,
         "size_bytes": downloaded,
         "audio": audio,
@@ -1644,6 +1659,12 @@ def build_parser():
     p.add_argument("--text", required=True, help="待合成文本（单条，最多 500 字符）")
     p.add_argument("--ref-text", help="参考音频的逐字转写；提供时启用续写克隆（更贴音色）")
     p.add_argument("--style", help="语气/节奏指令，如 \"语速稍快 语气兴奋\"（≤40 字符，仅 VoxCPM2）")
+    p.add_argument("--lang", default="zh", choices=["zh", "en"],
+                   help="合成语种（同步接口支持 zh/en，默认 zh）")
+    p.add_argument("--pace", choices=["normal", "slow", "word"], default="normal",
+                   help="normal 原句；slow 整句变速；word 词间停顿 + 变速")
+    p.add_argument("--tempo", type=float,
+                   help="变速倍率 0.6–1.0，默认 0.75（仅 pace=slow/word）")
     p.add_argument("--with-words", action="store_true", help="同时返回逐词转录")
     p.add_argument("--words-out", help="把逐词报告另存为 JSON 文件")
     p.add_argument("--timeout-ms", type=int, default=180000,

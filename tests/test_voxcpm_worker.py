@@ -162,9 +162,19 @@ def test_non_chinese_is_rejected(tmp_path):
         voxcpm_worker.synthesize_job(model, job, lambda seed: None, 16000,
                                      {"model": "openbmb/VoxCPM2"})
     except ValueError as exc:
-        assert "Chinese" in str(exc)
+        assert "allowed" in str(exc)
     else:
-        raise AssertionError("non-Chinese job should be rejected")
+        raise AssertionError("non-Chinese job should be rejected by default")
+
+
+def test_english_allowed_only_by_explicit_allow_list(tmp_path):
+    model = _FakeModel(2.9)
+    job = _job(tmp_path, "Hello there")
+    job["lang"] = "en"
+    job["allowed_langs"] = ["zh", "en"]
+    voxcpm_worker.synthesize_job(model, job, lambda seed: None, 16000,
+                                 {"model": "openbmb/VoxCPM2"})
+    assert len(model.calls) == 1, "英文短句不应触发中文短句三候选逻辑"
 
 
 def test_main_end_to_end_with_fake_engine(monkeypatch, tmp_path, capsys):

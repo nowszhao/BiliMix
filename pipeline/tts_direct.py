@@ -14,6 +14,8 @@
 """
 import hashlib
 import os
+import re
+import subprocess
 
 from core import config
 from pipeline import tts_narration
@@ -38,9 +40,56 @@ MAX_SYNC_TEXT_CHARS = 500
 STYLE_PROTOCOL = 2
 
 
+PACE_MODES = ("normal", "slow", "word")
+
+
+def apply_pace(text: str, lang: str, pace: str = "normal") -> str:
+    """Turn a pace mode into the text that is actually synthesized.
+
+    `slow` keeps the text and relies on tempo post-processing; `word` inserts
+    separators so the engine pauses between words (English) or characters
+    (Chinese). Inserted separators are not part of the reported timings, which
+    are always aligned to the caller's original text.
+    """
+    if pace == "normal":
+        return text
+    if lang == "en":
+        if pace == "word":
+            return ", ".join(part for part in text.strip().split() if part)
+        return text.strip()
+    if pace == "word":
+        return "，".join(ch for ch in text.strip() if ch.strip())
+    return text.strip()
+
+
+def _apply_tempo(path: str, tempo: float) -> str:
+    """Slow the synthesized audio without changing pitch (rubberband, else atempo)."""
+    tempo = float(tempo)
+    if abs(tempo - 1.0) < 1e-3:
+        return path
+    directory = os.path.dirname(path)
+    base = os.path.splitext(os.path.basename(path))[0]
+    target = os.path.join(directory, f"{base}.tempo{int(round(tempo * 100))}.wav")
+    if os.path.isfile(target):
+        return target
+    temporary = target + ".part.wav"
+    for filter_name in (f"rubberband=tempo={tempo}", f"atempo={tempo}"):
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", path,
+             "-filter:a", filter_name, temporary],
+            capture_output=True, text=True, timeout=300)
+        if result.returncode == 0 and os.path.isfile(temporary):
+            os.replace(temporary, target)
+            return target
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+    raise RuntimeError(f"ffmpeg tempo {tempo}x failed")
+
+
 def build_job_id(ref_audio: str, texts: list, lang: str, ref_text: str = "",
                  include_words: bool = False, style: str = "",
-                 cfg_value: float = None) -> str:
+                 cfg_value: float = None, pace: str = "normal",
+                 tempo: float = 1.0) -> str:
     """按参考路径、文本列表、语种、参考转写、风格指令和合成策略标识任务。
 
     可选能力只在开启时进入身份，未使用这些能力的既有任务 ID 保持不变。
@@ -56,6 +105,11 @@ def build_job_id(ref_audio: str, texts: list, lang: str, ref_text: str = "",
     if cfg_value is not None:
         # 引导强度直接改变波形，必须进入身份，否则会复用另一个强度的结果
         identity.append(["cfg_value", float(cfg_value)])
+    if pace != "normal":
+        identity.append(["pace", pace])
+    if tempo is not None and abs(float(tempo) - 1.0) > 1e-3:
+        # 变速直接改变产物长度，必须进入身份
+        identity.append(["tempo", float(tempo)])
     engine = getattr(config, "TTS_ENGINE", "confucius-tts")
     if engine == "voxcpm":
         script = os.path.join(config.BASE_DIR, "workers", "voxcpm_worker.py")
@@ -109,10 +163,21 @@ def validate_lang(lang: str) -> str:
     return lang
 
 
+_CJK_CHAR = re.compile(r"[\u3400-\u9fff]")
+
+
+def _text_lang(text: str, lang: str) -> str:
+    """Per-text language for pace handling; explicit lang wins over detection."""
+    if lang in ("zh", "en", "ja", "ko"):
+        return lang
+    return "zh" if _CJK_CHAR.search(text or "") else "en"
+
+
 def synthesize_texts(texts: list, ref_audio: str, job_id: str,
                      lang: str = DEFAULT_LANG, cancel_check=None,
                      progress_cb=None, ref_text: str = "", style: str = "",
-                     cfg_value: float = None) -> list:
+                     cfg_value: float = None, pace: str = "normal",
+                     tempo: float = 1.0, allowed_langs: list = None) -> list:
     """用一段参考音频合成多段文本，返回有序的产物列表。
 
     Args:
@@ -125,6 +190,9 @@ def synthesize_texts(texts: list, ref_audio: str, job_id: str,
         ref_text: 参考音频的逐字转写；非空且引擎支持时启用续写克隆
         style: 语气/节奏指令；非空且引擎支持时进入合成条件，不影响度量文本
         cfg_value: 覆盖本次合成的引导强度；None 沿用部署配置
+        pace: normal/slow/word；word 在词或字之间插入停顿
+        tempo: 合成后的变速倍率，1.0 表示不处理；0.75 表示慢 25%
+        allowed_langs: 本次允许的语种；None 表示沿用 worker 的中文限定
 
     Returns:
         [{"index": int, "text": str, "output_path": str, "part_count": int}, ...]
@@ -139,8 +207,11 @@ def synthesize_texts(texts: list, ref_audio: str, job_id: str,
     job_dir = get_job_dir(job_id)
     os.makedirs(job_dir, exist_ok=True)
 
+    # pace=word 只改送入引擎的文本，产物仍记录调用方的原文
+    paced_texts = [apply_pace(text, _text_lang(text, lang), pace) for text in texts]
+
     # 按语种切分：lang="auto" 时一段文本可能拆成多个同语种片段
-    items, groups = build_speech_plan(texts, lang)
+    items, groups = build_speech_plan(paced_texts, lang)
     if not items:
         raise ValueError("没有可合成的文本")
 
@@ -164,6 +235,7 @@ def synthesize_texts(texts: list, ref_audio: str, job_id: str,
         ref_text_map=ref_text_map,
         style_map=style_map,
         cfg_value=cfg_value,
+        allowed_langs=allowed_langs,
     )
 
     outputs = []
@@ -193,5 +265,9 @@ def synthesize_texts(texts: list, ref_audio: str, job_id: str,
     if missing:
         raise RuntimeError(
             f"{len(missing)}/{len(texts)} 条文本合成失败（索引 {missing}）")
+
+    if tempo and abs(float(tempo) - 1.0) > 1e-3:
+        for output in outputs:
+            output["output_path"] = _apply_tempo(output["output_path"], float(tempo))
 
     return outputs
