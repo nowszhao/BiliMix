@@ -82,7 +82,7 @@ def _wait_terminal(client, job_id, timeout=10.0):
 
 
 def _fake_synthesize(texts, ref_audio, job_id, lang=tts_direct.DEFAULT_LANG,
-                     cancel_check=None, progress_cb=None):
+                     cancel_check=None, progress_cb=None, ref_text="", style=""):
     """桩：为每条文本写一个假 WAV，并按真实实现上报进度"""
     job_dir = tts_direct.get_job_dir(job_id)
     os.makedirs(job_dir, exist_ok=True)
@@ -129,6 +129,67 @@ class TestTtsDirectValidation:
         assert tts_direct.validate_lang(None) == "zh"
         with pytest.raises(ValueError):
             tts_direct.validate_lang("fr")
+
+    def test_build_job_id_separates_prompt_and_words(self, ref_audio):
+        base = tts_direct.build_job_id(ref_audio, ["你好"], "zh")
+        prompt = tts_direct.build_job_id(ref_audio, ["你好"], "zh",
+                                        ref_text="参考音频的转写")
+        words = tts_direct.build_job_id(ref_audio, ["你好"], "zh",
+                                        include_words=True)
+        assert len({base, prompt, words}) == 3, "可选能力必须改变任务身份"
+
+    def test_synthesis_key_separates_prompt_text(self, ref_audio):
+        from pipeline.tts_cache import synthesis_key
+
+        plain = synthesis_key("你好", "zh", ref_audio, "model", {})
+        again = synthesis_key("你好", "zh", ref_audio, "model", {})
+        prompt = synthesis_key("你好", "zh", ref_audio, "model", {},
+                               prompt_text="参考音频的转写")
+        assert plain == again, "参考转写为空时保持既有缓存身份"
+        assert plain != prompt, "续写克隆必须与参考克隆区分缓存"
+
+    def test_synthesis_key_matches_previous_implementation(self, ref_audio):
+        """未使用续写克隆时，缓存键必须与新增字段之前逐字节一致。"""
+        from pipeline.dubbing_plan import canonical_hash, file_sha256
+        from pipeline.tts_cache import REFERENCE_POLICY_VERSION, synthesis_key
+
+        previous = canonical_hash({
+            "schema": 4, "text": "你好", "language": "zh",
+            "reference_sha256": file_sha256(ref_audio), "speaker": "",
+            "model": "model", "parameters": {}, "reference_mode": "speaker",
+            "reference_policy": REFERENCE_POLICY_VERSION})
+        assert synthesis_key("你好", "zh", ref_audio, "model", {}) == previous
+
+    def test_build_job_id_matches_previous_implementation(self, ref_audio,
+                                                          monkeypatch):
+        """未使用新能力时，任务 ID 与新增字段之前一致。
+
+        voxcpm 引擎会附加模型指纹，这段在本次改动前就存在；这里固定为
+        confucius 引擎，只校验本次新增字段没有进入默认身份。
+        """
+        from pipeline.dubbing_plan import canonical_hash
+
+        monkeypatch.setattr(config, "TTS_ENGINE", "confucius-tts")
+        previous = "tts_" + canonical_hash([
+            os.path.abspath(ref_audio), ["你好"], "zh",
+            tts_narration.POLICY_VERSION])[:12]
+        assert tts_direct.build_job_id(ref_audio, ["你好"], "zh") == previous
+        assert tts_direct.build_job_id(ref_audio, ["你好"], "zh",
+                                       ref_text="", include_words=False,
+                                       style="") == previous
+
+    def test_worker_payload_unchanged_without_ref_text(self, ref_audio):
+        """旧链路没有参考转写时，发给 worker 的任务体保持原样。"""
+        from pipeline.step3_tts_confucius import _worker_task
+
+        job = {"text": "嗨", "lang": "zh", "ref_audio": ref_audio,
+               "output_path": "/tmp/out.wav"}
+        assert _worker_task({"model": "m"}, [dict(job)]) == {
+            "model": "m", "jobs": [dict(job)]}
+        assert _worker_task({"model": "m"}, [{**job, "ref_text": ""}]) == {
+            "model": "m", "jobs": [dict(job)]}
+        assert _worker_task({"model": "m"}, [{**job, "ref_text": "", "style": ""}]) == {
+            "model": "m", "jobs": [dict(job)]}
 
 
 # ============================================================

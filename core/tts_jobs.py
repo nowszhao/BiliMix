@@ -34,6 +34,9 @@ _PERSIST_FIELDS = (
     "job_id", "status", "progress", "message", "created_at", "updated_at",
     "finished_at", "title", "lang", "texts", "ref_audio", "outputs",
     "output_count", "error", "elapsed",
+    # 同步接口：参考转写、逐词分析开关与结果都随任务保存，
+    # 这样等待超时后仍能按 job_id 取回同一份结果。
+    "mode", "ref_text", "include_words", "words", "words_error", "style",
 )
 
 
@@ -79,6 +82,12 @@ def create_job(job_id: str, **fields) -> dict:
         "output_count": 0,
         "error": "",
         "elapsed": 0,
+        "mode": "async",
+        "ref_text": "",
+        "include_words": False,
+        "words": [],
+        "words_error": "",
+        "style": "",
     }
     job.update({k: v for k, v in fields.items() if k in _PERSIST_FIELDS})
     with tts_jobs_lock:

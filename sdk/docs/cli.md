@@ -84,6 +84,27 @@ bmx tts delete <job_id>
 
 `--ref-audio` 上传本地参考；`--ref-path` 使用上传后路径。`--text-file` 按行读取批量文本。`--lang` 支持 `auto`、`zh`、`en`、`ja`、`ko`。
 
+## 同步合成
+
+```text
+bmx tts say --ref-audio reference.wav --text "完整中文话语。" -o speech.wav
+bmx tts say --ref-audio reference.wav --ref-text "参考音频的逐字转写" --text "完整中文话语。" --with-words --words-out words.json -o speech.wav
+bmx tts say --ref-path <上传后的路径> --text "完整中文话语。" -o speech.wav
+bmx tts say --ref-audio reference.wav --text "完整中文话语。" --style "语速稍快，语气兴奋" -o speech.wav
+```
+
+一次调用完成合成，不需要轮询：成功时返回 `audio`（地址、时长、哈希、采样率）和（可选）`words`。`--text` 只接受单条，最多 500 字符；批量仍用 `tts synth`。
+
+| 参数 | 用途 |
+|---|---|
+| `--ref-text` | 参考音频的逐字转写；提供时启用续写克隆（仅 VoxCPM2），必须与音频一致 |
+| `--style` | 语气/节奏指令，如 `语速稍快 语气兴奋`（≤40 字符，仅 VoxCPM2）；只作为合成条件，不入字幕、不计语速 |
+| `--with-words` | 返回逐词转录，时间索引入参文本的字符区间，并给出 `coverage` |
+| `--words-out <路径>` | 把逐词报告另存为 JSON |
+| `--timeout-ms` | 服务端等待上限，默认 180000 |
+
+参考音频硬限制 2–15 秒（3–10 秒最佳），超过 20MB 或格式不支持会被拒绝。服务端等待超时后客户端自动切换为按 `job_id` 轮询，不丢弃这次合成；`cache.hit` 表示命中了相同输入的既有结果。
+
 ## 设置与内容
 
 ```text

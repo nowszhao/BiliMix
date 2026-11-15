@@ -90,8 +90,21 @@ def _confucius_runtime():
 
 
 def _worker_task(options, jobs):
-    return {**options, "jobs": [{key: job[key] for key in ("text", "lang", "ref_audio", "output_path")}
-                                 for job in jobs]}
+    """Build the worker payload; the reference transcript is optional.
+
+    `ref_text` is only understood by engines that can continue from a prompt
+    clip, so it is omitted when the unit has no transcript and never sent as an
+    empty string.
+    """
+    payload = []
+    for job in jobs:
+        item = {key: job[key] for key in ("text", "lang", "ref_audio", "output_path")}
+        if job.get("ref_text"):
+            item["ref_text"] = job["ref_text"]
+        if job.get("style"):
+            item["style"] = job["style"]
+        payload.append(item)
+    return {**options, "jobs": payload}
 
 
 def _synthesize_parallel(
@@ -276,6 +289,8 @@ def synthesize_sentences_with_confucius_tts(
     lang: str = "zh",
     seg_lang_map: dict = None,
     reference_mode: str = "speaker",
+    ref_text_map: dict = None,
+    style_map: dict = None,
 ) -> dict:
     """
     按参考模式和目标语种选择合成引擎。
@@ -295,6 +310,10 @@ def synthesize_sentences_with_confucius_tts(
         lang: 合成语种（默认 "zh"，可选 en/ja/ko）
         seg_lang_map: {segment_index: lang} 逐句覆盖语种，用于中英混排按片段
             指定发音语种（缺省则全部用 lang）
+        ref_text_map: {segment_index: reference_transcript} 参考音频的逐字转写；
+            提供时引擎改用续写克隆（音色更贴），缺省只做参考音频克隆
+        style_map: {segment_index: style} 语气/节奏指令；只由支持指令的引擎消费，
+            缺省不改变任何既有合成
 
     Returns:
         dict: {segment_index: tts_wav_path} 映射
@@ -320,7 +339,7 @@ def synthesize_sentences_with_confucius_tts(
     results = _synthesize_batch(
         runtime, segments, indices, translations, cache_dir, ref_audio_map,
         cancel_check, report_progress if progress_cb else None, task_id, lang,
-        seg_lang_map, reference_mode,
+        seg_lang_map, reference_mode, ref_text_map, style_map,
     )
     if progress_cb:
         progress_cb(total, total)
@@ -329,7 +348,7 @@ def synthesize_sentences_with_confucius_tts(
 
 def _synthesize_batch(runtime, segments, translated_indices, translations, cache_dir,
                       ref_audio_map, cancel_check, progress_cb, task_id, lang,
-                      seg_lang_map, reference_mode):
+                      seg_lang_map, reference_mode, ref_text_map=None, style_map=None):
     total = len(translated_indices)
     # Retain the existing Confucius cache keys; configuration contents already
     # contribute to its model fingerprint.
@@ -355,7 +374,11 @@ def _synthesize_batch(runtime, segments, translated_indices, translations, cache
 
         # 缓存 key（含语种，避免切换 lang 时误命中旧缓存）
         speaker = segments[seg_idx].get("speaker", "") if isinstance(segments, list) and seg_idx < len(segments) else ""
-        cache_key = synthesis_key(chinese_text, eff_lang, ref_audio, runtime.model_id, parameters, speaker, reference_mode)
+        # 续写克隆与风格指令只由支持指令的引擎消费；为空时保持原有缓存身份
+        prompt_text = (ref_text_map or {}).get(seg_idx, "") if runtime.cache_prefix == "voxcpm2" else ""
+        style = (style_map or {}).get(seg_idx, "") if runtime.cache_prefix == "voxcpm2" else ""
+        cache_key = synthesis_key(chinese_text, eff_lang, ref_audio, runtime.model_id,
+                                  parameters, speaker, reference_mode, prompt_text, style)
         output_path = os.path.join(cache_dir, f"{runtime.cache_prefix}_{cache_key}.wav")
 
         jobs.append({
@@ -364,6 +387,8 @@ def _synthesize_batch(runtime, segments, translated_indices, translations, cache
             "output_path": output_path,
             "segment_index": seg_idx,
             "lang": eff_lang,
+            "ref_text": prompt_text,
+            "style": style,
         })
 
     if not jobs:

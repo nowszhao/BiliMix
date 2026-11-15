@@ -258,6 +258,19 @@ def api_index():
                    "title": "任务标题"},
     })
     endpoints.append({
+        "path": "/api/tts/sync",
+        "method": "POST",
+        "description": "同步合成：一次请求返回音频，可选逐词转录与语气指令",
+        "params": {"text": "待合成文本，最多 500 字符",
+                   "ref_audio": "内联参考音频文件（multipart）",
+                   "ref_audio_path": "服务端 data/ 内的参考音频路径（JSON）",
+                   "ref_text": "参考音频逐字转写；提供时启用续写克隆（仅 VoxCPM2）",
+                   "style": "语气/节奏指令，≤40 字符（仅 VoxCPM2）",
+                   "include_words": "是否返回逐词转录，默认 false",
+                   "language": "合成语种，默认 zh",
+                   "timeout_ms": "服务端等待上限，默认 180000，超时返回 202 与 job_id"},
+    })
+    endpoints.append({
         "path": "/api/tts/jobs",
         "method": "GET",
         "description": "TTS 任务列表",
@@ -457,10 +470,13 @@ def api_index():
                       "params": {"resolutions": "[{word_ids: [整数], speaker_id: 已有合格参考人物}]"}})
     return jsonify({
         "name": "BiliMix API",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "description": "中英混合播客/视频学习工具",
         "dubbing_protocol": 1,
         "tts_reference_modes": ["speaker", "segment"],
+        # 同步合成：一次请求返回音频，可选逐词转录（bmx tts say）
+        "tts_sync": True,
+        "tts_word_timings": True,
         "total_endpoints": len(endpoints),
         "endpoints": endpoints,
         "stats": {

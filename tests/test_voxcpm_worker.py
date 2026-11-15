@@ -68,6 +68,92 @@ def test_short_line_keeps_candidate_closest_to_natural_duration(tmp_path):
     assert sf.info(job["output_path"]).duration < 1.5
 
 
+def test_reference_transcript_enables_continuation_cloning(tmp_path):
+    class _RecordingModel:
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return _tone(1.2)
+
+    model = _RecordingModel()
+    job = _job(tmp_path, "参考转写模式。")
+    job["ref_text"] = "这是参考音频的逐字转写。"
+    voxcpm_worker.synthesize_job(model, job, lambda seed: None, 16000,
+                                 {"model": "openbmb/VoxCPM2"})
+    assert model.calls, "至少发起一次合成"
+    for call in model.calls:
+        assert call["reference_wav_path"] == job["ref_audio"]
+        assert call["prompt_wav_path"] == job["ref_audio"]
+        assert call["prompt_text"] == "这是参考音频的逐字转写。"
+
+
+def test_missing_transcript_keeps_reference_only_cloning(tmp_path):
+    class _RecordingModel:
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return _tone(1.2)
+
+    model = _RecordingModel()
+    job = _job(tmp_path, "只做参考克隆。")
+    voxcpm_worker.synthesize_job(model, job, lambda seed: None, 16000,
+                                 {"model": "openbmb/VoxCPM2"})
+    assert model.calls
+    for call in model.calls:
+        assert "prompt_wav_path" not in call
+        assert "prompt_text" not in call
+
+
+def test_style_prefixes_engine_text_but_measures_clean_text(tmp_path):
+    import hashlib
+    import json
+
+    class _RecordingModel:
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return _tone(1.5)
+
+    model = _RecordingModel()
+    job = _job(tmp_path, "语气测试的一句话。")
+    job["style"] = "语速稍快 语气兴奋"
+    voxcpm_worker.synthesize_job(model, job, lambda seed: None, 16000,
+                                 {"model": "openbmb/VoxCPM2"})
+    assert model.calls
+    for call in model.calls:
+        assert call["text"].startswith("(语速稍快 语气兴奋)"), "指令只进入模型条件"
+        assert call["text"].endswith("语气测试的一句话。"), "朗读文本本身不得被修改"
+
+    report = json.loads(Path(job["output_path"] + ".quality.json").read_text(encoding="utf-8"))
+    # 节奏度量必须基于干净文本，否则指令里的汉字会拉高语速判定
+    assert report["chunks"][0]["text_sha256"] == hashlib.sha256(
+        "语气测试的一句话。".encode()).hexdigest()
+
+
+def test_without_style_engine_text_is_unchanged(tmp_path):
+    class _RecordingModel:
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return _tone(1.2)
+
+    model = _RecordingModel()
+    job = _job(tmp_path, "原文一字不改。")
+    voxcpm_worker.synthesize_job(model, job, lambda seed: None, 16000,
+                                 {"model": "openbmb/VoxCPM2"})
+    assert model.calls
+    for call in model.calls:
+        assert call["text"] == "原文一字不改。"
+
+
 def test_non_chinese_is_rejected(tmp_path):
     model = _FakeModel()
     job = _job(tmp_path, "Hello")

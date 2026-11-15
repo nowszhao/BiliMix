@@ -54,8 +54,23 @@ def voxcpm_model_fingerprint(worker, model_ref, *, metadata_only=False):
     return canonical_hash(records)
 
 
-def synthesis_key(text, language, reference, model_id, parameters, speaker="", reference_mode="speaker"):
-    return canonical_hash({"schema": 4, "text": text, "language": language,
-                           "reference_sha256": file_sha256(reference), "speaker": speaker,
-                           "model": model_id, "parameters": parameters, "reference_mode": reference_mode,
-                           "reference_policy": REFERENCE_POLICY_VERSION})
+def synthesis_key(text, language, reference, model_id, parameters, speaker="",
+                  reference_mode="speaker", prompt_text="", style=""):
+    """Identity of one synthesized unit.
+
+    `prompt_text` is the verbatim transcript of the reference clip. It switches
+    the engine to continuation cloning, which changes the waveform, so it has to
+    change the key. `style` is the inline delivery instruction and changes the
+    waveform the same way. Both fields are only added when set, keeping existing
+    keys for reference-only, uninstructed synthesis stable.
+    """
+    identity = {"schema": 4, "text": text, "language": language,
+                "reference_sha256": file_sha256(reference), "speaker": speaker,
+                "model": model_id, "parameters": parameters,
+                "reference_mode": reference_mode,
+                "reference_policy": REFERENCE_POLICY_VERSION}
+    if prompt_text:
+        identity["prompt_text"] = prompt_text
+    if style:
+        identity["style"] = style
+    return canonical_hash(identity)

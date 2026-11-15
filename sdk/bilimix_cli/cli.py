@@ -1169,6 +1169,81 @@ def cmd_tts_languages(args, client):
     return EXIT_OK
 
 
+def cmd_tts_say(args, client):
+    """同步合成：一次调用完成合成（可选逐词转录），无需轮询"""
+    text = (args.text or "").strip()
+    if not text:
+        raise CLIError("--text 不能为空")
+    ref_text = (getattr(args, "ref_text", "") or "").strip()
+    style = (getattr(args, "style", "") or "").strip()
+    timeout_ms = int(getattr(args, "timeout_ms", 0) or 180000)
+    request_timeout = timeout_ms / 1000 + 60
+
+    if getattr(args, "ref_path", None):
+        body = {"text": text, "ref_audio_path": args.ref_path,
+                "include_words": bool(args.with_words), "timeout_ms": timeout_ms}
+        if ref_text:
+            body["ref_text"] = ref_text
+        if style:
+            body["style"] = style
+        result = client.post_json("/api/tts/sync", body, timeout=request_timeout)
+    else:
+        local = getattr(args, "ref_audio", None)
+        if not local:
+            raise CLIError("必须提供 --ref-audio（本地文件）或 --ref-path（服务端路径）")
+        if not os.path.isfile(local):
+            raise CLIError(f"参考音频不存在: {local}")
+        if not args.quiet:
+            log_err(f"[tts] 上传参考音频: {local}")
+        form = {"text": text, "timeout_ms": str(timeout_ms),
+                "include_words": "true" if args.with_words else "false"}
+        if ref_text:
+            form["ref_text"] = ref_text
+        if style:
+            form["style"] = style
+        with open(local, "rb") as handle:
+            result = client.request(
+                "POST", "/api/tts/sync", data=form,
+                files={"ref_audio": (os.path.basename(local), handle)},
+                timeout=request_timeout)
+
+    # 服务端等待超时：任务仍在跑，退化为按 job_id 轮询，不丢弃这次合成
+    if result.get("status") != "completed" and result.get("job_id"):
+        log_err(f"[tts] 服务端等待超时，继续等待任务 {result['job_id']}")
+        return _wait_tts_job(client, result["job_id"], args, output=args.output)
+
+    words = result.get("words") or None
+    if getattr(args, "words_out", None):
+        if not words:
+            raise CLIError("服务端未返回逐词转录（检查 --with-words 或 words_error）")
+        with open(args.words_out, "w", encoding="utf-8") as handle:
+            json.dump(words, handle, ensure_ascii=False, indent=2)
+
+    audio = result.get("audio") or {}
+    url = audio.get("url")
+    if not url:
+        raise CLIError("服务端未返回音频地址")
+    output = args.output or audio.get("filename") or "speech.wav"
+    downloaded = _download_file(client, url, output, label="tts", quiet=args.quiet)
+
+    emit({
+        "ok": True,
+        "request_id": result.get("request_id", ""),
+        "job_id": result.get("job_id", ""),
+        "text": result.get("text", ""),
+        "style": result.get("style"),
+        "path": output,
+        "size_bytes": downloaded,
+        "audio": audio,
+        "reference": result.get("reference") or {},
+        "words": words,
+        "words_error": result.get("words_error"),
+        "cache_hit": (result.get("cache") or {}).get("hit", False),
+        "elapsed_ms": result.get("elapsed_ms", 0),
+    }, pretty=args.pretty, field=args.field)
+    return EXIT_OK
+
+
 # ============================================================
 # argparse 构建
 # ============================================================
@@ -1559,6 +1634,20 @@ def build_parser():
                    help="轮询间隔秒数 (默认 2.0)")
     p.add_argument("-o", "--output", help="合成单条文本时的输出文件名")
     p.set_defaults(func=cmd_tts_synth)
+
+    p = add_cmd(tts_sub, "say", help="同步合成：一次调用拿到音频（可选逐词转录）")
+    g_ref = p.add_mutually_exclusive_group(required=True)
+    g_ref.add_argument("--ref-audio", help="本地参考音频/视频文件（自动上传到服务端）")
+    g_ref.add_argument("--ref-path", help="服务端已存在的参考音频路径")
+    p.add_argument("--text", required=True, help="待合成文本（单条，最多 500 字符）")
+    p.add_argument("--ref-text", help="参考音频的逐字转写；提供时启用续写克隆（更贴音色）")
+    p.add_argument("--style", help="语气/节奏指令，如 \"语速稍快 语气兴奋\"（≤40 字符，仅 VoxCPM2）")
+    p.add_argument("--with-words", action="store_true", help="同时返回逐词转录")
+    p.add_argument("--words-out", help="把逐词报告另存为 JSON 文件")
+    p.add_argument("--timeout-ms", type=int, default=180000,
+                   help="服务端等待上限（毫秒），默认 180000")
+    p.add_argument("-o", "--output", help="输出音频文件名")
+    p.set_defaults(func=cmd_tts_say)
 
     p = add_cmd(tts_sub, "list", help="任务列表")
     p.add_argument("--limit", type=int, help="最大返回条数")

@@ -63,7 +63,8 @@ def _find_gaps(segments: list, total_duration: float) -> list:
     return gaps
 
 
-def _retranscribe_gap(audio_path: str, gap_start: float, gap_end: float) -> list:
+def _retranscribe_gap(audio_path: str, gap_start: float, gap_end: float,
+                      language: str = "") -> list:
     """
     对指定时间区间单独提取音频并重新转录，返回该区间内的 segments
     （时间戳已还原为相对原始音频的绝对时间）。
@@ -92,7 +93,7 @@ def _retranscribe_gap(audio_path: str, gap_start: float, gap_end: float) -> list
             "--device", config.WHISPERX_DEVICE,
             "--compute_type", config.WHISPERX_COMPUTE_TYPE,
             "--batch_size", str(config.WHISPERX_BATCH_SIZE),
-            "--language", config.WHISPERX_LANGUAGE,
+            "--language", language or config.WHISPERX_LANGUAGE,
             "--output_dir", tmp_dir,
             "--output_format", "json",
         ]
@@ -127,7 +128,8 @@ def _retranscribe_gap(audio_path: str, gap_start: float, gap_end: float) -> list
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def _fill_transcription_gaps(transcription: dict, audio_path: str) -> dict:
+def _fill_transcription_gaps(transcription: dict, audio_path: str,
+                             language: str = "") -> dict:
     """
     检测转录结果中的时间缺口，对确实存在语音内容（非静音）的缺口
     单独重新转录并插入缺失的 segments。
@@ -158,7 +160,7 @@ def _fill_transcription_gaps(transcription: dict, audio_path: str) -> dict:
             continue
         print(f"  [{gap_start:.1f}-{gap_end:.1f}s] 平均音量 {volume:.1f}dB，疑似漏检，"
               f"用 {gap_model} 重新转录...")
-        gap_segs = _retranscribe_gap(audio_path, gap_start, gap_end)
+        gap_segs = _retranscribe_gap(audio_path, gap_start, gap_end, language)
         if gap_segs:
             print(f"  [{gap_start:.1f}-{gap_end:.1f}s] 补录成功: {len(gap_segs)} 个句子")
             new_segments.extend(gap_segs)
@@ -176,7 +178,8 @@ def _fill_transcription_gaps(transcription: dict, audio_path: str) -> dict:
     return transcription
 
 
-def transcribe(audio_path: str, output_dir: str = None, diarize=None) -> dict:
+def transcribe(audio_path: str, output_dir: str = None, diarize=None,
+               language: str = None) -> dict:
     """
     使用 WhisperX 转录音频，返回词级别时间戳数据。
 
@@ -186,6 +189,9 @@ def transcribe(audio_path: str, output_dir: str = None, diarize=None) -> dict:
     Args:
         audio_path: 音频文件路径
         output_dir: 输出目录，默认使用 config.OUTPUT_DIR
+        diarize: 是否做说话人分离；默认取 WHISPERX_DIARIZE
+        language: 识别语种；默认取 WHISPERX_LANGUAGE。合成音频的词级回读
+            必须显式传入与合成语种一致的值，否则英文模型会误识别中文。
 
     Returns:
         dict: WhisperX 转录结果 (segments + word_segments)
@@ -196,9 +202,10 @@ def transcribe(audio_path: str, output_dir: str = None, diarize=None) -> dict:
     os.makedirs(output_dir, exist_ok=True)
 
     diarize = bool(getattr(config, "WHISPERX_DIARIZE", False)) if diarize is None else diarize
+    language = language or config.WHISPERX_LANGUAGE
     from pipeline.dubbing_plan import file_sha256, canonical_hash
     source_fingerprint = canonical_hash({"audio": file_sha256(audio_path),
-        "model": config.WHISPERX_MODEL, "language": config.WHISPERX_LANGUAGE,
+        "model": config.WHISPERX_MODEL, "language": language,
         "diarize": diarize, "schema": 2})
     # 检查是否已有缓存的转录结果
     basename = os.path.splitext(os.path.basename(audio_path))[0]
@@ -209,7 +216,7 @@ def transcribe(audio_path: str, output_dir: str = None, diarize=None) -> dict:
         with open(json_path, "r", encoding="utf-8") as f:
             cached = json.load(f)
         if cached.get("_source_fingerprint") == source_fingerprint:
-            cached = _fill_transcription_gaps(cached, audio_path)
+            cached = _fill_transcription_gaps(cached, audio_path, language)
             return cached
 
     # 调用 WhisperX 进行转录
@@ -221,7 +228,7 @@ def transcribe(audio_path: str, output_dir: str = None, diarize=None) -> dict:
         "--device", config.WHISPERX_DEVICE,
         "--compute_type", config.WHISPERX_COMPUTE_TYPE,
         "--batch_size", str(config.WHISPERX_BATCH_SIZE),
-        "--language", config.WHISPERX_LANGUAGE,
+        "--language", language,
         "--output_dir", output_dir,
         "--output_format", "json",
     ]
@@ -281,7 +288,7 @@ def transcribe(audio_path: str, output_dir: str = None, diarize=None) -> dict:
         transcription = json.load(f)
 
     # 检测并补录 VAD/对齐漏检的语音片段
-    transcription = _fill_transcription_gaps(transcription, audio_path)
+    transcription = _fill_transcription_gaps(transcription, audio_path, language)
     transcription["_source_fingerprint"] = source_fingerprint
     # 补录结果落盘，避免下次读缓存时重复补录
     with open(json_path, "w", encoding="utf-8") as f:

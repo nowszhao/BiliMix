@@ -40,6 +40,7 @@ bmx --server <服务URL> video download-subtitles --task-id <task_id> -o dubbed.
 | `subtitle parse <路径>` | 校验工作 ASS |
 | `config get / set` | 服务设置 |
 | `tts synth --ref-audio <WAV> --text <文本> --wait` | 独立声音克隆 |
+| `tts say --ref-audio <WAV> --text <文本> [--with-words]` | 同步合成，一次调用拿到音频（可选逐词转录） |
 | `episodes / subscriptions / favorites` | 播客内容管理 |
 | `api` | 服务能力目录 |
 

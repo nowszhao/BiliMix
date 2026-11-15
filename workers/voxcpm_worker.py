@@ -57,10 +57,23 @@ def synthesize_job(model, job, set_seed, sample_rate, cfg):
         inference_timesteps=cfg.get("inference_timesteps", 10),
         retry_badcase=True,
     )
+    # A verbatim transcript of the reference clip enables continuation cloning
+    # (prompt_wav_path + prompt_text). The upstream contract requires the pair,
+    # so a transcript without the clip, or the reverse, is never sent.
+    ref_text = (job.get("ref_text") or "").strip()
+    if ref_text:
+        common.update(prompt_wav_path=reference, prompt_text=ref_text)
+    # Optional inline delivery instruction, e.g. "语速稍快，语气兴奋".
+    style = (job.get("style") or "").strip()
+    style_prefix = f"({style})" if style else ""
 
     def generate(chunk, seed, limit):
         set_seed(seed)
-        kwargs = dict(common, text=chunk, max_len=max(256, len(chunk) * 4))
+        # Style instructions are model conditioning, not spoken text: they are
+        # prefixed for the engine only, while duration/rate checks below keep
+        # measuring the clean chunk that the caller actually asked for.
+        kwargs = dict(common, text=style_prefix + chunk,
+                      max_len=max(256, len(chunk) * 4))
         han = _han_count(chunk)
         if han <= 3:
             target = 0.55 * han + 0.5

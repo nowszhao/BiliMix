@@ -114,3 +114,11 @@ BILIMIX_VOXCPM_MODEL=openbmb/VoxCPM2
 单进程约 9GB 内存，`VOXCPM_NUM_WORKERS` 建议设为 2（30GB 内存机器开 3 个会打满）。模型权重默认从 Hugging Face 拉取，也可把 `VOXCPM_MODEL` 指向本地权重目录；更换 worker 源码、语速策略或模型目录都会改变合成缓存身份。
 
 VoxCPM2 的中文语速实测约 5.5–6.8 字/秒，因此该后端使用独立的语速阈值（`VOXCPM_TARGET_CPS` / `VOXCPM_SOFT_CPS`），不会触发 Confucius 的 4.8 字/秒重试策略。对 1–3 字极短话语会生成三个候选并按自然短答时长择优，属于声学筛查，正式交付仍需 ASR 回译与人工听审。
+
+装好后用同步接口做一次真实回环（一次调用返回音频，可同时取逐词时间）：
+
+```text
+bmx --server <服务URL> tts say --ref-audio reference.wav --text "这是一次安装验证。" --with-words -o out.wav
+```
+
+首次调用包含模型加载和中文对齐模型下载，耗时明显长于后续请求；相同输入再次提交会命中缓存并秒级返回。`--ref-text`（参考转写续写克隆）与 `--style`（语气指令）只在 VoxCPM2 后端可用，其它引擎会显式拒绝而不是静默忽略。

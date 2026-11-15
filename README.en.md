@@ -80,7 +80,7 @@ Original on the left, Chinese dubbing on the right. Click a cover to play the fu
 | **Video dubbing** | Translate an English video sentence by sentence and read the Chinese in the original speaker's voice | Chinese-dubbed MP4 + bilingual ASS |
 | **Audio dubbing** | English podcasts, interviews, or audio files | Chinese-dubbed MP3 |
 | **Subtitles only** | Run FULL, translation, and subtitle layout without connecting to the BiliMix server | Bilingual ASS |
-| **Standalone TTS** | Reference audio plus text | Speech in the reference voice |
+| **Standalone TTS** | Reference audio plus text; one call returns audio, with optional word timings and delivery style | Speech in the reference voice / word JSON |
 
 Subtitles place Chinese above English by default, allow at most two lines per language, and keep text height within 25% of the frame. Subtitle pagination is independent of TTS sentence boundaries.
 
@@ -137,7 +137,7 @@ If the service is already running, just provide the link. The Agent asks for you
 ## How it works
 
 1. **Agent language work**: FULL preserves every source word and its order; translation produces complete Chinese utterances and stable source-word mappings.
-2. **BiliMix speaker and speech**: WhisperX word timing, speaker diarization, acoustic verification, reference selection, and Confucius4-TTS synthesis.
+2. **BiliMix speaker and speech**: WhisperX word timing, speaker diarization, acoustic verification, reference selection, then VoxCPM2 or Confucius4-TTS synthesis according to `TTS_ENGINE`.
 3. **Final assembly**: mix the audio, retime the picture to the Chinese audio, burn in bilingual subtitles, and return MP4, MP3, ASS, and a reference report.
 
 Analysis and dubbing tasks share audio and Demucs caches keyed by media SHA256. Each video is extracted once and separated once.

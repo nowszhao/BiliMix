@@ -31,11 +31,23 @@ DEFAULT_LANG = "zh"
 # 单次请求的文本条数与单条长度上限（防止误传超大文本拖垮远端）
 MAX_TEXTS = 200
 MAX_TEXT_CHARS = 5000
+# 同步接口单条上限：等待发生在一次 HTTP 请求内，长文本必然超时
+MAX_SYNC_TEXT_CHARS = 500
 
 
-def build_job_id(ref_audio: str, texts: list, lang: str) -> str:
-    """按参考路径、文本列表、语种和合成策略标识可复用的任务。"""
+def build_job_id(ref_audio: str, texts: list, lang: str, ref_text: str = "",
+                 include_words: bool = False, style: str = "") -> str:
+    """按参考路径、文本列表、语种、参考转写、风格指令和合成策略标识任务。
+
+    可选能力只在开启时进入身份，未使用这些能力的既有任务 ID 保持不变。
+    """
     identity = [os.path.abspath(ref_audio), texts, lang, tts_narration.POLICY_VERSION]
+    if ref_text:
+        identity.append(["ref_text", ref_text])
+    if include_words:
+        identity.append(["include_words", True])
+    if style:
+        identity.append(["style", style])
     engine = getattr(config, "TTS_ENGINE", "confucius-tts")
     if engine == "voxcpm":
         script = os.path.join(config.BASE_DIR, "workers", "voxcpm_worker.py")
@@ -91,7 +103,7 @@ def validate_lang(lang: str) -> str:
 
 def synthesize_texts(texts: list, ref_audio: str, job_id: str,
                      lang: str = DEFAULT_LANG, cancel_check=None,
-                     progress_cb=None) -> list:
+                     progress_cb=None, ref_text: str = "", style: str = "") -> list:
     """用一段参考音频合成多段文本，返回有序的产物列表。
 
     Args:
@@ -101,6 +113,8 @@ def synthesize_texts(texts: list, ref_audio: str, job_id: str,
         lang: 合成语种；传 "auto" 时按中英语种切分分别合成再拼回一条
         cancel_check: 终止检查回调
         progress_cb: 进度回调 (current, total)，current 为已完成片段数
+        ref_text: 参考音频的逐字转写；非空且引擎支持时启用续写克隆
+        style: 语气/节奏指令；非空且引擎支持时进入合成条件，不影响度量文本
 
     Returns:
         [{"index": int, "text": str, "output_path": str, "part_count": int}, ...]
@@ -124,6 +138,8 @@ def synthesize_texts(texts: list, ref_audio: str, job_id: str,
     translations = {i: items[i]["text"] for i in segments}
     ref_audio_map = {i: ref_audio for i in segments}
     seg_lang_map = {i: items[i]["lang"] for i in segments}
+    ref_text_map = {i: ref_text for i in segments} if ref_text else {}
+    style_map = {i: style for i in segments} if style else {}
 
     # segments / audio_path 在 ref_audio_map 完整时不会被使用，
     # 这里传占位值以复用句子级合成逻辑。
@@ -135,6 +151,8 @@ def synthesize_texts(texts: list, ref_audio: str, job_id: str,
         task_id=job_id,
         lang="zh" if lang == AUTO_LANG else lang,
         seg_lang_map=seg_lang_map,
+        ref_text_map=ref_text_map,
+        style_map=style_map,
     )
 
     outputs = []
